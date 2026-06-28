@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Level Editor — Papa Sangre</title>
+    <link rel="stylesheet" href="/src/editor/editor.css" />
+  </head>
+  <body>
+    <header id="topbar">
+      <strong>Level Editor</strong>
+      <input id="level-name" type="text" aria-label="Level name" placeholder="Level name" />
+      <button id="btn-new">New</button>
+      <button id="btn-save">Save</button>
+      <select id="level-list" aria-label="Saved levels"><option value="">— load saved —</option></select>
+      <button id="btn-delete">Delete</button>
+      <span class="sep"></span>
+      <button id="btn-export">Export JSON</button>
+      <button id="btn-import">Import JSON</button>
+      <input id="file-input" type="file" accept="application/json" hidden />
+      <a id="btn-play" href="/?level=current" target="_blank">▶ Play</a>
+    </header>
+
+    <div id="layout">
+      <aside id="palette" aria-label="Tools">
+        <h2>Tool</h2>
+        <div class="tools">
+          <button class="tool" data-tool="select" aria-pressed="true">Select / Move</button>
+          <button class="tool" data-tool="start">Start point</button>
+          <button class="tool" data-tool="beacon">Beacon</button>
+          <button class="tool" data-tool="wall">Wall</button>
+          <button class="tool" data-tool="floor">Floor zone</button>
+          <button class="tool" data-tool="monster">Monster</button>
+        </div>
+
+        <h2>Material</h2>
+        <select id="material" aria-label="Material for new walls/floors"></select>
+
+        <h2>Room</h2>
+        <label>Width <input id="room-w" type="number" min="2" max="100" step="1" /></label>
+        <label>Depth <input id="room-d" type="number" min="2" max="100" step="1" /></label>
+        <label>Height <input id="room-h" type="number" min="2" max="20" step="0.5" /></label>
+
+        <h2 id="props-title">Selection</h2>
+        <div id="props"><p class="hint">Nothing selected.</p></div>
+      </aside>
+
+      <main id="canvas-wrap">
+        <canvas id="canvas" tabindex="0" aria-label="Level map. Click to place, drag to move."></canvas>
+        <div id="statusbar"><span id="coords">—</span> · <span id="hint">Pick a tool, then click the map.</span></div>
+      </main>
+    </div>
+
+    <script type="module" src="/src/editor/editor.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dev-dist/
+
+# Generated WASM (build with `npm run wasm`)
+src/engine/acoustics/wasm/
+
+# Rust build artifacts
+acoustics-core/target/
+
+# Editor/OS
+.DS_Store
+*.log
+.vscode/
+.idea/
+
+# Scratch
+*.tmp
+
+# Raw SOFA HRTF source (large; download from Zenodo + run scripts/bake-hrtf.mjs).
+# The baked compact binary assets/hrtf/*.hrtf IS committed.
+assets/hrtf/*.sofa

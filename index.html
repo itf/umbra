@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#000000" />
+    <title>Papa Sangre — Audio Navigator</title>
+    <link rel="stylesheet" href="/src/ui/styles.css" />
+  </head>
+  <body>
+    <!-- The game is played eyes-free with headphones. Everything visual here is
+         a fallback / control surface; all state is also announced via ARIA. -->
+    <a class="skip-link" href="#step-left">Skip to controls</a>
+
+    <main id="app" aria-label="Audio navigation game">
+      <!-- Polite region for status; assertive for stumbles/falls/goal. -->
+      <div id="status" class="sr-region" aria-live="polite" aria-atomic="true"></div>
+      <div id="alerts" class="sr-region" role="alert" aria-live="assertive"></div>
+
+      <section id="start-screen" aria-label="Start">
+        <h1>Audio Navigator</h1>
+        <p>
+          Put on headphones. Close your eyes. Walk to the beacon by sound alone.
+          Tap <strong>left</strong> and <strong>right</strong> to step — alternate
+          your feet, find a steady rhythm, and don't rush, or you'll stumble.
+          Turn by dragging the upper area (or switch to the compass dial). Tap
+          <strong>echo</strong> to clap and hear the room.
+        </p>
+        <p class="hint">Keyboard: A = left step, L = right step, ← → = turn.</p>
+        <button id="start-button" class="primary">Begin (enable sound)</button>
+      </section>
+
+      <section id="game-screen" hidden aria-label="Game">
+        <div id="turn-pad"><!-- compass dial mounts here --></div>
+
+        <!-- Echo: small button between the compass and the feet. -->
+        <button id="listen" class="listen" aria-label="Listen — clap to hear the room">echo</button>
+
+        <div class="step-row">
+          <!-- LEFT foot, matching the reference: big toe on the INNER edge (left of
+               this graphic), toes descending outward to the right, a smooth full
+               sole with the arch notch on the outer (right) edge. The right foot
+               is this exact shape mirrored (.mirror). -->
+          <button id="step-left" class="step foot" aria-label="Step left foot">
+            <svg class="footprint mirror" viewBox="0 0 200 340" aria-hidden="true">
+              <!-- sole: ball wide on the inner (left) side, gentle arch scoop on the
+                   outer (right) side, rounded heel -->
+              <path d="M70 92
+                       C44 96 40 130 42 162
+                       C44 196 56 214 60 246
+                       C63 272 58 300 78 316
+                       C96 330 128 328 140 308
+                       C150 290 142 268 144 246
+                       C146 222 156 210 160 186
+                       C164 160 160 140 150 124
+                       C138 104 112 88 70 92 Z" />
+              <!-- toes: big toe inner (left), descending in size to the outside -->
+              <ellipse cx="62" cy="58" rx="22" ry="26" />
+              <ellipse cx="104" cy="50" rx="15" ry="19" />
+              <ellipse cx="134" cy="58" rx="12" ry="15" />
+              <ellipse cx="158" cy="72" rx="9.5" ry="12" />
+              <ellipse cx="176" cy="90" rx="8" ry="10" />
+            </svg>
+          </button>
+          <button id="step-right" class="step foot" aria-label="Step right foot">
+            <svg class="footprint" viewBox="0 0 200 340" aria-hidden="true">
+              <path d="M70 92
+                       C44 96 40 130 42 162
+                       C44 196 56 214 60 246
+                       C63 272 58 300 78 316
+                       C96 330 128 328 140 308
+                       C150 290 142 268 144 246
+                       C146 222 156 210 160 186
+                       C164 160 160 140 150 124
+                       C138 104 112 88 70 92 Z" />
+              <ellipse cx="62" cy="58" rx="22" ry="26" />
+              <ellipse cx="104" cy="50" rx="15" ry="19" />
+              <ellipse cx="134" cy="58" rx="12" ry="15" />
+              <ellipse cx="158" cy="72" rx="9.5" ry="12" />
+              <ellipse cx="176" cy="90" rx="8" ry="10" />
+            </svg>
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
