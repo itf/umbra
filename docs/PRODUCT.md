@@ -1,0 +1,131 @@
+# Product Overview
+
+A plain-language description of what this product is, who it's for, what it does
+today, and where it's going. For the engineering details see `docs/TECHNICAL.md`.
+
+---
+
+## The idea
+
+**Navigate a world you can only hear.** Inspired by *Papa Sangre* — a landmark
+audio-only iOS game — this is a game and a training tool where you move through
+spaces using nothing but spatial sound through headphones. No visuals are needed to
+play: you find your way by listening to a beacon, to your own footsteps, and to the
+echoes of the room around you.
+
+It has two intertwined goals:
+
+1. **A game** — walk to the beacon through rooms and (eventually) past hazards,
+   using the signature step-by-step movement that made the original special.
+2. **An echolocation trainer** — practice estimating the size of a room from its
+   echoes, judging materials by how they reflect sound, and locating objects by
+   their reflections. The acoustics are physically modeled, so what you learn
+   transfers to how real spaces sound.
+
+It runs in any modern browser, installs as an app (PWA), and works offline.
+
+---
+
+## Who it's for
+
+- **Anyone who loved Papa Sangre** and wants that tense, eyes-closed,
+  feel-your-way-forward experience again — now on the open web.
+- **Blind and low-vision players**, for whom an audio-first game is not a gimmick
+  but the native way to play. The whole interface is screen-reader friendly and
+  designed to be played with your eyes closed.
+- **People practicing echolocation** — a safe, repeatable place to train the ear on
+  room size, materials, and object position with instant feedback.
+- **Sound and game designers** experimenting with spatial audio and level design.
+
+---
+
+## What you can do today
+
+### Play the game
+- Put on headphones, press **Begin**, and you're in a room with a **beacon** pulsing
+  somewhere ahead.
+- **Walk** by tapping the **left and right footprints**, alternating your feet like
+  real steps. Find a steady rhythm: walk too fast and you **stumble**; only the foot
+  you're meant to step with is shown, and both reappear when you pause.
+- **Turn** with the **compass dial** — drag it and your heading rotates smoothly at a
+  natural pace; the whole soundscape turns with you, so you can face the beacon and
+  walk to it.
+- Tap **echo** to **clap** and hear the room around you — the size and surfaces of
+  the space reveal themselves in the reflections.
+- Reach the beacon to **win**.
+- **Bumping into walls** is felt: you stop, and the wall's material colors the bump
+  sound. **Footsteps change with the floor** under you — concrete sounds sharp,
+  carpet soft, gravel crunches.
+
+### Explore the acoustics (debug page)
+A set of **listenable scenes** lets you hear the engine directly: a beacon to turn
+toward, a small room vs. a huge hall (same clap, very different echo), glass vs.
+soft walls, a sound bending around a doorway, and a large object beside you — with
+and without a room around it, so you can isolate what the object alone sounds like.
+
+### Design your own levels (level editor)
+A **top-down map editor** where you build spaces and play them instantly:
+- Place the **start point**, **beacons**, **walls**, **floor zones** (different
+  materials), **ceiling zones** (different heights — a low alcove inside a tall
+  hall), and **monsters**.
+- Choose materials from a real palette: concrete, brick, glass, wood, carpet, foam,
+  and outdoor surfaces like asphalt, grass, gravel, and water.
+- Toggle **open space** — remove the room entirely and place buildings freely to
+  simulate walking down a street between houses.
+- **Save** levels in your browser, **export/import** them as files to share, and hit
+  **Play** to drop straight into your design.
+
+---
+
+## What makes it different
+
+- **Real acoustics, not faked reverb.** Echoes are computed from the actual room
+  geometry and the physical sound-absorption of each surface. A small concrete room
+  and a large carpeted one sound genuinely different because they *are* different —
+  the same way they would be in life. This is what makes it a real trainer, not just
+  a game with sound effects.
+- **Rough surfaces sound rough.** A brick wall doesn't give a sharp echo like glass
+  does — it scatters sound into a softer, spread-out reflection. The engine models
+  this, so materials are distinguishable by ear.
+- **Custom, swappable spatial hearing.** It uses real measured "head" data to place
+  sounds in 3D around you, rather than the browser's generic spatializer — clearer
+  and, in time, personalizable to your own ears.
+- **Eyes-free by design.** Large touch targets, everything announced for screen
+  readers, and a control scheme (alternating footsteps, a draggable compass) built
+  to be operated without looking.
+- **No install, works offline.** It's a web app that installs like a native one and
+  keeps working with no connection.
+
+---
+
+## Current status
+
+A complete, playable core:
+- The game loop — walk, turn, stumble, clap, reach the beacon — works end to end.
+- The acoustics engine models reflections, materials, scattering, and diffraction.
+- The level editor lets you author and play custom spaces, indoor or open-air.
+
+It is an early but solid foundation. The headline experience (navigate to a beacon
+by sound, in a room whose echoes are real) is there.
+
+---
+
+## Where it's going
+
+Near-term, the most impactful additions:
+- **Monsters that chase you** — the editor already places them; bringing them to
+  life adds the danger and tension the original was known for.
+- **Richer beacon sounds** — bells, voices, water, or your own audio clips, so each
+  goal has a character instead of a plain tone.
+- **More varied levels** — multi-room layouts, streets, and training courses that
+  ramp up difficulty.
+
+Longer-term:
+- **Moving and dynamic spaces** — doors that open, walls that shift, so the
+  soundscape changes around you in real time.
+- **Personalized hearing** — load your own ear profile for sharper, less ambiguous
+  3D sound.
+- **A guided training mode** — structured drills for room-size and object-location
+  practice, with scoring and progress.
+
+See `docs/ROADMAP.md` for the concrete task list.

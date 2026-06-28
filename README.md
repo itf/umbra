@@ -4,6 +4,12 @@ An audio-only navigation game and echolocation trainer, played by sound through
 headphones. Walk to a beacon using binaural spatial audio; estimate room size and
 materials from echoes. Built as an offline-capable PWA.
 
+## Docs
+
+- [`docs/PRODUCT.md`](docs/PRODUCT.md) — what it is, who it's for, the product story.
+- [`docs/TECHNICAL.md`](docs/TECHNICAL.md) — architecture, subsystems, testing, perf.
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — future tasks and known limitations.
+
 ## Tech
 
 - **Custom HRTF binaural rendering** from the SADIE II dataset (no `PannerNode`).
