@@ -6,7 +6,7 @@
  */
 import type { AudioGraph } from '../audioGraph';
 import type { HrtfRenderer } from '../hrtf/renderer';
-import { computeShoeboxTaps, type ShoeboxParams } from './core';
+import { computeShoeboxTaps, computeRoomTaps, type ShoeboxParams, type WallDef, type EdgeDef } from './core';
 import { buildRoomIr } from './roomIr';
 import { scatteringFor } from './materials';
 
@@ -50,6 +50,38 @@ export class ClapRoom {
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
       scattering: representativeScattering(params),
+    });
+    const buf = this.graph.ctx.createBuffer(2, ir.length, ir.sampleRate);
+    buf.getChannelData(0).set(ir.left);
+    buf.getChannelData(1).set(ir.right);
+    this.convolver.buffer = buf;
+  }
+
+  /**
+   * Recompute the room IR from GENERAL geometry — an arbitrary wall list (+ edges)
+   * at the current listener position. This is what the game uses, so open levels,
+   * interior walls, stepped ceilings, and (future) MOVING walls all produce correct
+   * echoes: the caller just passes the live wall list each clap.
+   *
+   * `scattering` is the representative coefficient for the surfaces in play (the
+   * caller knows the materials; WallDefs only carry absorption).
+   */
+  updateGeneralRoom(
+    walls: WallDef[],
+    listener: [number, number, number],
+    yaw: number,
+    opts: { edges?: EdgeDef[]; maxOrder?: number; scattering?: number } = {},
+  ) {
+    const taps = computeRoomTaps({
+      walls,
+      edges: opts.edges,
+      listener,
+      source: listener, // clap originates at the head
+      maxOrder: opts.maxOrder ?? 2,
+    });
+    const ir = buildRoomIr(taps, this.renderer.set, {
+      yaw,
+      scattering: opts.scattering ?? 0.1,
     });
     const buf = this.graph.ctx.createBuffer(2, ir.length, ir.sampleRate);
     buf.getChannelData(0).set(ir.left);

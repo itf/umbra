@@ -3,10 +3,10 @@ import { HrtfRenderer } from './engine/hrtf/renderer';
 import { Compass } from './game/compass';
 import { initAcoustics } from './engine/acoustics/core';
 import { ClapRoom } from './engine/acoustics/clapRoom';
-import type { ShoeboxParams } from './engine/acoustics/core';
+import type { WallDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
 import { Heading } from './game/heading';
-import { currentEditorLevel, loadLevel } from './level/load';
+import { currentEditorLevel, loadLevel, boxRoomWalls } from './level/load';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -32,6 +32,10 @@ let LEVEL: GameLevel = {
   beacon: { x: 4, z: 1.5, freq: 440 },
   goalRadius: 0.8,
 };
+// Acoustic geometry for the clap (the general solver). Defaults to the built-in
+// room's 6 walls; replaced by the editor level's geometry when loaded.
+let WALLS: WallDef[] = boxRoomWalls(ROOM, 'concrete');
+let SCATTER = 0.05;
 
 if (new URLSearchParams(location.search).get('level') === 'current') {
   const edited = currentEditorLevel();
@@ -39,6 +43,8 @@ if (new URLSearchParams(location.search).get('level') === 'current') {
     const loaded = loadLevel(edited);
     LEVEL = loaded.game;
     ROOM = loaded.roomSize;
+    WALLS = loaded.walls;
+    SCATTER = loaded.scattering;
   }
 }
 
@@ -189,21 +195,17 @@ function setupClap(
   renderer: HrtfRenderer,
   game: Game,
 ) {
-  const room: ShoeboxParams = {
-    size: ROOM,
-    materials: { '-y': 'carpet', '-z': 'concrete', '+z': 'concrete', '-x': 'concrete', '+x': 'concrete', '+y': 'concrete' },
-    listener: [LEVEL.start.x, 1.6, LEVEL.start.z],
-    source: [LEVEL.start.x, 1.6, LEVEL.start.z],
-    maxOrder: 2,
-  };
   const clapRoom = new ClapRoom({ ctx, master }, renderer);
   const listenBtn = document.getElementById('listen');
   listenBtn?.addEventListener('click', () => {
-    // Clap from the player's current position (game owns the listener pose).
+    // Clap from the player's current position, through the ACTUAL room geometry
+    // (general solver). WALLS is the live wall list — when walls move in future,
+    // this recompute picks up their new positions automatically.
     const p = game.listenerPos;
-    room.listener = [p.x, p.y, p.z];
-    room.source = [p.x, p.y, p.z];
-    clapRoom.updateRoom(room, p.yaw);
+    clapRoom.updateGeneralRoom(WALLS, [p.x, p.y, p.z], p.yaw, {
+      maxOrder: 2,
+      scattering: SCATTER,
+    });
     clapRoom.clap();
     say('Clap! Listen to the room around you.');
   });

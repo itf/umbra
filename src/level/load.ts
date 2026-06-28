@@ -3,10 +3,10 @@
  * beacon + goal) and the acoustic geometry (room walls + interior walls + floor
  * material). The editor places things in 2D; we lift them to 3D here.
  */
-import type { Level } from './schema';
+import type { Level, MaterialName } from './schema';
 import type { GameLevel } from '../game/game';
 import type { WallDef } from '../engine/acoustics/core';
-import { MATERIALS } from '../engine/acoustics/materials';
+import { MATERIALS, scatteringFor } from '../engine/acoustics/materials';
 
 const abs = (m: string): number[] => [...(MATERIALS[m] ?? MATERIALS.concrete)];
 
@@ -15,6 +15,24 @@ export interface LoadedLevel {
   /** Acoustic geometry (perimeter + interior walls) for the clap/room IR. */
   walls: WallDef[];
   roomSize: [number, number, number];
+  /** Representative scattering coefficient across the level's materials. */
+  scattering: number;
+}
+
+/** The 6 axis-aligned walls of a box room, all one material — used as the default
+ *  game level's geometry and a convenience for callers. */
+export function boxRoomWalls(size: [number, number, number], material: MaterialName | string): WallDef[] {
+  const [sx, sy, sz] = size;
+  const a = abs(material);
+  const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
+  return [
+    { verts: [v(0, 0, 0), v(0, 0, sz), v(0, sy, sz), v(0, sy, 0)], absorption: a },
+    { verts: [v(sx, 0, 0), v(sx, sy, 0), v(sx, sy, sz), v(sx, 0, sz)], absorption: a },
+    { verts: [v(0, 0, 0), v(sx, 0, 0), v(sx, 0, sz), v(0, 0, sz)], absorption: a },
+    { verts: [v(0, sy, 0), v(0, sy, sz), v(sx, sy, sz), v(sx, sy, 0)], absorption: a },
+    { verts: [v(0, 0, 0), v(0, sy, 0), v(sx, sy, 0), v(sx, 0, 0)], absorption: a },
+    { verts: [v(0, 0, sz), v(sx, 0, sz), v(sx, sy, sz), v(0, sy, sz)], absorption: a },
+  ];
 }
 
 /** Read the editor's "current" level from localStorage, if present. */
@@ -57,11 +75,31 @@ function ceilingQuads(level: Level): WallDef[] {
     { verts: [v(0, sy, 0), v(0, sy, sz), v(sx, sy, sz), v(sx, sy, 0)], absorption: abs(level.ceilingMaterial) },
   ];
   for (const c of level.ceilings) {
+    // The lower ceiling plane over the zone.
     quads.push({
       verts: [v(c.x, c.height, c.z), v(c.x, c.height, c.z + c.d),
               v(c.x + c.w, c.height, c.z + c.d), v(c.x + c.w, c.height, c.z)],
       absorption: abs(c.material),
     });
+    // PARTIAL WALLS connecting the height change: when this zone's ceiling is
+    // lower than the surrounding ceiling, the four sides of the step are real
+    // vertical surfaces (the "soffit" faces) from c.height up to room height.
+    // Without these, sound would leak through the open band around a dropped
+    // ceiling. (If the zone is higher than the room ceiling, no step-down walls.)
+    if (c.height < sy - 1e-3) {
+      const x0 = c.x, x1 = c.x + c.w, z0 = c.z, z1 = c.z + c.d;
+      const m = abs(c.material);
+      quads.push(
+        // -z face
+        { verts: [v(x0, c.height, z0), v(x1, c.height, z0), v(x1, sy, z0), v(x0, sy, z0)], absorption: m },
+        // +z face
+        { verts: [v(x0, c.height, z1), v(x0, sy, z1), v(x1, sy, z1), v(x1, c.height, z1)], absorption: m },
+        // -x face
+        { verts: [v(x0, c.height, z0), v(x0, sy, z0), v(x0, sy, z1), v(x0, c.height, z1)], absorption: m },
+        // +x face
+        { verts: [v(x1, c.height, z0), v(x1, c.height, z1), v(x1, sy, z1), v(x1, sy, z0)], absorption: m },
+      );
+    }
   }
   return quads;
 }
@@ -108,9 +146,21 @@ export function loadLevel(level: Level): LoadedLevel {
     ...(level.open ? [] : perimeterWalls(level)),
     ...level.walls.map((w) => interiorWall(level, w.ax, w.az, w.bx, w.bz, w.material)),
   ];
+
+  // Representative mid-band scattering across all the materials in play.
+  const usedMats = new Set<string>([
+    level.roomMaterial, level.floorMaterial, level.ceilingMaterial,
+    ...level.walls.map((w) => w.material),
+    ...level.ceilings.map((c) => c.material),
+  ]);
+  let sSum = 0;
+  for (const m of usedMats) sSum += scatteringFor(m)[4]; // ~1kHz band
+  const scattering = usedMats.size ? sSum / usedMats.size : 0.1;
+
   return {
     game,
     walls,
     roomSize: [level.room.width, level.room.height, level.room.depth],
+    scattering,
   };
 }
