@@ -65,6 +65,22 @@ export interface FloorZone {
 }
 
 /**
+ * A ceiling zone: over the rectangle [x,z, w×d], the ceiling is at `height` with
+ * `material`. Lets a level have a low-ceilinged alcove inside a tall hall, etc.
+ * Outside every zone, the room's default ceiling (room.height / roomMaterial)
+ * applies — unless the level has no ceiling at all (open space).
+ */
+export interface CeilingZone {
+  id: string;
+  x: number;
+  z: number;
+  w: number;
+  d: number;
+  height: number;
+  material: MaterialName;
+}
+
+/**
  * A monster placement. PLACE-ONLY for now: saved in the level with its props, but
  * the game does not yet run chase AI. The fields anticipate that future feature.
  */
@@ -82,16 +98,31 @@ export interface Level {
   /** Schema version for forward-compat. */
   version: 1;
   name: string;
+  /**
+   * When true, there is NO enclosing room — an open space (a street, a field).
+   * Only the free-standing walls/buildings you place reflect sound; there's no
+   * perimeter, ceiling, or floor box. The `room` width/depth then just bound the
+   * editor canvas; `height` is the height of free-standing walls.
+   */
+  open: boolean;
   /** Room footprint (the bounding box). Height is the wall height in metres. */
   room: { width: number; depth: number; height: number };
   /** Default material for the room's perimeter walls + floor. */
   roomMaterial: MaterialName;
   floorMaterial: MaterialName;
+  /**
+   * Whether the level has a ceiling at all. Open/outdoor levels set this false
+   * (sky — no overhead reflection). Defaults true for enclosed rooms.
+   */
+  hasCeiling: boolean;
+  /** Default ceiling material (when there IS a ceiling). */
+  ceilingMaterial: MaterialName;
 
   start: StartPoint;
   beacons: BeaconObj[];
   walls: WallObj[];
   floors: FloorZone[];
+  ceilings: CeilingZone[];
   monsters: MonsterObj[];
 }
 
@@ -100,13 +131,17 @@ export function emptyLevel(name = 'Untitled'): Level {
   return {
     version: 1,
     name,
+    open: false,
     room: { width: 12, depth: 16, height: 3 },
     roomMaterial: 'concrete',
     floorMaterial: 'concrete',
+    hasCeiling: true,
+    ceilingMaterial: 'concrete',
     start: { x: 6, z: 14, yaw: 0 },
     beacons: [{ id: 'beacon-1', x: 6, z: 2, freq: 440, goalRadius: 0.8 }],
     walls: [],
     floors: [],
+    ceilings: [],
     monsters: [],
   };
 }
@@ -115,6 +150,11 @@ export function emptyLevel(name = 'Untitled'): Level {
 export function isLevel(v: unknown): v is Level {
   if (!v || typeof v !== 'object') return false;
   const l = v as Partial<Level>;
+  // Back-compat: fill fields added after early levels were saved.
+  if (typeof l.open !== 'boolean') l.open = false;
+  if (typeof l.hasCeiling !== 'boolean') l.hasCeiling = !l.open;
+  if (typeof l.ceilingMaterial !== 'string') l.ceilingMaterial = l.roomMaterial ?? 'concrete';
+  if (!Array.isArray(l.ceilings)) l.ceilings = [];
   return (
     l.version === 1 &&
     typeof l.name === 'string' &&

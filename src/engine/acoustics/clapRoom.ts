@@ -8,6 +8,16 @@ import type { AudioGraph } from '../audioGraph';
 import type { HrtfRenderer } from '../hrtf/renderer';
 import { computeShoeboxTaps, type ShoeboxParams } from './core';
 import { buildRoomIr } from './roomIr';
+import { scatteringFor } from './materials';
+
+/** Average mid-band scattering across a room's assigned wall materials. */
+function representativeScattering(params: ShoeboxParams): number {
+  const mats = Object.values(params.materials);
+  if (mats.length === 0) return 0.1;
+  let sum = 0;
+  for (const m of mats) sum += scatteringFor(m as string)[4]; // ~1kHz band
+  return sum / mats.length;
+}
 
 export interface ClapRoomConfig {
   room: ShoeboxParams; // listener/source filled per-clap from pose
@@ -37,7 +47,10 @@ export class ClapRoom {
    */
   updateRoom(params: ShoeboxParams, yaw: number) {
     const taps = computeShoeboxTaps(params);
-    const ir = buildRoomIr(taps, this.renderer.set, { yaw });
+    const ir = buildRoomIr(taps, this.renderer.set, {
+      yaw,
+      scattering: representativeScattering(params),
+    });
     const buf = this.graph.ctx.createBuffer(2, ir.length, ir.sampleRate);
     buf.getChannelData(0).set(ir.left);
     buf.getChannelData(1).set(ir.right);

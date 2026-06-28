@@ -59,12 +59,17 @@ export function draw(
 ) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Room floor.
+  // Room floor (open levels have no floor box — just a faint editor bound).
   const [rx, ry] = worldToScreen(v, 0, 0);
   const rw = level.room.width * v.scale;
   const rd = level.room.depth * v.scale;
-  ctx.fillStyle = matColor(level.floorMaterial) + '33';
-  ctx.fillRect(rx, ry, rw, rd);
+  if (!level.open) {
+    ctx.fillStyle = matColor(level.floorMaterial) + '33';
+    ctx.fillRect(rx, ry, rw, rd);
+  } else {
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fillRect(rx, ry, rw, rd);
+  }
 
   // Grid (1 m).
   if (opts.grid) {
@@ -88,10 +93,31 @@ export function draw(
     strokeIfSelected(ctx, opts, f.id, fx, fy, f.w * v.scale, f.d * v.scale);
   }
 
-  // Room perimeter wall.
-  ctx.strokeStyle = matColor(level.roomMaterial);
-  ctx.lineWidth = 4;
-  ctx.strokeRect(rx, ry, rw, rd);
+  // Ceiling zones (overhead) — drawn as dashed cyan rectangles with their height.
+  for (const c of level.ceilings) {
+    const [cx, cy] = worldToScreen(v, c.x, c.z);
+    ctx.save();
+    ctx.strokeStyle = c.id === opts.selectedId ? '#ffd166' : '#5bd1ff';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx, cy, c.w * v.scale, c.d * v.scale);
+    ctx.restore();
+    label(ctx, cx + (c.w * v.scale) / 2, cy + 12, `ceil ${c.height}m`);
+  }
+
+  // Room perimeter: a solid wall when enclosed, a dashed editor-bound when open.
+  if (level.open) {
+    ctx.save();
+    ctx.strokeStyle = '#3a3a3a';
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(rx, ry, rw, rd);
+    ctx.restore();
+  } else {
+    ctx.strokeStyle = matColor(level.roomMaterial);
+    ctx.lineWidth = 4;
+    ctx.strokeRect(rx, ry, rw, rd);
+  }
 
   // Interior walls.
   for (const w of level.walls) {

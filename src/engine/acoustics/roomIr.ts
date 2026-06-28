@@ -28,6 +28,14 @@ export interface RoomIrOptions {
   yaw?: number;
   /** Extra tail seconds beyond the latest tap (headroom for filter ringing). */
   tailPad?: number;
+  /**
+   * Representative scattering coefficient (0..1) for the room's surfaces. When >0,
+   * each reflection keeps (1−s) of its energy as a crisp specular tap and spreads
+   * the remaining s as a short diffuse "smear" (a few jittered, decaying copies).
+   * This makes rough surfaces (brick, gravel) sound soft and spread-out rather
+   * than a single sharp echo. A scalar is sufficient at this altitude.
+   */
+  scattering?: number;
 }
 
 /** Rotate a world direction into head-local space (inverse listener yaw). */
@@ -115,15 +123,26 @@ export function buildRoomIr(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = {}
   const yaw = opts.yaw ?? 0;
   const sr = hrtf.sampleRate;
   const tailPad = opts.tailPad ?? 0.05;
+  const scatter = Math.max(0, Math.min(1, opts.scattering ?? 0));
+  // Diffuse smear length (seconds) — how far a scattered reflection spreads.
+  const smearSec = 0.02;
+  const smearN = Math.ceil(smearSec * sr);
 
-  // Output length: latest tap delay + HRIR length + band-FIR length + pad.
+  // Output length: latest tap delay + HRIR length + band-FIR length + smear + pad.
   let maxDelay = 0;
   for (const t of taps) if (t.delay > maxDelay) maxDelay = t.delay;
-  const extra = hrtf.taps + hrtf.taps + Math.ceil(tailPad * sr);
+  const extra = hrtf.taps + hrtf.taps + smearN + Math.ceil(tailPad * sr);
   const length = Math.ceil(maxDelay * sr) + extra;
 
   const left = new Float32Array(length);
   const right = new Float32Array(length);
+
+  // Deterministic jitter for the diffuse smear (avoids Math.random for testability).
+  let seed = 0x9e3779b9;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 0xffffffff;
+  };
 
   for (const t of taps) {
     const hd = worldDirToHead(t.dir, yaw);
@@ -138,15 +157,40 @@ export function buildRoomIr(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = {}
     const cl = convolve(hl, fir);
     const cr = convolve(hr, fir);
 
-    const offset = Math.round(t.delay * sr);
-    const g = t.gain;
-    for (let i = 0; i < cl.length; i++) {
-      const o = offset + i;
-      if (o >= length) break;
-      left[o] += cl[i] * g;
-      right[o] += cr[i] * g;
+    // Scattering: the direct path (order 0) is never scattered. For reflections,
+    // keep (1−s) specular and spread s as a short diffuse tail of jittered copies.
+    const s = t.order === 0 ? 0 : scatter;
+    const specGain = t.gain * (1 - s);
+    place(left, right, cl, cr, Math.round(t.delay * sr), specGain, length);
+
+    if (s > 0) {
+      const copies = 6;
+      const baseOff = Math.round(t.delay * sr);
+      for (let c = 0; c < copies; c++) {
+        const jitter = Math.round(rand() * smearN);
+        // Each diffuse copy is quieter and later; total diffuse energy ≈ s·gain.
+        const decay = (1 - jitter / smearN) * (0.5 + 0.5 * rand());
+        const dg = (t.gain * s * decay) / copies;
+        place(left, right, cl, cr, baseOff + jitter, dg, length);
+      }
     }
   }
 
   return { left, right, sampleRate: sr, length };
+}
+
+/** Add a convolved L/R tap into the output buffers at a sample offset. */
+function place(
+  left: Float32Array, right: Float32Array,
+  cl: Float32Array, cr: Float32Array,
+  offset: number, gain: number, length: number,
+) {
+  if (gain === 0) return;
+  for (let i = 0; i < cl.length; i++) {
+    const o = offset + i;
+    if (o >= length) break;
+    if (o < 0) continue;
+    left[o] += cl[i] * gain;
+    right[o] += cr[i] * gain;
+  }
 }

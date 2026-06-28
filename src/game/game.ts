@@ -9,12 +9,27 @@ import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
 import { Footsteps } from './footsteps';
 
+/** A wall segment for collision + material-keyed bump sounds. */
+export interface CollisionWall {
+  ax: number; az: number; bx: number; bz: number; material: string;
+}
+/** A rectangular floor zone (for per-material footstep sounds). */
+export interface FloorRegion {
+  x: number; z: number; w: number; d: number; material: string;
+}
+
 export interface GameLevel {
   start: { x: number; z: number; yaw: number };
   beacon: { x: number; z: number; freq: number };
   /** Win when within this many metres of the beacon. */
   goalRadius: number;
   headHeight?: number;
+  /** Default floor material when not standing in any zone. */
+  floorMaterial?: string;
+  /** Floor zones for per-material footsteps (optional). */
+  floors?: FloorRegion[];
+  /** Walls you can bump into (optional). */
+  walls?: CollisionWall[];
 }
 
 export interface GameCallbacks {
@@ -91,23 +106,50 @@ export class Game {
   /** Take a step with the given foot at time nowMs (default: audio clock). */
   step(foot: Foot, nowMs = this.graph.ctx.currentTime * 1000) {
     if (this.won) return;
+    const before = { x: this.player.state.x, z: this.player.state.z };
     const result = this.player.step(foot, nowMs);
     const s = this.player.state;
 
     if (result.outcome.kind === 'step') {
-      // After standing still, the feet came together — play the soft reset cue
-      // just before this (either-foot) step.
-      if (result.outcome.settled) {
-        this.footsteps.feetTogether({ x: s.x, y: this.headHeight, z: s.z });
+      // Wall collision: if this step would cross a wall, undo the move and bump
+      // into it (material-keyed sound) instead of walking through.
+      const hitWall = this.crossedWall(before.x, before.z, s.x, s.z);
+      if (hitWall) {
+        this.player.state.x = before.x;
+        this.player.state.z = before.z;
+        this.footsteps.bump(hitWall.material);
+        this.cb.onStumble?.('wall');
+        this.syncListener();
+        return;
       }
-      this.footsteps.step(result.outcome.foot, { x: s.x, y: this.headHeight, z: s.z, yaw: s.yaw });
+      // After standing still, the feet came together — soft reset cue.
+      if (result.outcome.settled) this.footsteps.feetTogether();
+      this.footsteps.step(result.outcome.foot, this.floorMaterialAt(s.x, s.z));
       this.cb.onStep?.(result.outcome.foot, result.outcome.stride);
       this.syncListener();
       this.checkWin();
     } else {
-      this.footsteps.stumble({ x: s.x, y: this.headHeight, z: s.z });
+      this.footsteps.stumble();
       this.cb.onStumble?.(result.outcome.reason);
     }
+  }
+
+  /** Floor material at a point: the topmost matching floor zone, else default. */
+  private floorMaterialAt(x: number, z: number): string {
+    const zones = this.level.floors ?? [];
+    for (let i = zones.length - 1; i >= 0; i--) {
+      const f = zones[i];
+      if (x >= f.x && x <= f.x + f.w && z >= f.z && z <= f.z + f.d) return f.material;
+    }
+    return this.level.floorMaterial ?? 'concrete';
+  }
+
+  /** Returns the wall a move (ax,az)->(bx,bz) crosses, if any. */
+  private crossedWall(ax: number, az: number, bx: number, bz: number): CollisionWall | null {
+    for (const w of this.level.walls ?? []) {
+      if (segmentsIntersect(ax, az, bx, bz, w.ax, w.az, w.bx, w.bz)) return w;
+    }
+    return null;
   }
 
   /** Which foot is expected next (for UI hinting). */
@@ -141,4 +183,18 @@ export class Game {
     this.beaconLfo.stop();
     this.beacon.disconnect();
   }
+}
+
+/** 2D segment intersection test (standard orientation method). */
+function segmentsIntersect(
+  ax: number, ay: number, bx: number, by: number,
+  cx: number, cy: number, dx: number, dy: number,
+): boolean {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+    Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+  const o1 = o(ax, ay, bx, by, cx, cy);
+  const o2 = o(ax, ay, bx, by, dx, dy);
+  const o3 = o(cx, cy, dx, dy, ax, ay);
+  const o4 = o(cx, cy, dx, dy, bx, by);
+  return o1 !== o2 && o3 !== o4;
 }

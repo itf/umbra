@@ -59,11 +59,13 @@ startButton.addEventListener('click', async () => {
         say(`Step ${foot === 'L' ? 'left' : 'right'} (${stride.toFixed(2)} m).`),
       onStumble: (reason) =>
         alert(
-          reason === 'too-fast'
-            ? 'You stumbled — slow down!'
-            : reason === 'wrong-foot'
-              ? 'Wrong foot — alternate left and right.'
-              : 'Recovering…',
+          reason === 'wall'
+            ? 'You bumped into a wall.'
+            : reason === 'too-fast'
+              ? 'You stumbled — slow down!'
+              : reason === 'wrong-foot'
+                ? 'Wrong foot — alternate left and right.'
+                : 'Recovering…',
         ),
       onWin: () => {
         won = true;

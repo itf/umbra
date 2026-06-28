@@ -5,7 +5,7 @@
  */
 import {
   emptyLevel, type Level, type MaterialName,
-  type WallObj, type BeaconObj, type FloorZone, type MonsterObj,
+  type WallObj, type BeaconObj, type FloorZone, type MonsterObj, type CeilingZone,
 } from '../level/schema';
 import {
   saveLevel, loadLevel, deleteLevel, listLevels, exportLevel, importLevel,
@@ -14,7 +14,7 @@ import {
   fitView, draw, screenToWorld, worldToScreen, type ViewState, MATERIAL_NAMES,
 } from './view';
 
-type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'monster';
+type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster';
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('canvas') as HTMLCanvasElement;
@@ -27,7 +27,7 @@ let material: MaterialName = 'concrete';
 let selectedId: string | null = null;
 
 // In-progress drag (for wall draw / floor draw / move).
-let drag: { kind: 'wall' | 'floor' | 'move'; ax: number; az: number; id?: string } | null = null;
+let drag: { kind: 'wall' | 'floor' | 'ceiling' | 'move'; ax: number; az: number; id?: string } | null = null;
 
 let nextId = 1;
 const genId = (p: string) => `${p}-${Date.now()}-${nextId++}`;
@@ -64,6 +64,9 @@ function hitTest(wx: number, wz: number): string | null {
   for (const w of level.walls) {
     if (distToSeg(wx, wz, w.ax, w.az, w.bx, w.bz) < 0.4) return w.id;
   }
+  for (const c of level.ceilings) {
+    if (wx >= c.x && wx <= c.x + c.w && wz >= c.z && wz <= c.z + c.d) return c.id;
+  }
   for (const f of level.floors) {
     if (wx >= f.x && wx <= f.x + f.w && wz >= f.z && wz <= f.z + f.d) return f.id;
   }
@@ -81,6 +84,7 @@ function findObj(id: string): StartLike | null {
   const b = level.beacons.find((o) => o.id === id); if (b) return { kind: 'beacon', ref: b };
   const w = level.walls.find((o) => o.id === id); if (w) return { kind: 'wall', ref: w };
   const f = level.floors.find((o) => o.id === id); if (f) return { kind: 'floor', ref: f };
+  const c = level.ceilings.find((o) => o.id === id); if (c) return { kind: 'ceiling', ref: c };
   const m = level.monsters.find((o) => o.id === id); if (m) return { kind: 'monster', ref: m };
   return null;
 }
@@ -89,6 +93,7 @@ type StartLike =
   | { kind: 'beacon'; ref: BeaconObj }
   | { kind: 'wall'; ref: WallObj }
   | { kind: 'floor'; ref: FloorZone }
+  | { kind: 'ceiling'; ref: CeilingZone }
   | { kind: 'monster'; ref: MonsterObj };
 
 // ---------- pointer interaction ----------
@@ -116,6 +121,7 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (tool === 'wall') { drag = { kind: 'wall', ax: wx, az: wz }; return; }
   if (tool === 'floor') { drag = { kind: 'floor', ax: wx, az: wz }; return; }
+  if (tool === 'ceiling') { drag = { kind: 'ceiling', ax: wx, az: wz }; return; }
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -128,12 +134,13 @@ canvas.addEventListener('pointermove', (e) => {
     moveObject(drag.id, wx - drag.ax, wz - drag.az);
     drag.ax = wx; drag.az = wz;
     renderProps(); render();
-  } else if (drag.kind === 'wall' || drag.kind === 'floor') {
+  } else if (drag.kind === 'wall' || drag.kind === 'floor' || drag.kind === 'ceiling') {
     // Preview: redraw then overlay the in-progress shape.
     render();
     const [sx, sy] = worldToScreen(view, drag.ax, drag.az);
     const [ex, ey] = worldToScreen(view, wx, wz);
-    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2;
+    ctx.strokeStyle = drag.kind === 'ceiling' ? '#5bd1ff' : '#ffd166';
+    ctx.lineWidth = 2;
     if (drag.kind === 'wall') {
       ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.stroke();
     } else {
@@ -156,6 +163,16 @@ canvas.addEventListener('pointerup', (e) => {
       const f: FloorZone = { id: genId('floor'), x, z, w: fw, d, material };
       level.floors.push(f); selectedId = f.id;
     }
+  } else if (drag.kind === 'ceiling') {
+    const x = Math.min(drag.ax, wx), z = Math.min(drag.az, wz);
+    const cw = Math.abs(wx - drag.ax), d = Math.abs(wz - drag.az);
+    if (cw > 0.4 && d > 0.4) {
+      const c: CeilingZone = {
+        id: genId('ceiling'), x, z, w: cw, d,
+        height: Math.max(1, level.room.height - 1), material,
+      };
+      level.ceilings.push(c); selectedId = c.id;
+    }
   }
   drag = null;
   renderProps(); render();
@@ -166,9 +183,8 @@ function moveObject(id: string, dx: number, dz: number) {
   if (!o) return;
   if (o.kind === 'wall') {
     o.ref.ax += dx; o.ref.az += dz; o.ref.bx += dx; o.ref.bz += dz;
-  } else if (o.kind === 'floor') {
-    o.ref.x += dx; o.ref.z += dz;
   } else {
+    // floor / ceiling / beacon / monster / start all have x,z.
     o.ref.x += dx; o.ref.z += dz;
   }
 }
@@ -200,6 +216,10 @@ function renderProps() {
   } else if (o.kind === 'floor') {
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('w', 'w', o.ref.w), numRow('d', 'd', o.ref.d), matRow(o.ref.material));
+  } else if (o.kind === 'ceiling') {
+    rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
+      numRow('w', 'w', o.ref.w), numRow('d', 'd', o.ref.d),
+      numRow('height', 'height', o.ref.height), matRow(o.ref.material));
   } else if (o.kind === 'monster') {
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('speed', 'speed', o.ref.speed, 0.1),
@@ -229,6 +249,7 @@ function deleteSelected() {
   level.beacons = level.beacons.filter((o) => o.id !== selectedId);
   level.walls = level.walls.filter((o) => o.id !== selectedId);
   level.floors = level.floors.filter((o) => o.id !== selectedId);
+  level.ceilings = level.ceilings.filter((o) => o.id !== selectedId);
   level.monsters = level.monsters.filter((o) => o.id !== selectedId);
   selectedId = null; renderProps(); render();
 }
@@ -261,6 +282,26 @@ function bindRoom(id: string, key: 'width' | 'depth' | 'height') {
   });
 }
 bindRoom('room-w', 'width'); bindRoom('room-d', 'depth'); bindRoom('room-h', 'height');
+
+// Open-space toggle: opening a level removes its ceiling by default (sky).
+const openEl = $('room-open') as HTMLInputElement;
+const ceilEl = $('room-ceil') as HTMLInputElement;
+const ceilHEl = $('ceil-h') as HTMLInputElement;
+openEl.checked = level.open;
+openEl.addEventListener('change', () => {
+  level.open = openEl.checked;
+  if (level.open) level.hasCeiling = false;
+  ceilEl.checked = level.hasCeiling;
+  render();
+});
+// Ceiling toggle + default ceiling height.
+ceilEl.checked = level.hasCeiling;
+ceilEl.addEventListener('change', () => { level.hasCeiling = ceilEl.checked; render(); });
+ceilHEl.value = String(level.room.height);
+ceilHEl.addEventListener('input', () => {
+  const n = parseFloat(ceilHEl.value);
+  if (!Number.isNaN(n) && n > 0) { level.room.height = n; render(); }
+});
 
 // Name.
 const nameEl = $('level-name') as HTMLInputElement;
@@ -326,6 +367,9 @@ function syncRoomInputs() {
   ($('room-w') as HTMLInputElement).value = String(level.room.width);
   ($('room-d') as HTMLInputElement).value = String(level.room.depth);
   ($('room-h') as HTMLInputElement).value = String(level.room.height);
+  ($('ceil-h') as HTMLInputElement).value = String(level.room.height);
+  ($('room-open') as HTMLInputElement).checked = !!level.open;
+  ($('room-ceil') as HTMLInputElement).checked = !!level.hasCeiling;
 }
 let hintTimer = 0;
 function flashHint(msg: string) {

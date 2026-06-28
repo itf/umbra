@@ -30,6 +30,7 @@
           <button class="tool" data-tool="beacon">Beacon</button>
           <button class="tool" data-tool="wall">Wall</button>
           <button class="tool" data-tool="floor">Floor zone</button>
+          <button class="tool" data-tool="ceiling">Ceiling zone</button>
           <button class="tool" data-tool="monster">Monster</button>
         </div>
 
@@ -37,9 +38,12 @@
         <select id="material" aria-label="Material for new walls/floors"></select>
 
         <h2>Room</h2>
-        <label>Width <input id="room-w" type="number" min="2" max="100" step="1" /></label>
-        <label>Depth <input id="room-d" type="number" min="2" max="100" step="1" /></label>
+        <label><span>Open space (no walls)</span><input id="room-open" type="checkbox" /></label>
+        <label>Width <input id="room-w" type="number" min="2" max="200" step="1" /></label>
+        <label>Depth <input id="room-d" type="number" min="2" max="200" step="1" /></label>
         <label>Height <input id="room-h" type="number" min="2" max="20" step="0.5" /></label>
+        <label><span>Ceiling</span><input id="room-ceil" type="checkbox" /></label>
+        <label>Ceiling height <input id="ceil-h" type="number" min="2" max="20" step="0.5" /></label>
 
         <h2 id="props-title">Selection</h2>
         <div id="props"><p class="hint">Nothing selected.</p></div>

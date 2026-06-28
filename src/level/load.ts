@@ -28,19 +28,42 @@ export function currentEditorLevel(): Level | null {
   }
 }
 
-/** Build the 6 perimeter walls of the room box as polygon WallDefs. */
+/** Build the perimeter walls + floor (+ ceiling if present) as polygon WallDefs. */
 function perimeterWalls(level: Level): WallDef[] {
   const { width: sx, depth: sz, height: sy } = level.room;
   const a = abs(level.roomMaterial);
   const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
-  return [
+  const walls: WallDef[] = [
     { verts: [v(0, 0, 0), v(0, 0, sz), v(0, sy, sz), v(0, sy, 0)], absorption: a }, // -x
     { verts: [v(sx, 0, 0), v(sx, sy, 0), v(sx, sy, sz), v(sx, 0, sz)], absorption: a }, // +x
     { verts: [v(0, 0, 0), v(sx, 0, 0), v(sx, 0, sz), v(0, 0, sz)], absorption: abs(level.floorMaterial) }, // floor
-    { verts: [v(0, sy, 0), v(0, sy, sz), v(sx, sy, sz), v(sx, sy, 0)], absorption: a }, // ceil
     { verts: [v(0, 0, 0), v(0, sy, 0), v(sx, sy, 0), v(sx, 0, 0)], absorption: a }, // -z
     { verts: [v(0, 0, sz), v(sx, 0, sz), v(sx, sy, sz), v(0, sy, sz)], absorption: a }, // +z
   ];
+  if (level.hasCeiling) walls.push(...ceilingQuads(level));
+  return walls;
+}
+
+/**
+ * Ceiling as horizontal quad(s). A flat default ceiling at room.height, plus any
+ * CeilingZones that override height/material over their rectangle. We emit the
+ * default ceiling and each zone as separate quads; overlapping zones simply add a
+ * lower reflecting surface (the image-source method handles multiple planes).
+ */
+function ceilingQuads(level: Level): WallDef[] {
+  const { width: sx, depth: sz, height: sy } = level.room;
+  const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
+  const quads: WallDef[] = [
+    { verts: [v(0, sy, 0), v(0, sy, sz), v(sx, sy, sz), v(sx, sy, 0)], absorption: abs(level.ceilingMaterial) },
+  ];
+  for (const c of level.ceilings) {
+    quads.push({
+      verts: [v(c.x, c.height, c.z), v(c.x, c.height, c.z + c.d),
+              v(c.x + c.w, c.height, c.z + c.d), v(c.x + c.w, c.height, c.z)],
+      absorption: abs(c.material),
+    });
+  }
+  return quads;
 }
 
 /** An interior wall segment, extruded to room height as a thin vertical quad. */
@@ -48,6 +71,18 @@ function interiorWall(level: Level, ax: number, az: number, bx: number, bz: numb
   const sy = level.room.height;
   const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
   return { verts: [v(ax, 0, az), v(bx, 0, bz), v(bx, sy, bz), v(ax, sy, az)], absorption: abs(mat) };
+}
+
+/** The room perimeter as 4 collision wall segments. */
+function perimeterSegments(level: Level) {
+  const { width: w, depth: d } = level.room;
+  const m = level.roomMaterial;
+  return [
+    { ax: 0, az: 0, bx: w, bz: 0, material: m },
+    { ax: w, az: 0, bx: w, bz: d, material: m },
+    { ax: w, az: d, bx: 0, bz: d, material: m },
+    { ax: 0, az: d, bx: 0, bz: 0, material: m },
+  ];
 }
 
 export function loadLevel(level: Level): LoadedLevel {
@@ -59,9 +94,18 @@ export function loadLevel(level: Level): LoadedLevel {
       : { x: level.room.width / 2, z: 1, freq: 440 },
     goalRadius: first?.goalRadius ?? 0.8,
     headHeight: 1.6,
+    floorMaterial: level.floorMaterial,
+    floors: level.floors.map((f) => ({ x: f.x, z: f.z, w: f.w, d: f.d, material: f.material })),
+    // Collision walls = interior walls, plus the perimeter (as 4 segments) when
+    // the level is enclosed, so you can't walk out of an enclosed room.
+    walls: [
+      ...level.walls.map((w) => ({ ax: w.ax, az: w.az, bx: w.bx, bz: w.bz, material: w.material })),
+      ...(level.open ? [] : perimeterSegments(level)),
+    ],
   };
+  // Open levels have no enclosing box — only the free-standing walls you placed.
   const walls = [
-    ...perimeterWalls(level),
+    ...(level.open ? [] : perimeterWalls(level)),
     ...level.walls.map((w) => interiorWall(level, w.ax, w.az, w.bx, w.bz, w.material)),
   ];
   return {

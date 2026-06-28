@@ -82,4 +82,32 @@ describe('buildRoomIr', () => {
     };
     expect(hf(dark.left)).toBeLessThan(hf(bright.left));
   });
+
+  it('scattering spreads a reflection in time and lowers its peak', () => {
+    const hrtf = fakeHrtf();
+    const tap: Tap = { delay: 0.01, gain: 1, dir: [0, 0, -1], order: 1, bandGains: flatBands(1) };
+    const crisp = buildRoomIr([tap], hrtf, { scattering: 0 });
+    const rough = buildRoomIr([tap], hrtf, { scattering: 0.8 });
+    const peak = (a: Float32Array) => a.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    // A scattered reflection has a lower specular peak (energy spread into a smear).
+    expect(peak(rough.left)).toBeLessThan(peak(crisp.left));
+    // The smear adds energy AFTER the specular arrival that the crisp version
+    // lacks — i.e. the reflection is spread out in time.
+    const specSample = Math.round(0.01 * hrtf.sampleRate) + hrtf.taps + 4;
+    const tail = (a: Float32Array) => {
+      let s = 0;
+      for (let i = specSample; i < a.length; i++) s += Math.abs(a[i]);
+      return s;
+    };
+    expect(tail(rough.left)).toBeGreaterThan(tail(crisp.left));
+  });
+
+  it('scattering never affects the direct path (order 0)', () => {
+    const hrtf = fakeHrtf();
+    const direct: Tap = { delay: 0.005, gain: 1, dir: [0, 0, -1], order: 0, bandGains: flatBands(1) };
+    const a = buildRoomIr([direct], hrtf, { scattering: 0 });
+    const b = buildRoomIr([direct], hrtf, { scattering: 0.9 });
+    const peak = (x: Float32Array) => x.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+    expect(peak(b.left)).toBeCloseTo(peak(a.left), 5);
+  });
 });
