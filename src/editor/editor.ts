@@ -285,7 +285,8 @@ function renderProps() {
       numRow('speed', 'speed', o.ref.speed, 0.1),
       `<label>sound<select data-k="sound">${MONSTER_PRESETS.map(
         (p) => `<option ${p === mcur ? 'selected' : ''}>${p}</option>`,
-      ).join('')}</select></label>`);
+      ).join('')}</select></label>`,
+      `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`);
   }
   const canDelete = o.kind !== 'start';
   host.innerHTML = heading + rows.join('') +
