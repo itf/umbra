@@ -15,14 +15,16 @@
  * AudioContext and is ear-verified.
  */
 
-/** The available beacon preset names. `tone` is the legacy pulsed sine. */
-export type BeaconPreset = 'tone' | 'pulse' | 'bell' | 'musicbox' | 'drip' | 'hum';
+/** The available beacon preset names. `tone` is the legacy pulsed sine; `flat` is a
+ *  pure continuous sine (no tremolo) — useful for hearing directional/level cues
+ *  cleanly, with no amplitude modulation of its own to mask them. */
+export type BeaconPreset = 'tone' | 'flat' | 'pulse' | 'bell' | 'musicbox' | 'drip' | 'hum';
 
 /** The default preset for old levels / unknown names (byte-identical to the
  *  original pulsed sine). */
 export const DEFAULT_BEACON_PRESET: BeaconPreset = 'tone';
 
-const PRESET_NAMES: readonly BeaconPreset[] = ['tone', 'pulse', 'bell', 'musicbox', 'drip', 'hum'];
+const PRESET_NAMES: readonly BeaconPreset[] = ['tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum'];
 
 /** Whether a string is a known preset name. */
 export function isBeaconPreset(name: unknown): name is BeaconPreset {
@@ -85,6 +87,7 @@ export interface BeaconTiming {
 
 const TIMING: Record<BeaconPreset, BeaconTiming> = {
   tone: { loop: 0 },     // continuous tremolo'd sine (legacy)
+  flat: { loop: 0 },     // continuous pure sine, no tremolo
   pulse: { loop: 0 },    // alias of tone
   bell: { loop: 2.4 },   // slow strikes — let the ring decay
   musicbox: { loop: 0.42 }, // one note per step of the motif
@@ -131,6 +134,7 @@ export class BeaconVoice {
     if (this.running) return;
     this.running = true;
     if (this.preset === 'tone' || this.preset === 'pulse') return this.startTone();
+    if (this.preset === 'flat') return this.startFlat();
     if (this.preset === 'hum') return this.startHum();
     // Pulsed presets: trigger once immediately, then on an interval.
     const period = beaconTiming(this.preset).loop;
@@ -174,6 +178,21 @@ export class BeaconVoice {
     osc.start();
     lfo.start();
     this.oscillators.push(osc, lfo);
+  }
+
+  /** A pure continuous sine, no tremolo — bare directional/level cues, nothing to
+   *  mask them. Useful for hearing the head-shadow loudness response (and any
+   *  swap/refresh artifacts) cleanly. */
+  private startFlat() {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = this.freq;
+    const g = ctx.createGain();
+    g.gain.value = 0.5; // match startTone's average level
+    osc.connect(g).connect(this.out);
+    osc.start();
+    this.oscillators.push(osc);
   }
 
   /** A low harmonic drone (root + a few harmonics) with a slow vibrato. */

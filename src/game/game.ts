@@ -6,6 +6,7 @@
  */
 import type { AudioGraph } from '../engine/audioGraph';
 import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
+import type { InterpolatingHrtfRenderer, InterpolatingHrtfSource } from '../engine/hrtf/interpolatingRenderer';
 import { ModeledSource } from '../engine/acoustics/modeledSource';
 import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
@@ -135,6 +136,14 @@ export class Game {
    */
   private beacon: HrtfSource | null = null;
   /**
+   * Optional CLICK-FREE interpolating HRTF renderer (?hrtf=interp). When provided
+   * AND the level has no acoustic geometry/steam, the beacon is rendered through the
+   * AudioWorklet that continuously interpolates the measured HRIRs (no convolver
+   * swap → no bucket-crossing click). A/B against the dual-convolver beacon above.
+   */
+  private interpRenderer: InterpolatingHrtfRenderer | null = null;
+  private interpBeacon: InterpolatingHrtfSource | null = null;
+  /**
    * The MODELED beacon: the dry voice rendered through the room solver so walls
    * occlude it and openings let it diffract through. Non-null iff the level has
    * acoustic geometry. Driven by `refreshBeacon()` on the per-frame throttle.
@@ -192,7 +201,9 @@ export class Game {
     cb: GameCallbacks = {},
     stepCfg: StepConfig = DEFAULT_STEP_CONFIG,
     steam: SpatialBackend | null = null,
+    interpRenderer: InterpolatingHrtfRenderer | null = null,
   ) {
+    this.interpRenderer = interpRenderer;
     this.graph = graph;
     this.renderer = renderer;
     this.level = level;
@@ -226,11 +237,20 @@ export class Game {
       this.beaconInput = this.steamBeacon.input as GainNode;
       this.beaconOutput = this.steamBeacon.output as GainNode;
     } else if (level.acousticWalls && level.acousticWalls.length > 0) {
-      this.modeledBeacon = new ModeledSource(graph.ctx, graph.master, renderer.set);
+      // Pass the interpolating renderer (?hrtf=interp) so the modeled beacon's
+      // REFLECTIONS are rendered through the click-free, head-tracked worklet instead
+      // of the convolver buffer-swap (the turn-click). null → old convolver fallback.
+      this.modeledBeacon = new ModeledSource(graph.ctx, graph.master, renderer.set, this.interpRenderer);
       this.beaconInput = this.modeledBeacon.input;
       this.beaconOutput = this.modeledBeacon.output;
       // (the initial solve happens at the end of the constructor, once the start
       // pose is set — see this.refreshBeacon() below)
+    } else if (this.interpRenderer) {
+      // CLICK-FREE path: render the beacon through the interpolating worklet.
+      this.interpBeacon = this.interpRenderer.createSource();
+      this.interpBeacon.output.connect(graph.master);
+      this.beaconInput = this.interpBeacon.input;
+      this.beaconOutput = this.interpBeacon.output;
     } else {
       this.beacon = renderer.createSource();
       this.beacon.output.connect(graph.master);
@@ -344,6 +364,13 @@ export class Game {
    */
   private applyAudioPose(pose: AudioPose) {
     this.renderer.setListener({ x: pose.x, y: this.headHeight, z: pose.z, yaw: this.audioYaw });
+    if (this.interpRenderer) {
+      this.interpRenderer.setListener({ x: pose.x, y: this.headHeight, z: pose.z, yaw: this.audioYaw });
+    }
+    if (this.interpBeacon) {
+      this.interpBeacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
+      return;
+    }
     if (this.steam && this.steamBeacon) {
       // Steam Audio path: drive its listener + beacon source position. world.step
       // (the actual sim) is pumped from tick(). The HRTF renderer listener above is

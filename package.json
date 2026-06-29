@@ -7,8 +7,9 @@
   "scripts": {
     "wasm": "wasm-pack build acoustics-core --target web --out-dir ../src/engine/acoustics/wasm --release",
     "wasm:dev": "wasm-pack build acoustics-core --target web --out-dir ../src/engine/acoustics/wasm --dev",
-    "dev": "vite",
-    "build": "npm run wasm && vite build",
+    "worklet": "node scripts/build-worklet.mjs",
+    "dev": "npm run worklet && vite",
+    "build": "npm run wasm && npm run worklet && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest"

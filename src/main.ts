@@ -1,5 +1,6 @@
 import { startAudio, type AudioGraph } from './engine/audioGraph';
 import { HrtfRenderer } from './engine/hrtf/renderer';
+import type { InterpolatingHrtfRenderer } from './engine/hrtf/interpolatingRenderer';
 import { Compass } from './game/compass';
 import { initAcoustics } from './engine/acoustics/core';
 import { ClapRoom } from './engine/acoustics/clapRoom';
@@ -296,6 +297,27 @@ startButton.addEventListener('click', async () => {
     startScreen.hidden = true;
     gameScreen.hidden = false;
 
+    // CLICK-FREE INTERPOLATING HRTF beacon (DEFAULT). The beacon — both the direct
+    // path and its strongest reflections — is rendered through an AudioWorklet that
+    // continuously interpolates the measured HRIRs, so turning the head never swaps a
+    // ConvolverNode buffer (the swap reset a frame of audio → the click). On a level
+    // WITH geometry the modeled beacon runs its reflections through the same worklet
+    // (head-tracked, click-free); without geometry the plain beacon uses it. Skipped
+    // on the Steam path (it has its own renderer). `?hrtf=legacy` opts back into the
+    // old dual-convolver renderer for A/B. On any init failure we fall back to it too.
+    let interpRenderer: InterpolatingHrtfRenderer | null = null;
+    const wantInterp = new URLSearchParams(location.search).get('hrtf') !== 'legacy';
+    if (wantInterp && !steam) {
+      try {
+        const { InterpolatingHrtfRenderer } = await import('./engine/hrtf/interpolatingRenderer');
+        interpRenderer = await InterpolatingHrtfRenderer.fromSetAsync(ctx, renderer.set);
+        if (SPEED_OF_SOUND != null) interpRenderer.setSpeedOfSound(SPEED_OF_SOUND);
+      } catch (e) {
+        console.warn('[papasangre] interpolating HRTF unavailable — using legacy beacon.', e);
+        interpRenderer = null;
+      }
+    }
+
     // The run's end-state. `ended` freezes input (step buttons stop responding);
     // `outcome` distinguishes a win from being caught, so messaging/future logic
     // never has to overload one flag for both.
@@ -331,7 +353,7 @@ startButton.addEventListener('click', async () => {
         alert('A monster caught you. Press start to try again.');
       },
       onProgress: (d) => updateFootHints(d),
-    }, undefined, steam);
+    }, undefined, steam, interpRenderer);
 
     // --- Turn control: the compass dial (only turn control) ---
     setupTurning(game);
