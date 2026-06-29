@@ -41,6 +41,21 @@ It runs in any modern browser, installs as an app (PWA), and works offline.
 
 ## What you can do today
 
+### Get set up (first run)
+On your first visit you're guided through a short, fully eyes-free setup before
+playing:
+- **Calibration** confirms your headphones are on the right ears (a tone plays on
+  your left, then your right, and you say which side you heard) and that the
+  volume is comfortable. If your headphones are reversed it tells you — and offers
+  a one-tap **swap left/right** toggle for the session.
+- A **guided tutorial** teaches the three controls one at a time, with spoken
+  instructions and a "next" gate: **stepping** (alternate feet in a rhythm),
+  **turning** (drag the compass to rotate the soundscape), and **clapping** (tap
+  echo to hear the room).
+
+Both are skippable, remembered so they don't repeat, and replayable any time from
+the picker. See [`docs/onboarding.md`](onboarding.md).
+
 ### Play the game
 - Put on headphones and **choose a level** from the picker on the start screen. It
   lists a set of **bundled demo levels** — a curated tour of the engine (small vs.

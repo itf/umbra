@@ -28,10 +28,21 @@
         <p>Choose a level to play. Put on headphones first.</p>
         <div id="level-picker" aria-label="Level list"></div>
         <nav class="page-links" aria-label="Other pages">
+          <button id="redo-calibration" type="button" class="linklike">🎧 Calibrate audio</button>
+          <button id="redo-tutorial" type="button" class="linklike">🚶 Replay tutorial</button>
           <a href="/trainer.html">🎧 Echolocation trainer</a>
           <a href="/editor.html">✏️ Level editor</a>
         </nav>
       </section>
+
+      <!-- Calibration: eyes-free headphone L/R + volume check. Toggled by main.ts;
+           its first sound is the user gesture (like Begin). Content mounted by
+           src/ui/calibration.ts. -->
+      <section id="calibration-screen" aria-label="Audio calibration" hidden></section>
+
+      <!-- Guided first-run tutorial (stepping, turning, clapping). Content mounted
+           by src/ui/tutorial.ts. -->
+      <section id="tutorial-screen" aria-label="Tutorial" hidden></section>
 
       <section id="start-screen" aria-label="Start" hidden>
         <h1>Audio Navigator</h1>

@@ -12,6 +12,9 @@ import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
+import { OnboardingStore } from './ui/onboardingStore';
+import { mountCalibration } from './ui/calibration';
+import { mountTutorial } from './ui/tutorial';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -23,6 +26,34 @@ const gameScreen = document.getElementById('game-screen')!;
 const startButton = document.getElementById('start-button') as HTMLButtonElement;
 const backButton = document.getElementById('back-to-picker') as HTMLButtonElement | null;
 const startLevelName = document.getElementById('start-level-name');
+const calibrationScreen = document.getElementById('calibration-screen')!;
+const tutorialScreen = document.getElementById('tutorial-screen')!;
+
+const onboarding = new OnboardingStore();
+
+// Session L/R channel swap (from calibration / persisted preference). Inverts the
+// master output channels for the whole session by inserting a crossed
+// splitter→merger on the master→limiter path. Applied to the singleton AudioGraph
+// from startAudio(), so calibration and the real game share one swap node.
+let swapNode: { splitter: ChannelSplitterNode; merger: ChannelMergerNode } | null = null;
+function applyChannelSwap(graph: AudioGraph, want: boolean) {
+  if (want && !swapNode) {
+    const splitter = graph.ctx.createChannelSplitter(2);
+    const merger = graph.ctx.createChannelMerger(2);
+    graph.master.disconnect();
+    graph.master.connect(splitter);
+    splitter.connect(merger, 0, 1); // left in → right out
+    splitter.connect(merger, 1, 0); // right in → left out
+    merger.connect(graph.limiter);
+    swapNode = { splitter, merger };
+  } else if (!want && swapNode) {
+    graph.master.disconnect();
+    swapNode.splitter.disconnect();
+    swapNode.merger.disconnect();
+    graph.master.connect(graph.limiter);
+    swapNode = null;
+  }
+}
 
 function say(msg: string) {
   statusEl.textContent = msg;
@@ -74,17 +105,61 @@ function applyLevel(level: Level, displayName: string) {
   if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
 }
 
-/** Reveal the Begin screen for a chosen level (hides the picker). */
-function showStartScreen() {
+/** Hide every top-level onboarding/start section (game screen left untouched). */
+function hideOnboardingScreens() {
   pickerScreen.hidden = true;
+  startScreen.hidden = true;
+  calibrationScreen.hidden = true;
+  tutorialScreen.hidden = true;
+}
+
+/** Reveal the Begin screen for a chosen level (hides the other screens). */
+function showStartScreen() {
+  hideOnboardingScreens();
   startScreen.hidden = false;
   startButton.disabled = false;
   startButton.focus();
 }
 
+/**
+ * First-run onboarding gate: before the Begin screen, run any not-yet-completed
+ * onboarding (calibration, then tutorial), then fall through to Begin. Each is
+ * skippable and remembers completion (localStorage), so returning players go
+ * straight to Begin. Replayable from the picker links regardless.
+ */
+function gateOnboarding(then: () => void) {
+  if (!onboarding.calibrationDone()) {
+    runCalibration(() => gateOnboarding(then));
+  } else if (!onboarding.tutorialDone()) {
+    runTutorial(() => gateOnboarding(then));
+  } else {
+    then();
+  }
+}
+
+/** Mount + show the calibration screen; `after` runs when it finishes/skips. */
+function runCalibration(after: () => void) {
+  hideOnboardingScreens();
+  calibrationScreen.hidden = false;
+  mountCalibration(calibrationScreen, {
+    store: onboarding,
+    say,
+    alert,
+    applySwap: applyChannelSwap,
+    onDone: after,
+  });
+}
+
+/** Mount + show the tutorial screen; `after` runs when it finishes/skips. */
+function runTutorial(after: () => void) {
+  hideOnboardingScreens();
+  tutorialScreen.hidden = false;
+  mountTutorial(tutorialScreen, { store: onboarding, say, alert, onDone: after });
+}
+
 /** Show the picker (the default entry point), hiding the Begin screen. */
 function showPicker() {
-  startScreen.hidden = true;
+  hideOnboardingScreens();
   pickerScreen.hidden = false;
   // Move focus into the picker so an eyes-closed / screen-reader user lands on a
   // choice instead of the top of the document.
@@ -116,7 +191,8 @@ async function mountPicker() {
         return;
       }
       applyLevel(level, sel.label);
-      showStartScreen();
+      // First-run onboarding (calibration → tutorial) runs once, then Begin.
+      gateOnboarding(showStartScreen);
     },
   });
   // Land focus on the first level so the picker is immediately operable eyes-free.
@@ -124,6 +200,14 @@ async function mountPicker() {
 }
 
 backButton?.addEventListener('click', showPicker);
+
+// Replay onboarding from the picker (always available, ignores the "done" flags).
+document.getElementById('redo-calibration')?.addEventListener('click', () => {
+  runCalibration(showPicker);
+});
+document.getElementById('redo-tutorial')?.addEventListener('click', () => {
+  runTutorial(showPicker);
+});
 
 // Entry point. `?level=current` loads the editor's working level; `?level=<id>`
 // loads a bundled demo; otherwise show the picker. A preselected level jumps
@@ -134,7 +218,7 @@ backButton?.addEventListener('click', showPicker);
     const edited = currentEditorLevel();
     if (edited) {
       applyLevel(edited, edited.name || 'Editor level');
-      showStartScreen();
+      gateOnboarding(showStartScreen);
     } else {
       void mountPicker();
     }
@@ -142,7 +226,7 @@ backButton?.addEventListener('click', showPicker);
     const builtin = getBuiltin(param);
     if (builtin) {
       applyLevel(builtin, builtin.name);
-      showStartScreen();
+      gateOnboarding(showStartScreen);
     } else {
       void mountPicker(); // unknown id → fall back to the picker
     }
@@ -156,6 +240,7 @@ startButton.addEventListener('click', async () => {
   say('Loading spatial audio…');
   try {
     const graph = await startAudio();
+    applyChannelSwap(graph, onboarding.swap());
     const { ctx } = graph;
     const renderer = await HrtfRenderer.create(ctx, HRTF_URL);
     // Alien physics: if the level sets a speed of sound, the live beacon/monster

@@ -177,8 +177,11 @@ feedback heavily).
 Master volume, beacon volume, turn speed, rush sensitivity, HRTF subject — a
 settings surface, persisted.
 
-### 🔴 Onboarding / tutorial
-A guided first-run teaching the step rhythm, turning, and clapping — eyes-free.
+### 🟢 Onboarding / tutorial
+**Done.** An eyes-free calibration check (headphone L/R + optional channel swap +
+volume) and a guided 3-lesson first-run (stepping, turning, clapping). Both are
+skippable, remember completion in localStorage, and are replayable from the
+picker. See [`docs/onboarding.md`](onboarding.md).
 
 ---
 
