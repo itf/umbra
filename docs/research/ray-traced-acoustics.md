@@ -333,6 +333,56 @@ spike; the moving-source behavior is the crux and is unknown until measured.*
 
 ---
 
+## 6. The spike — RAN. Moving-source occlusion + reflections work, and are cheap.
+
+We ran the evaluation spike (a standalone Vite app installing the published
+`three-steam-audio@0.1.0-beta.1`, which ships a prebuilt 6 MB `phonon_bindings.wasm`
+— **no Steam Audio build from source needed**). Cross-origin isolation was satisfied
+(`crossOriginIsolated === true`, `SharedArrayBuffer` available — our COOP/COEP setup
+carries over). Driven headless via Playwright.
+
+**Scene:** a 16×4×12 concrete room with a divider wall at x=0; a 440 Hz source at
+x=4 (one side); reflections `maxOrder 1, maxRays 4096`; `occlusion: 'raycast'`; HRTF
+on. The **listener was swept x=+5 → −5 across the divider** — the moving-source/
+listener case the roadmap flagged as unfinished.
+
+**Result — occlusion tracks the motion correctly:**
+
+| listener x | occlusion | dist atten | interpretation |
+|-----------:|:---------:|:----------:|----------------|
+| 5, 4, 3 | **1.0** | 1.0 | same side as source, clear line of sight |
+| 2, 1 | 1.0 | 0.5, 0.33 | same side, distance attenuating |
+| 0 | **0** | 0.25 | crossing the divider plane → occluded |
+| −1 … −5 | **0** | 0.2…0.11 | behind the wall → fully occluded |
+
+**Per-frame cost — the headline number:** `world.step()` (the full per-frame sim:
+occlusion raycast + 4096-ray reflection tracing in a worker) measured **mean 0.21 ms,
+p95 1.34 ms, max 2.6 ms** (n=88). One-time WASM init ~110–200 ms.
+
+**What this resolves:**
+- The crux question — *do moving sources/listeners work?* — is **YES**, and the
+  per-step cost (~0.2 ms mean) is **~300× under our 70 ms throttle** and well under a
+  16 ms frame. It's actually **cheaper than our own image-source IR rebuild**
+  (~2–25 ms), because parametric reflections update a descriptor rather than
+  rebuilding a convolved IR.
+- The "moving-source pathing not done" roadmap item refers to *pathing/portalling*,
+  not basic moving occlusion+reflections, which clearly work.
+- Materials are **3-band** (vs our 8-band); reflections are **parametric** Web Audio
+  nodes (the "web-safe IR transport" gap only bites if we wanted a convolved IR —
+  we don't need one). It composes with a Web Audio + HRTF graph like ours.
+
+**Updated recommendation:** the spike is **green**. Adopting the WASM Steam Audio
+reflection/occlusion backend (path **a**) is now the empirically-supported direction
+over building our own CPU ray tracer (path **d**) — it gives proven, real-time,
+cheap, moving-source ray-traced reflections + occlusion, in-browser, today. Next
+concrete step is an **integration** spike: drive Steam Audio from OUR geometry/
+materials/level data and route its source + reflection/reverb buses through our
+existing master/limiter graph, on one real level (e.g. clap-maze), A/B'd against our
+engine — deciding whether Steam Audio becomes the primary spatial backend or a
+selectable "high-fidelity" mode alongside our tuned image-source engine.
+
+---
+
 ## Sources
 
 - Steam Audio — [site](https://valvesoftware.github.io/steam-audio/),
