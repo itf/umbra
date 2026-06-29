@@ -55,15 +55,6 @@ export class SteamAudioBackend {
   private meshHandles: unknown[] = [];
   private scattering: number;
   private useHrtf: boolean;
-  /**
-   * Live Steam Audio source objects. We keep them so we can force `publishControl()`
-   * after a listener move/turn — see `setListener`. The library only re-publishes a
-   * source's binaural DIRECTION from its reflection-worker callback (~10 Hz, and only
-   * once the async worker round-trips), so a head turn wouldn't update the perceived
-   * direction promptly (or at all if the worker stalls). Publishing here makes the
-   * direction track the listener orientation immediately each frame.
-   */
-  private sources: Array<{ publishControl?: () => void }> = [];
 
   private constructor(world: any, three: any, master: AudioNode, opts: SteamBackendOpts) {
     this.world = world;
@@ -154,7 +145,13 @@ export class SteamAudioBackend {
         airAbsorption: true,
         transmission: { type: 'frequency-dependent' },
       },
-      reflections: { wet: 0.7 },
+      // Keep the diffuse reflected field WELL BELOW the binaurally-panned direct
+      // path. With a loud, head-locked reverberant field (the reflection/reverb
+      // buses are a largely frontal/diffuse decode, not re-panned per-source with
+      // head yaw), the beacon reads as "in front" no matter which way you turn — the
+      // direct HRTF direction (which DOES track yaw) gets masked. A modest wet keeps
+      // the room cue without drowning out the directional cue you navigate by.
+      reflections: { wet: 0.25 },
     });
     const node = this.world.createNode(source);
     const input = this.master.context.createGain();
@@ -162,24 +159,21 @@ export class SteamAudioBackend {
     input.connect(node);
     node.connect(output);
     output.connect(this.master);
-    if (node.connectReflections) node.connectReflections(this.reflectionBus, { gain: 1 });
-    if (node.connectReverb) node.connectReverb(this.reverbBus, { gain: 0.4 });
-    this.sources.push(source);
+    // Bus sends well under unity so the binaural DIRECT path dominates the mix and
+    // head-turns are clearly localizable (see the reflections.wet note above).
+    if (node.connectReflections) node.connectReflections(this.reflectionBus, { gain: 0.35 });
+    if (node.connectReverb) node.connectReverb(this.reverbBus, { gain: 0.2 });
 
-    const remove = () => {
-      const i = this.sources.indexOf(source);
-      if (i >= 0) this.sources.splice(i, 1);
-    };
     return {
       input,
       output,
       setPosition: (x: number, y: number, z: number) => {
+        // `setPosition` (Source.setTransform) recomputes + publishes the source's
+        // head-relative binaural direction synchronously, so a moved source reaches
+        // the worklet the same frame — no extra publish needed.
         source.setPosition({ x, y, z });
-        // Re-publish so a moved source's direction reaches the worklet promptly.
-        source.publishControl?.();
       },
       dispose: () => {
-        remove();
         try { input.disconnect(); } catch { /* already gone */ }
         try { output.disconnect(); } catch { /* already gone */ }
         try { source.dispose?.(); } catch { /* best-effort */ }
@@ -191,14 +185,15 @@ export class SteamAudioBackend {
   setListener(x: number, y: number, z: number, yaw: number): void {
     const half = yaw / 2;
     // Quaternion for a rotation of `yaw` about the +y axis.
-    this.world.listener.setPosition({ x, y, z });
-    this.world.listener.setOrientation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) });
-    // Force each source to recompute its head-relative binaural direction NOW. Without
-    // this the library only re-publishes direction on the (async, ~10 Hz) reflection
-    // callback, so turning the head wouldn't promptly update where the beacon sounds.
-    for (const s of this.sources) {
-      try { s.publishControl?.(); } catch { /* best-effort */ }
-    }
+    // Update position and orientation TOGETHER in a single transform so the listener's
+    // ahead/up vectors (derived from the quaternion) and position are committed atomically.
+    // The library's Listener.setTransform publishes every source's head-relative binaural
+    // direction immediately (publishSourceControls), so a head turn updates the perceived
+    // direction the same frame — no need to wait for the async reflection callback.
+    this.world.listener.setTransform(
+      { x, y, z },
+      { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) },
+    );
   }
 
   /** Advance the simulation by `deltaSeconds` (occlusion raycast + reflection trace). */
