@@ -12,6 +12,15 @@ import init, {
 import wasmUrl from './wasm/acoustics_core_bg.wasm?url';
 import { packAbsorption, type ShoeboxMaterialMap, NUM_BANDS } from './materials';
 
+/** Default speed of sound (m/s, ~20C dry air) — matches the Rust core default. */
+export const DEFAULT_SPEED_OF_SOUND = 343;
+
+/** Sanitize a caller-supplied speed of sound: reject non-finite / non-positive
+ * values (which would yield inf/NaN delays) and fall back to the default. */
+function sanitizeSpeed(c: number | undefined): number {
+  return c && Number.isFinite(c) && c > 1 ? c : DEFAULT_SPEED_OF_SOUND;
+}
+
 export interface Tap {
   delay: number; // seconds
   gain: number; // broadband 1/r
@@ -22,6 +31,18 @@ export interface Tap {
 
 let ready: Promise<void> | null = null;
 let stride = 0;
+let acousticsReady = false;
+
+/** True once initAcoustics() has finished and the WASM module is callable. */
+export function isAcousticsReady(): boolean {
+  return acousticsReady;
+}
+
+/** Allow tests/alternate loaders that init the WASM module directly to mark it
+ * ready (so the WASM IR path is used instead of the JS fallback). */
+export function markAcousticsReady(): void {
+  acousticsReady = true;
+}
 
 export async function initAcoustics(): Promise<void> {
   if (!ready) {
@@ -30,6 +51,7 @@ export async function initAcoustics(): Promise<void> {
       if (num_bands() !== NUM_BANDS) {
         throw new Error(`band count mismatch: wasm ${num_bands()} vs ts ${NUM_BANDS}`);
       }
+      acousticsReady = true;
     });
   }
   return ready;
@@ -41,6 +63,8 @@ export interface ShoeboxParams {
   listener: [number, number, number];
   source: [number, number, number];
   maxOrder: number;
+  /** Speed of sound in m/s. Defaults to 343 (~20C dry air). */
+  speedOfSound?: number;
 }
 
 export function computeShoeboxTaps(p: ShoeboxParams): Tap[] {
@@ -51,6 +75,7 @@ export function computeShoeboxTaps(p: ShoeboxParams): Tap[] {
     new Float32Array(p.listener),
     new Float32Array(p.source),
     p.maxOrder,
+    sanitizeSpeed(p.speedOfSound),
   );
 
   return unpackTaps(packed);
@@ -90,6 +115,8 @@ export interface RoomParams {
   listener: [number, number, number];
   source: [number, number, number];
   maxOrder: number;
+  /** Speed of sound in m/s. Defaults to 343 (~20C dry air). */
+  speedOfSound?: number;
 }
 
 /**
@@ -119,6 +146,7 @@ export function computeRoomTaps(p: RoomParams): Tap[] {
     new Float32Array(p.listener),
     new Float32Array(p.source),
     p.maxOrder,
+    sanitizeSpeed(p.speedOfSound),
   );
   return unpackTaps(packed);
 }

@@ -8,11 +8,12 @@
 mod diffraction;
 mod geometry;
 mod image_source;
+mod ir_build;
 mod vec3;
 
 use diffraction::{diffract_tap, Edge};
 use geometry::{Room, Wall};
-use image_source::{compute_taps, Shoebox, ShoeboxMaterials, Tap, NUM_BANDS};
+use image_source::{compute_taps, Shoebox, ShoeboxMaterials, Tap, NUM_BANDS, SPEED_OF_SOUND};
 use vec3::Vec3;
 use wasm_bindgen::prelude::*;
 
@@ -40,6 +41,13 @@ pub fn num_bands() -> usize {
     NUM_BANDS
 }
 
+/// Default speed of sound (m/s, ~20C dry air). JS uses this when no override is
+/// supplied, keeping the JS and Rust defaults in sync from a single source.
+#[wasm_bindgen]
+pub fn default_speed_of_sound() -> f32 {
+    SPEED_OF_SOUND
+}
+
 /// Compute early-reflection taps for a shoebox room.
 ///
 /// `room_size`: [x, y, z]
@@ -54,11 +62,19 @@ pub fn compute_shoebox_taps(
     listener: &[f32],
     source: &[f32],
     max_order: u32,
+    speed_of_sound: f32,
 ) -> Vec<f32> {
     assert_eq!(room_size.len(), 3);
     assert_eq!(absorption.len(), 6 * NUM_BANDS);
     assert_eq!(listener.len(), 3);
     assert_eq!(source.len(), 3);
+
+    // Sanitize c: a 0/negative/NaN speed would produce inf/NaN delays.
+    let speed_of_sound = if speed_of_sound.is_finite() && speed_of_sound > 1.0 {
+        speed_of_sound
+    } else {
+        SPEED_OF_SOUND
+    };
 
     let mut abs = [[0.0f32; NUM_BANDS]; 6];
     for w in 0..6 {
@@ -77,6 +93,7 @@ pub fn compute_shoebox_taps(
         Vec3::new(listener[0], listener[1], listener[2]),
         Vec3::new(source[0], source[1], source[2]),
         max_order,
+        speed_of_sound,
     );
 
     let mut out = Vec::with_capacity(taps.len() * TAP_STRIDE);
@@ -104,11 +121,19 @@ pub fn compute_room_taps(
     listener: &[f32],
     source: &[f32],
     max_order: u32,
+    speed_of_sound: f32,
 ) -> Vec<f32> {
     assert_eq!(listener.len(), 3);
     assert_eq!(source.len(), 3);
     assert_eq!(wall_abs.len(), wall_sizes.len() * NUM_BANDS);
     assert_eq!(edges.len() % 6, 0);
+
+    // Sanitize c: a 0/negative/NaN speed would produce inf/NaN delays.
+    let speed_of_sound = if speed_of_sound.is_finite() && speed_of_sound > 1.0 {
+        speed_of_sound
+    } else {
+        SPEED_OF_SOUND
+    };
 
     // Rebuild walls from the flat encoding.
     let mut walls = Vec::with_capacity(wall_sizes.len());
@@ -129,7 +154,7 @@ pub fn compute_room_taps(
 
     let l = Vec3::new(listener[0], listener[1], listener[2]);
     let s = Vec3::new(source[0], source[1], source[2]);
-    let taps = room.compute_taps(l, s, max_order);
+    let taps = room.compute_taps(l, s, max_order, speed_of_sound);
 
     let mut out = Vec::with_capacity((taps.len() + edges.len() / 6) * TAP_STRIDE);
     for t in &taps {
@@ -144,7 +169,7 @@ pub fn compute_room_taps(
                 a: Vec3::new(e[0], e[1], e[2]),
                 b: Vec3::new(e[3], e[4], e[5]),
             };
-            if let Some(t) = diffract_tap(&edge, s, l, direct) {
+            if let Some(t) = diffract_tap(&edge, s, l, direct, speed_of_sound) {
                 push_tap(&mut out, &t);
             }
         }

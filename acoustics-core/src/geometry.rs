@@ -8,7 +8,9 @@
 //! kept low (1–3). Visibility is the expensive part; we keep walls convex so the
 //! in-polygon test is a cheap same-side check.
 
-use crate::image_source::{Tap, NUM_BANDS, SPEED_OF_SOUND};
+use crate::image_source::{Tap, NUM_BANDS};
+#[cfg(test)]
+use crate::image_source::SPEED_OF_SOUND;
 use crate::vec3::Vec3;
 
 /// A convex polygon wall lying on a plane, with per-band absorption.
@@ -148,7 +150,7 @@ mod tests {
         let room = box_room(8.0, 3.0, 10.0);
         let l = Vec3::new(4.0, 1.5, 5.0);
         let s = Vec3::new(4.0, 1.5, 2.0); // 3m ahead
-        let taps = room.compute_taps(l, s, 0);
+        let taps = room.compute_taps(l, s, 0, SPEED_OF_SOUND);
         assert_eq!(taps.len(), 1);
         assert!((taps[0].delay - 3.0 / SPEED_OF_SOUND).abs() < 1e-5);
     }
@@ -158,7 +160,7 @@ mod tests {
         // Listener=source at center; the floor reflection round-trips 2*1.5=3m.
         let room = box_room(8.0, 3.0, 10.0);
         let p = Vec3::new(4.0, 1.5, 5.0);
-        let taps = room.compute_taps(p, p, 1);
+        let taps = room.compute_taps(p, p, 1, SPEED_OF_SOUND);
         let floor = 3.0 / SPEED_OF_SOUND;
         let has_floor = taps.iter().any(|t| (t.delay - floor).abs() < 1e-4);
         assert!(has_floor, "expected floor reflection at 3m round-trip");
@@ -185,12 +187,18 @@ impl Room {
     }
 
     /// Compute image-source taps up to `max_order` for a general room.
-    pub fn compute_taps(&self, listener: Vec3, source: Vec3, max_order: u32) -> Vec<Tap> {
+    pub fn compute_taps(
+        &self,
+        listener: Vec3,
+        source: Vec3,
+        max_order: u32,
+        speed_of_sound: f32,
+    ) -> Vec<Tap> {
         let mut taps = Vec::new();
 
         // Direct path.
         if self.visible(listener, source, &[]) {
-            taps.push(self.make_tap(listener, source, &[], 0));
+            taps.push(self.make_tap(listener, source, &[], 0, speed_of_sound));
         }
 
         // Reflections: recursively reflect the source across walls.
@@ -212,7 +220,7 @@ impl Room {
                 let mut new_chain = chain.clone();
                 new_chain.push(i);
 
-                if let Some(tap) = self.validate_path(listener, source, &new_chain) {
+                if let Some(tap) = self.validate_path(listener, source, &new_chain, speed_of_sound) {
                     taps.push(tap);
                 }
                 stack.push((new_img, new_chain));
@@ -226,7 +234,13 @@ impl Room {
     /// Reconstruct and validate the reflection path for a wall chain. Walk the
     /// image back through each wall, checking each reflection point lands inside
     /// its wall and each segment is unobstructed.
-    fn validate_path(&self, listener: Vec3, source: Vec3, chain: &[usize]) -> Option<Tap> {
+    fn validate_path(
+        &self,
+        listener: Vec3,
+        source: Vec3,
+        chain: &[usize],
+        speed_of_sound: f32,
+    ) -> Option<Tap> {
         // Precompute images: img[k] = source mirrored across walls chain[0..k].
         // img[0] = source, img[chain.len()] = full image seen by the listener.
         let n = chain.len();
@@ -263,10 +277,17 @@ impl Room {
             }
         }
 
-        Some(self.make_tap_path(&points, chain))
+        Some(self.make_tap_path(&points, chain, speed_of_sound))
     }
 
-    fn make_tap(&self, listener: Vec3, source: Vec3, chain: &[usize], order: u32) -> Tap {
+    fn make_tap(
+        &self,
+        listener: Vec3,
+        source: Vec3,
+        chain: &[usize],
+        order: u32,
+        speed_of_sound: f32,
+    ) -> Tap {
         let dir = source.sub(listener);
         let dist = dir.len().max(1e-4);
         let mut band_gains = [1.0f32; NUM_BANDS];
@@ -276,7 +297,7 @@ impl Room {
             }
         }
         Tap {
-            delay: dist / SPEED_OF_SOUND,
+            delay: dist / speed_of_sound,
             gain: 1.0 / dist.max(1.0),
             band_gains,
             dir: dir.normalized(),
@@ -284,7 +305,7 @@ impl Room {
         }
     }
 
-    fn make_tap_path(&self, points: &[Vec3], chain: &[usize]) -> Tap {
+    fn make_tap_path(&self, points: &[Vec3], chain: &[usize], speed_of_sound: f32) -> Tap {
         // Total path length = sum of segment lengths.
         let mut dist = 0.0;
         for w in points.windows(2) {
@@ -300,7 +321,7 @@ impl Room {
             }
         }
         Tap {
-            delay: dist / SPEED_OF_SOUND,
+            delay: dist / speed_of_sound,
             gain: 1.0 / dist.max(1.0),
             band_gains,
             dir,

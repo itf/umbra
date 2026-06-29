@@ -83,6 +83,7 @@ pub fn compute_taps(
     listener: Vec3,
     source: Vec3,
     max_order: u32,
+    speed_of_sound: f32,
 ) -> Vec<Tap> {
     let mut taps = Vec::new();
     let max_n = max_order as i32;
@@ -106,7 +107,7 @@ pub fn compute_taps(
                     continue;
                 }
 
-                let delay = dist / SPEED_OF_SOUND;
+                let delay = dist / speed_of_sound;
                 let gain = 1.0 / dist.max(1.0); // 1/r, clamped to avoid huge near-field gain
 
                 // Material absorption: multiply (1 - alpha) for each wall reflection.
@@ -177,7 +178,7 @@ mod tests {
         let room = rigid_room(Vec3::new(10.0, 3.0, 10.0));
         let listener = Vec3::new(5.0, 1.5, 5.0);
         let source = Vec3::new(5.0, 1.5, 2.0); // 3m straight ahead (-z)
-        let taps = compute_taps(&room, listener, source, 0);
+        let taps = compute_taps(&room, listener, source, 0, SPEED_OF_SOUND);
         assert_eq!(taps.len(), 1);
         let expected = 3.0 / SPEED_OF_SOUND;
         assert!((taps[0].delay - expected).abs() < 1e-5, "{}", taps[0].delay);
@@ -189,7 +190,7 @@ mod tests {
         // the floor reflection. Room 10x4x10, listener+source at center height 2.
         let room = rigid_room(Vec3::new(10.0, 4.0, 10.0));
         let p = Vec3::new(5.0, 2.0, 5.0);
-        let taps = compute_taps(&room, p, p, 1);
+        let taps = compute_taps(&room, p, p, 1, SPEED_OF_SOUND);
         // Direct path is distance 0 -> skipped (dist<1e-4). The 6 first-order
         // reflections are each a mirror across one wall. Floor (-y) image is at
         // y = -2, distance = 4 => delay = 4/c. Ceiling (+y) image at y=6 => also 4.
@@ -212,8 +213,8 @@ mod tests {
         }
         let listener = Vec3::new(2.0, 1.5, 4.0);
         let source = Vec3::new(2.0, 1.5, 4.0);
-        let g = compute_taps(&glass, listener, source, 1);
-        let c = compute_taps(&carpet, listener, source, 1);
+        let g = compute_taps(&glass, listener, source, 1, SPEED_OF_SOUND);
+        let c = compute_taps(&carpet, listener, source, 1, SPEED_OF_SOUND);
         // The +x wall reflection: image at x = 2*8 - 2 = 14, dist 12.
         let pick = |taps: &Vec<Tap>| {
             taps.iter()
@@ -223,5 +224,17 @@ mod tests {
                 .unwrap()
         };
         assert!(pick(&g) > pick(&c), "glass should reflect more HF energy");
+    }
+
+    #[test]
+    fn doubling_speed_of_sound_halves_delay() {
+        let room = rigid_room(Vec3::new(10.0, 3.0, 10.0));
+        let listener = Vec3::new(5.0, 1.5, 5.0);
+        let source = Vec3::new(5.0, 1.5, 2.0); // 3m ahead
+        let base = compute_taps(&room, listener, source, 0, SPEED_OF_SOUND);
+        let fast = compute_taps(&room, listener, source, 0, SPEED_OF_SOUND * 2.0);
+        assert_eq!(base.len(), 1);
+        assert_eq!(fast.len(), 1);
+        assert!((fast[0].delay - base[0].delay / 2.0).abs() < 1e-7, "{}", fast[0].delay);
     }
 }

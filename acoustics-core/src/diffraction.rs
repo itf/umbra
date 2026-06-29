@@ -15,7 +15,9 @@
 //! same renderer as reflections. This is cheap, stable, and perceptually right;
 //! a true UTD coefficient can replace the factor later without changing callers.
 
-use crate::image_source::{Tap, NUM_BANDS, SPEED_OF_SOUND};
+use crate::image_source::{Tap, NUM_BANDS};
+#[cfg(test)]
+use crate::image_source::SPEED_OF_SOUND;
 use crate::vec3::Vec3;
 
 /// A diffracting edge: a finite line segment between two endpoints. (Typically a
@@ -67,7 +69,13 @@ impl Edge {
 /// Compute a diffracted tap for one edge, given the direct distance (used to
 /// gauge how much detour the bend adds → how deep in shadow). Returns None if the
 /// edge offers no meaningful detour (degenerate).
-pub fn diffract_tap(edge: &Edge, source: Vec3, listener: Vec3, direct_dist: f32) -> Option<Tap> {
+pub fn diffract_tap(
+    edge: &Edge,
+    source: Vec3,
+    listener: Vec3,
+    direct_dist: f32,
+    speed_of_sound: f32,
+) -> Option<Tap> {
     let (p, detour) = edge.best_point(source, listener);
     if detour <= 1e-3 {
         return None;
@@ -95,7 +103,7 @@ pub fn diffract_tap(edge: &Edge, source: Vec3, listener: Vec3, direct_dist: f32)
     let dir = p.sub(listener).normalized(); // arrives from the edge direction
 
     Some(Tap {
-        delay: detour / SPEED_OF_SOUND,
+        delay: detour / speed_of_sound,
         gain: 1.0 / detour.max(1.0),
         band_gains,
         dir,
@@ -114,7 +122,7 @@ mod tests {
         let source = Vec3::new(-2.0, 1.5, 1.0);
         let listener = Vec3::new(2.0, 1.5, -1.0);
         let direct = source.dist(listener);
-        let tap = diffract_tap(&edge, source, listener, direct).unwrap();
+        let tap = diffract_tap(&edge, source, listener, direct, SPEED_OF_SOUND).unwrap();
         // Bent path through the edge is longer than the straight line.
         assert!(tap.delay * SPEED_OF_SOUND >= direct - 1e-3);
         // And attenuated below unity.
@@ -130,7 +138,7 @@ mod tests {
         let source = Vec3::new(-2.0, 0.0, 0.0);
         let listener = Vec3::new(2.0, 0.0, 0.0);
         let direct = source.dist(listener);
-        let tap = diffract_tap(&edge, source, listener, direct).unwrap();
+        let tap = diffract_tap(&edge, source, listener, direct, SPEED_OF_SOUND).unwrap();
         // Edge point ~origin, detour ~= direct, so excess ~0 → near unity.
         assert!(tap.band_gains[0] > 0.9);
     }

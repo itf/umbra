@@ -54,7 +54,7 @@ describe('WASM general-room binding', () => {
     const stride = mod.tap_stride();
     const p = new Float32Array([0.5, 0.5, 0.5]);
     const packed = mod.compute_room_taps(
-      verts, sizes, abs, new Float32Array([]), p, p, 1,
+      verts, sizes, abs, new Float32Array([]), p, p, 1, 343,
     );
     const n = packed.length / stride;
     // Listener=source at center of a unit cube: 6 first-order reflections, each a
@@ -72,12 +72,12 @@ describe('WASM general-room binding', () => {
     const listener = new Float32Array([0.2, 0.5, 0.5]);
     const source = new Float32Array([0.8, 0.5, 0.5]);
     const noEdge = mod.compute_room_taps(
-      verts, sizes, abs, new Float32Array([]), listener, source, 1,
+      verts, sizes, abs, new Float32Array([]), listener, source, 1, 343,
     );
     // One vertical edge through the middle of the room.
     const edge = new Float32Array([0.5, 0, 0.5, 0.5, 1, 0.5]);
     const withEdge = mod.compute_room_taps(
-      verts, sizes, abs, edge, listener, source, 1,
+      verts, sizes, abs, edge, listener, source, 1, 343,
     );
     expect(withEdge.length / stride).toBe(noEdge.length / stride + 1);
   });

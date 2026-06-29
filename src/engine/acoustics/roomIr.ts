@@ -21,7 +21,8 @@
  */
 import { getIrPair, nearestDir, type HrtfSet } from '../hrtf/sofa';
 import { BANDS_HZ, NUM_BANDS } from './materials';
-import type { Tap } from './core';
+import { isAcousticsReady, type Tap } from './core';
+import { build_room_ir } from './wasm/acoustics_core.js';
 
 export interface RoomIrOptions {
   /** Head yaw (radians) so tap world-directions become head-relative. */
@@ -119,7 +120,78 @@ export interface RoomIr {
   length: number;
 }
 
-export function buildRoomIr(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = {}): RoomIr {
+/**
+ * Build the room IR. By default this dispatches to the FFT-based WASM path
+ * (`buildRoomIrWasm`), which is ~10-50x faster than the JS reference and the
+ * thing that makes per-frame rebuilds (moving walls) viable. Pass
+ * `{ impl: 'js' }` to force the original JS reference (used for comparison/bench
+ * and as a fallback if WASM isn't initialized).
+ *
+ * JS↔WASM split: the cheap `nearestDir` HRIR lookup stays in JS (keeps the SOFA
+ * loader JS-only); the expensive band-FIR coloring + convolution + accumulation
+ * + scattering happen in WASM.
+ */
+export function buildRoomIr(
+  taps: Tap[],
+  hrtf: HrtfSet,
+  opts: RoomIrOptions & { impl?: 'wasm' | 'js' } = {},
+): RoomIr {
+  // Explicit overrides always honored.
+  if (opts.impl === 'js') return buildRoomIrJs(taps, hrtf, opts);
+  if (opts.impl === 'wasm') return buildRoomIrWasm(taps, hrtf, opts);
+  // Default dispatch: only fall back to JS when WASM is NOT yet initialized.
+  // Once it's ready we let any build_room_ir error propagate rather than
+  // silently producing a divergent JS IR (which would mask real WASM bugs).
+  if (!isAcousticsReady()) return buildRoomIrJs(taps, hrtf, opts);
+  return buildRoomIrWasm(taps, hrtf, opts);
+}
+
+/**
+ * WASM path: JS resolves each tap's HRIR pair via nearestDir, packs the tap
+ * scalars + HRIR pairs flat, and hands the convolution-heavy work to Rust.
+ * Requires `initAcoustics()` to have run (same module as computeShoeboxTaps).
+ */
+export function buildRoomIrWasm(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = {}): RoomIr {
+  const yaw = opts.yaw ?? 0;
+  const sr = hrtf.sampleRate;
+  const tailPad = opts.tailPad ?? 0.05;
+  const scatter = Math.max(0, Math.min(1, opts.scattering ?? 0));
+  const hlen = hrtf.taps;
+
+  // Resolve HRIR pairs in JS (cheap), drop taps with no valid direction.
+  const tapStride = 3 + NUM_BANDS;
+  const tapData = new Float32Array(taps.length * tapStride);
+  const hrirL = new Float32Array(taps.length * hlen);
+  const hrirR = new Float32Array(taps.length * hlen);
+  let n = 0;
+  for (const t of taps) {
+    const hd = worldDirToHead(t.dir, yaw);
+    const len = Math.hypot(hd[0], hd[1], hd[2]) || 1;
+    const idx = nearestDir(hrtf, hd[0] / len, hd[1] / len, hd[2] / len);
+    if (idx < 0) continue;
+    const { left: hl, right: hr } = getIrPair(hrtf, idx);
+    const o = n * tapStride;
+    tapData[o] = t.delay;
+    tapData[o + 1] = t.gain;
+    tapData[o + 2] = t.order;
+    for (let b = 0; b < NUM_BANDS; b++) tapData[o + 3 + b] = t.bandGains[b];
+    hrirL.set(hl, n * hlen);
+    hrirR.set(hr, n * hlen);
+    n++;
+  }
+  const td = tapData.subarray(0, n * tapStride);
+  const hL = hrirL.subarray(0, n * hlen);
+  const hR = hrirR.subarray(0, n * hlen);
+
+  const out = build_room_ir(td, hL, hR, hlen, sr, scatter, tailPad);
+  const length = out[0] | 0; // out[0] is a float; floor to an int index.
+  const left = out.slice(1, 1 + length);
+  const right = out.slice(1 + length, 1 + 2 * length);
+  return { left, right, sampleRate: sr, length };
+}
+
+/** Original plain-JS reference implementation (kept for comparison + fallback). */
+export function buildRoomIrJs(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = {}): RoomIr {
   const yaw = opts.yaw ?? 0;
   const sr = hrtf.sampleRate;
   const tailPad = opts.tailPad ?? 0.05;

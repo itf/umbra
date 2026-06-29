@@ -1,8 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { buildRoomIr } from '../src/engine/acoustics/roomIr';
 import type { HrtfSet } from '../src/engine/hrtf/sofa';
 import type { Tap } from '../src/engine/acoustics/core';
 import { NUM_BANDS } from '../src/engine/acoustics/materials';
+
+// The default buildRoomIr path is now WASM; init the module from disk bytes
+// (same approach as wasmRoom.test.ts — bypasses Vite's ?url).
+beforeAll(async () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const wasmDir = resolve(here, '../src/engine/acoustics/wasm');
+  const mod = await import(resolve(wasmDir, 'acoustics_core.js'));
+  const bytes = readFileSync(resolve(wasmDir, 'acoustics_core_bg.wasm'));
+  await mod.default(bytes);
+});
 
 // Minimal synthetic HRTF set: a few directions, each IR a unit impulse so the
 // room IR's structure (delay placement, gain) is easy to assert without real

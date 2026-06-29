@@ -41,6 +41,7 @@ function tapsFor(scene: (typeof SCENES)[number], source: [number, number, number
     new Float32Array(scene.listener),
     new Float32Array(source),
     scene.maxOrder,
+    343,
   );
   return packed.length / mod.tap_stride();
 }
