@@ -7,6 +7,36 @@ Status legend: 🔴 not started · 🟡 partial · ✅ done (listed for context)
 
 ---
 
+## Recently completed (sound-engine initiative + polish)
+
+A focused push made the acoustics engine dynamic and physically richer. All shipped
+with tests + per-feature docs under `docs/engine/`:
+
+- ✅ **Configurable speed of sound** — `c` is a runtime parameter threaded through all
+  solvers; propagation delay responds to it. `docs/engine/speed-of-sound.md`.
+- ✅ **Real-time IR build (WASM + FFT)** — per-tap HRIR convolution ported to Rust/FFT,
+  ~6× faster, unblocking per-frame re-solve. `docs/engine/realtime-ir-build.md`.
+- ✅ **Propagation delay + Doppler** — per-source delay line; Doppler emerges from delay
+  modulation (incl. listener motion). `docs/engine/doppler-and-propagation-delay.md`.
+- ✅ **Moving walls** — continuous wall motion with the room IR tracked live (~14 Hz
+  throttle + dual-convolver crossfade, dirty-checked on walls AND listener pose).
+  `docs/engine/moving-walls.md`.
+- ✅ **Audio-only listener glide** — the audio listener glides between footfalls for a
+  natural direction sweep + smooth listener Doppler, discrete step mechanic untouched.
+  `docs/engine/listener-glide.md`.
+- ✅ **Late reverb (FDN tail)** — Eyring-RT60 FDN tail rendered into the room IR.
+  `docs/engine/late-reverb-fdn.md`. (was 🔴 below)
+- ✅ **Richer / custom beacon sounds** — synth presets + custom audio.
+  `docs/engine/beacon-sounds.md`. (see Gameplay below)
+- ✅ **Audio-artifact + clipping verification** — OfflineAudioContext stress tests (fast
+  rotate/walk/glide/IR-swap → no clicks) + a master limiter (no clipping).
+  `docs/engine/audio-artifacts-and-clipping.md`. (covers the "Live-render tests" item below)
+
+In progress / next: auto-derived diffraction edges + UTD coefficient, a player
+**noise-event model**, then **monster chase AI** (hunts your last noise).
+
+---
+
 ## Gameplay
 
 ### 🔴 Monster chase AI
@@ -20,13 +50,17 @@ Monsters are **place-only** today — the editor saves them into the level
 - Tuning: monsters should be locatable by ear (distinct, looping sound) so the
   player can avoid them.
 
-### 🔴 Richer / custom beacon sounds
-The beacon is a single pulsed sine (`game.ts`).
-- Per-beacon `sound` choice in the editor (the `BeaconObj` can gain a `sound`
-  field): bell, music box, water drip, hum, voice.
-- Synthesized presets now (like `stepSounds.ts`), with optional **custom audio
-  file** per beacon (fetched + cached, fed through the existing HRTF source).
-- Richer synthesis (harmonics, slow melody) localizes better and fatigues less.
+### ✅ Richer / custom beacon sounds — DONE
+Beacons now have named synth presets plus an optional custom audio file.
+- Presets (`src/game/beaconSounds.ts`): `tone`/`pulse` (legacy sine), `bell`
+  (struck inharmonic partials), `musicbox` (plucked motif), `drip` (randomized
+  water blip), `hum` (low harmonic drone w/ vibrato). All feed ONE mono output
+  into the beacon's `HrtfSource`, so spatialization/Doppler/propagation are shared.
+- `BeaconObj.sound` + `BeaconObj.soundUrl` (optional; old levels back-fill to
+  `tone`). A `soundUrl` is fetched + decoded + cached and looped through the HRTF
+  source, falling back to the synth preset on failure.
+- Editor exposes a preset dropdown, a custom-url field, and a Preview button.
+- See `docs/engine/beacon-sounds.md`.
 
 ### 🔴 Hazards and richer win/lose
 - Hazard zones (pits, traps) that cost you or end the run.
@@ -41,20 +75,20 @@ is standalone via `?level=current`.
 
 ## Acoustics engine
 
-### 🔴 Real-time IR build (the key performance task)
-Measured: the image-source **solve** is cheap (0.03–1.4 ms) but the **IR build**
-(`roomIr.ts`, HRIR convolution in plain JS) is **~32 ms** — fine for
-clap-on-demand, too slow to rebuild every frame for **continuously moving walls**.
-- Port the per-tap HRIR convolution to **WASM**, or use **FFT-based** convolution
-  (expected 10–50× faster).
-- Alternatively throttle rebuilds to ~10 Hz and crossfade between IRs.
-- Unblocks: moving doors/walls, dynamic geometry, denser scenes.
+### ✅ Real-time IR build (the key performance task) — DONE
+The per-tap HRIR convolution was ported to **Rust/WASM with FFT** (overlap-add),
+~6× faster than the old ~32 ms JS build (e.g. 62→10 ms), with the FFT planner cached
+per HRIR size. JS does the cheap `nearestDir`; WASM does coloring/convolution/
+scattering. This unblocked moving walls (per-frame re-solve under a throttle).
+`docs/engine/realtime-ir-build.md`. *Follow-up lever:* the `band_fir` design is still
+O(length²); pushing it onto an inverse-FFT is the documented next speedup.
 
-### 🔴 Late reverb (FDN tail)
-Only early reflections + a short diffuse smear exist today. Add a **Feedback Delay
-Network** reverb tail fed by the scattered (diffuse) energy — the EVERTims-style
-architecture in the engine plan. Gives rooms a realistic decay, not just early
-echoes.
+### ✅ Late reverb (FDN tail) — DONE
+An 8-line **FDN** (Householder feedback, per-line HF damping, decorrelated L/R taps)
+is rendered **offline into the room IR** (so the room stays one ConvolverNode — clap +
+moving-walls crossfade unchanged). RT60 is derived from geometry+materials via **Eyring**,
+so a large hard room rings longer than a small absorbent one; the diffuse smear feeds
+the tail for energy continuity. ~1 ms added to the IR build. `docs/engine/late-reverb-fdn.md`.
 
 ### 🟡 Better diffraction
 First-order **geometric approximation** only (`diffraction.rs`).
@@ -147,10 +181,14 @@ Validate our image-source delays/gains against the trusted Python reference
 Bake reference impulse responses for known rooms and diff against them — visual-
 snapshot-style regression testing, for audio.
 
-### 🔴 Live-render (OfflineAudioContext) tests
-Current sample tests assert on `buildRoomIr` output directly. Add tests that render
-the actual Web Audio graph in an `OfflineAudioContext` to cover the live
-`HrtfSource` crossfade path that unit tests can't reach.
+### ✅ Live-render (OfflineAudioContext) tests — DONE
+`tests/audioArtifacts.test.ts` renders the real Web Audio graph in an
+`OfflineAudioContext` (via the `node-web-audio-api` dev dep) and stress-tests the live
+`HrtfSource` crossfade, propagation delay line, listener glide, and room-IR swap under
+fast rotation / fast walking — asserting **no click/zipper artifacts** (a reusable
+click detector in `src/engine/analysis/artifacts.ts`) and **no clipping** (a master
+limiter). `docs/engine/audio-artifacts-and-clipping.md`.
+*Follow-up:* extend the same harness to golden-IR snapshots (below) and the beacon presets.
 
 ---
 

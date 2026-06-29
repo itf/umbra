@@ -1,4 +1,4 @@
-import { startAudio } from './engine/audioGraph';
+import { startAudio, type AudioGraph } from './engine/audioGraph';
 import { HrtfRenderer } from './engine/hrtf/renderer';
 import { Compass } from './game/compass';
 import { initAcoustics } from './engine/acoustics/core';
@@ -62,7 +62,8 @@ startButton.addEventListener('click', async () => {
   startButton.disabled = true;
   say('Loading spatial audio…');
   try {
-    const { ctx, master } = await startAudio();
+    const graph = await startAudio();
+    const { ctx } = graph;
     const renderer = await HrtfRenderer.create(ctx, HRTF_URL);
     await initAcoustics();
 
@@ -70,7 +71,7 @@ startButton.addEventListener('click', async () => {
     gameScreen.hidden = false;
 
     let won = false;
-    const game = new Game({ ctx, master }, renderer, LEVEL, {
+    const game = new Game(graph, renderer, LEVEL, {
       onStep: (foot, stride) =>
         say(`Step ${foot === 'L' ? 'left' : 'right'} (${stride.toFixed(2)} m).`),
       onStumble: (reason) =>
@@ -112,7 +113,7 @@ startButton.addEventListener('click', async () => {
     });
 
     // --- Clap to hear the room (echo button) ---
-    setupClap(ctx, master, renderer, game);
+    setupClap(graph, renderer, game);
 
     // Foot display loop: only the expected foot shows while walking; after the
     // player settles (idle ~1.4s) BOTH feet appear so either can lead. Polled so
@@ -203,12 +204,11 @@ function setupTurning(game: Game) {
 }
 
 function setupClap(
-  ctx: AudioContext,
-  master: GainNode,
+  graph: AudioGraph,
   renderer: HrtfRenderer,
   game: Game,
 ) {
-  const clapRoom = new ClapRoom({ ctx, master }, renderer);
+  const clapRoom = new ClapRoom(graph, renderer);
   const listenBtn = document.getElementById('listen');
   listenBtn?.addEventListener('click', () => {
     // Clap from the player's current position, through the ACTUAL room geometry

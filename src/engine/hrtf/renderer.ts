@@ -84,6 +84,15 @@ export class HrtfRenderer {
     return new HrtfRenderer(ctx, set, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC);
   }
 
+  /**
+   * Build a renderer from an ALREADY-LOADED HrtfSet (no fetch). Used by the
+   * offline-render artifact tests, which read the .hrtf from disk and render
+   * inside a Node OfflineAudioContext. Mirrors `create` minus the network load.
+   */
+  static fromSet(ctx: AudioContext, set: HrtfSet, opts: { maxDelaySec?: number } = {}): HrtfRenderer {
+    return new HrtfRenderer(ctx, set, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC);
+  }
+
   setListener(pose: ListenerPose) {
     this.listener = pose;
   }

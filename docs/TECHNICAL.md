@@ -184,6 +184,15 @@ decaying copies over ~20 ms. The direct path (order 0) is never scattered. `s` i
 representative scalar passed by the caller. This is what makes a brick wall sound
 soft and spread-out instead of a sharp echo.
 
+**Late reverb** (FDN tail): after the early field, an 8-line Feedback Delay Network
+(mutually-prime delays, lossless Householder feedback, per-line HF damping, decorrelated
+L/R taps) is rendered offline and **overlap-added onto the same stereo IR** — so the room
+stays one `ConvolverNode` (clap + moving-walls crossfade unchanged). Its RT60 is an
+**Eyring** estimate from room volume + surface area + mean absorption, and it is **seeded
+by the early/scatter energy at the handover** so the late field starts where the early
+reflections leave off (no gap/click). On by default when a `room`/`rt60` is supplied;
+`tail: false` disables it. Full design: `docs/engine/late-reverb-fdn.md`.
+
 ---
 
 ## 6. Material data and provenance
@@ -238,7 +247,8 @@ Wires the player to audio. On each `step`:
   through walls);
 - otherwise plays a footstep using the **floor material under the player**
   (`floorMaterialAt` → floor-zone lookup), updates the listener pose, checks win.
-The pulsed beacon is an `HrtfSource`; win = within `goalRadius`.
+The beacon is an `HrtfSource` fed by a chosen synth **preset** (or a looped custom
+audio file) — see `docs/engine/beacon-sounds.md`; win = within `goalRadius`.
 
 ### 7.3 Turning (`heading.ts` + `compass.ts`)
 Turn input sets a **target** heading; `Heading` slews the actual heading toward it
@@ -360,11 +370,15 @@ WASM, or FFT convolution — 10–50× expected) or throttle to ~10 Hz and cross
 
 - **IR build is JS** (~32 ms) — the one perf item for real-time moving geometry.
 - **Monsters are place-only** — the editor saves them; the game has no chase AI yet.
-- **Beacon sounds** are a single pulsed sine — no per-beacon variety/custom audio yet.
+- **Beacon sounds**: per-beacon synth presets (tone/bell/musicbox/drip/hum) +
+  optional custom audio file (`docs/engine/beacon-sounds.md`).
 - **Diffraction is first-order, geometric approximation** — no true UTD coefficient,
   no 2nd-order; cap is intentional (cost is combinatorial in edge pathfinding).
-- **Late reverb**: only early reflections + a diffuse smear; no FDN reverb tail yet
-  (planned per the engine design).
+- **Late reverb**: an FDN tail (8 mutually-prime delay lines, Householder feedback,
+  per-line HF damping) is rendered offline and overlap-added onto the early IR, fed by
+  the early/scatter energy at handover; RT60 is an Eyring estimate from room volume +
+  surface area + mean absorption. Single broadband RT (one HF-ratio knob), not per-band;
+  see `docs/engine/late-reverb-fdn.md`.
 - **HRTF is one fixed subject** (SADIE H3) — the loader accepts arbitrary SOFA, so
   per-user personalization is a future lever (the main fix for front/back confusion).
 - **The debug page's `turnControl.ts`** is the legacy drag-anywhere control; the game
