@@ -383,6 +383,51 @@ selectable "high-fidelity" mode alongside our tuned image-source engine.
 
 ---
 
+## 7. Diffusion + "is diffraction through doors relevant?" — measured
+
+Steam Audio models diffusion natively: per-material **`scattering`** (0–1) + **`diffuseSamples`**
+(diffuse rays per bounce in the Monte-Carlo trace). This is *traced* diffusion, unlike our
+image-source engine which is specular and approximates scattering with a heuristic post-hoc smear.
+
+We ran a **doorway-shadow spike**: a 14×4×14 room, a divider wall blocking the direct line, a
+doorway gap to the side, and a listener in the geometric shadow (occlusion = 0, direct path fully
+blocked; transmission identical at `[0.05, 0.03, 0.02]` in all cases). Audible RMS at the listener:
+
+| Condition | Audible RMS | vs transmission-only |
+|-----------|:-----------:|:--------------------:|
+| No reflections (direct+transmission only) | 0.00298 | 1.0× |
+| Reflections ON, **hard/reverberant** room | **0.01441** | **4.8×** |
+| Reflections ON, **absorbent/dead** room | 0.00748 | 2.5× |
+
+**Findings:**
+- With the direct path fully blocked, the listener still hears the source clearly — **2.5–4.8×
+  louder than transmission alone — purely from reflections through the doorway**, with NO explicit
+  edge-diffraction model. So **diffraction-through-doors is largely redundant in a normal room**:
+  the reflected/diffuse field carries the "it's coming from the opening" cue.
+- It's **reverberance-dependent**: the dead room gives <½ the reverberant room (fewer reflections
+  to route through the gap). So explicit diffraction (our UTD) earns its keep mainly in **dead/
+  absorbent rooms** and in the **trainer** (where we deliberately isolate cues) — not for general
+  realism, where Steam Audio's traced reflections+diffusion+transmission cover it.
+- Conclusion: **our UTD edge diffraction is a niche asset (dead rooms, trainer cue-isolation),
+  not a general-realism necessity.** Steam Audio's diffusion is a genuine upgrade over our smear.
+
+## 8. The toggle (our engine ↔ Steam Audio) — feasible and recommended
+
+A runtime toggle is clean because both engines are the same shape: *dry positioned source →
+spatializer → master bus*. The toggle swaps only the **source spatializer**:
+- **Shared, unchanged:** dry voices (beacon/footsteps/monster), level geometry+materials, the
+  master/limiter graph, the game loop's per-frame position updates.
+- **Swapped:** our `ModeledSource`/`HrtfSource` ↔ a `SteamAudioSource` (`world.createSource` +
+  our geometry pushed into `world.scene`, its source/reflection/reverb buses → our master).
+- **Integration work (all proven by the spikes):** (a) `WallDef[]` → three.js `BufferGeometry` +
+  Steam Audio materials (8-band→3-band absorption, scattering→scattering); (b) drive
+  `world.step(delta)` + `setPosition` from our loop; (c) route the buses through master/limiter.
+
+**Recommendation:** add Steam Audio as a **selectable "ray-traced / high-fidelity" mode**, keeping
+our tuned image-source engine as the default. Low-risk (no big-bang rewrite), lets us A/B by ear on
+real levels, and keeps our diffraction-rich engine for the **trainer** (cue isolation) while Steam
+Audio powers realism-focused **game** levels. Whether it becomes the default is decided by the A/B.
+
 ## Sources
 
 - Steam Audio — [site](https://valvesoftware.github.io/steam-audio/),
