@@ -58,6 +58,17 @@ export interface ModeledRefreshOpts {
   scattering?: number;
   /** Minimum ms between rebuilds (throttle). Default ~70 ms (~14 Hz). */
   minIntervalMs?: number;
+  /**
+   * SAFETY GUARD for high `maxOrder`. Energy pruning makes high order cheap on
+   * absorbent rooms, but a large LOW-absorption enclosure (cathedral-class marble)
+   * keeps every high-order chain audible, so its order-3 tap count — and thus the
+   * IR-build cost — can still explode. When a solve at `maxOrder` returns more than
+   * this many taps, we re-solve one order lower (repeating down to order 1) so the
+   * per-source IR-build stays within the refresh throttle. The solve is ~0.1 ms, so
+   * a fallback re-solve is effectively free. Default 24 (≈ the point where IR-build
+   * crosses ~10 ms on a long-IR room). Set to 0 to disable.
+   */
+  orderTapCap?: number;
 }
 
 /**
@@ -144,14 +155,23 @@ export class ModeledSource {
     this.lastBuildMs = nowMs;
     this.lastSig = sig;
 
-    const taps = computeRoomTaps({
-      walls: opts.walls,
-      edges: opts.edges,
-      listener: opts.listener,
-      source: opts.source,
-      maxOrder: opts.maxOrder ?? 1,
-      speedOfSound: opts.speedOfSound,
-    });
+    const solveAt = (order: number) =>
+      computeRoomTaps({
+        walls: opts.walls,
+        edges: opts.edges,
+        listener: opts.listener,
+        source: opts.source,
+        maxOrder: order,
+        speedOfSound: opts.speedOfSound,
+      });
+    let order = opts.maxOrder ?? 1;
+    let taps = solveAt(order);
+    // Tap-count safety guard: drop a level at a time until under the cap (or order 1).
+    const cap = opts.orderTapCap ?? 24;
+    while (cap > 0 && taps.length > cap && order > 1) {
+      order -= 1;
+      taps = solveAt(order);
+    }
     const ir = buildRoomIr(taps, this.hrtf, {
       yaw: opts.yaw,
       scattering: opts.scattering ?? 0.1,
@@ -159,6 +179,12 @@ export class ModeledSource {
       // OWN per-source IR (the clap owns the room's reverb); keep it to the early
       // field — direct + diffraction + any reflections — so the dry voice stays
       // crisp and localizable.
+      //
+      // LISTENER-LOCAL RT60: because the beacon emits NO FDN tail (`tail: false`),
+      // there is no decay to localise here — the listener-local absorption work lives
+      // entirely on the clap/ambient path (clapRoom `wallsRoom(walls, listener)`),
+      // which owns the room's reverberant field. If the beacon ever grows its own
+      // tail, pass `room: wallsRoom(opts.walls, opts.listener)` so it's local too.
       tail: false,
     });
     this.swapIr(ir);

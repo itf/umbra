@@ -89,6 +89,61 @@ Knobs on `RoomIrOptions`: `rt60` (explicit override), `rt60Scale` (multiplier),
 default**, but only when a `room` (or explicit `rt60`) is supplied — so existing callers
 that pass neither (and the early-energy unit tests) are unaffected.
 
+## Listener-local RT60
+
+**Problem.** `wallsRoom`/`shoeboxRoom` originally returned a single whole-room
+area-weighted ᾱ, independent of where you stand — so the FDN produced **one RT60
+everywhere**. A carpeted alcove and the marble nave centre of the same room rang for
+the same time, which is wrong: the surfaces *near you* dominate the reverberant field
+you actually hear.
+
+**Fix — distance-weighted local absorption.** Only `meanAbsorption` becomes listener-
+local; `V` and `S` stay global (RT60 = 0.161·V/(−S·ln(1−ᾱ)) — V and S are whole-room
+properties; it's the *effective absorption the listener experiences* that varies, and
+absorption is the dominant, cleanest lever). Each surface is reduced to (area,
+ᾱ@1kHz, centroid) and the effective absorption is a weighted mean:
+
+```
+ᾱ_local = Σ w_i·a_i / Σ w_i        w_i = area_i / (1 + (dist_i / d0)^2)
+```
+
+where `dist_i` is the listener-to-**centroid** distance (cheap; no per-vertex work)
+and `d0 = 3 m` (`LOCAL_ABSORPTION_D0`). The inverse-square-ish falloff means a near
+surface dominates: a carpet wall 1 m away outweighs a concrete wall 15 m away by
+≈ (1+(15/3)²)/(1+(1/3)²) ≈ **26×**. d0 = 3 m was tuned so the effect is clearly
+audible (a metre-away wall dominates) yet a few-metre room still blends several walls
+rather than snapping to whichever single wall is nearest.
+
+The pure, Web-Audio-free function is `localMeanAbsorption(surfaces, listener?, d0?)`
+in `clapRoom.ts`.
+
+**Back-compat.** When **no listener** is passed, `w_i = area_i` and the formula
+collapses to the original plain area-weighted whole-room mean — so callers that don't
+supply a listener (and the existing whole-room tests) are unaffected.
+
+**Wiring + cost.** The clap/ambient path has the listener, so it's threaded through:
+`updateGeneralRoom`/`updateLive` call `wallsRoom(walls, listener)`. This is **~free at
+runtime**: the IR already rebuilds on pose change (the dirty-check signature quantises
+the listener pose), so walking from the nave into the alcove triggers a normal rebuild
+that now also recomputes the local ᾱ — no new per-frame cost. The **modeled beacon**
+emits no FDN tail (`tail: false` — the clap owns the room's reverb), so there is no
+decay to localise on that path; the local-RT60 work lives entirely on the clap/ambient
+path. If the beacon ever grows its own tail, pass `room: wallsRoom(opts.walls,
+opts.listener)` there too (noted in `modeledSource.ts`).
+
+**Tested.** `tests/listenerLocalRt60.test.ts`: (pure) a listener near a carpet wall
+yields higher ᾱ → shorter RT60 than near a concrete wall, equidistant lands between,
+no-listener reproduces the area-weighted mean; (IR-level) the same room with a listener
+near the absorbent wall produces a shorter, lower-late-energy tail than near the hard
+wall. The existing `roomIrLateReverb` whole-room tests still pass.
+
+**Limitation that remains.** It's still a **single FDN with one decay at a time** — the
+RT60 *varies as you move* but at any instant the whole tail uses one ᾱ. This is not a
+true coupled-rooms / per-region model (sound leaking between a live hall and a dead
+alcove with two simultaneous decays). Per-region or coupled FDNs were judged not worth
+the cost/complexity for single-room levels; the distance-weighted single FDN captures
+the dominant "where am I standing" cue at no extra runtime cost.
+
 ## Energy continuity (no gap, no click)
 
 The early field and the tail must **sum smoothly**:

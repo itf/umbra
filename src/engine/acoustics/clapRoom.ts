@@ -22,23 +22,92 @@ function representativeScattering(params: ShoeboxParams): number {
 /** Room descriptor for the late-reverb RT60 (Eyring) estimate. */
 type RoomGeom = { volume: number; surfaceArea: number; meanAbsorption: number };
 
-/** Exact shoebox volume / surface area / area-weighted mid-band absorption. */
-function shoeboxRoom(params: ShoeboxParams): RoomGeom {
+/** A surface reduced to (area, absorption@1kHz, centroid) for local weighting. */
+export interface SurfaceSample {
+  area: number;
+  absorption: number;
+  centroid: [number, number, number];
+}
+
+/**
+ * Characteristic distance (m) for the listener-local absorption falloff. Surfaces
+ * closer than ~d0 dominate the effective absorption the listener experiences; far
+ * ones fade out. Tuned so a wall a metre away clearly dominates one ~15 m away
+ * (weight ratio ≈ (1+(15/3)^2)/(1+(1/3)^2) ≈ 26×) yet a few-metre room still blends
+ * several walls. See docs/engine/late-reverb-fdn.md "Listener-local RT60".
+ */
+export const LOCAL_ABSORPTION_D0 = 3;
+
+/**
+ * Listener-local, distance-weighted mean absorption.
+ *
+ * Each surface's weight is `area / (1 + (dist/d0)^2)` where `dist` is the listener-
+ * to-centroid distance — an inverse-square-ish falloff so NEAR surfaces dominate the
+ * effective absorption (a carpet alcove decays faster than the marble nave centre).
+ * When no listener is given, falls back to the plain AREA-weighted whole-room mean
+ * (back-compat with the original `wallsRoom`/`shoeboxRoom` behaviour). PURE — unit-
+ * tested without Web Audio.
+ */
+export function localMeanAbsorption(
+  surfaces: SurfaceSample[],
+  listener?: [number, number, number],
+  d0: number = LOCAL_ABSORPTION_D0,
+): number {
+  let wsum = 0, weighted = 0;
+  for (const s of surfaces) {
+    let w = s.area;
+    if (listener) {
+      const dx = s.centroid[0] - listener[0];
+      const dy = s.centroid[1] - listener[1];
+      const dz = s.centroid[2] - listener[2];
+      const dist2 = dx * dx + dy * dy + dz * dz;
+      w = s.area / (1 + dist2 / (d0 * d0));
+    }
+    wsum += w;
+    weighted += w * s.absorption;
+  }
+  return wsum > 0 ? weighted / wsum : 0.1;
+}
+
+/** Centroid (mean of vertices) of a polygon. */
+function polyCentroid(verts: Array<[number, number, number]>): [number, number, number] {
+  let x = 0, y = 0, z = 0;
+  for (const v of verts) { x += v[0]; y += v[1]; z += v[2]; }
+  const n = Math.max(1, verts.length);
+  return [x / n, y / n, z / n];
+}
+
+/**
+ * Exact shoebox volume / surface area / 1 kHz absorption. With a `listener`, the
+ * absorption is the listener-local distance-weighted mean (see localMeanAbsorption);
+ * without one it is the plain area-weighted whole-room mean. V and S stay global.
+ */
+function shoeboxRoom(params: ShoeboxParams, listener?: [number, number, number]): RoomGeom {
   const [x, y, z] = params.size;
-  const faces: Array<[number, number]> = [
-    [y * z, 1], [y * z, 1], // -x,+x
-    [x * z, 1], [x * z, 1], // -y,+y
-    [x * y, 1], [x * y, 1], // -z,+z
+  // Faces in WALL_ORDER with their area + centroid (box assumed centred at origin).
+  // NOTE: the listener-local weighting therefore assumes the shoebox sits at the
+  // origin; if a shoebox is ever paired with a non-origin position, pass the listener
+  // in box-local coords (the area-weighted/no-listener path is unaffected regardless).
+  const hx = x / 2, hy = y / 2, hz = z / 2;
+  const faces: Array<{ area: number; centroid: [number, number, number]; wall: '-x' | '+x' | '-y' | '+y' | '-z' | '+z' }> = [
+    { area: y * z, centroid: [-hx, 0, 0], wall: '-x' },
+    { area: y * z, centroid: [hx, 0, 0], wall: '+x' },
+    { area: x * z, centroid: [0, -hy, 0], wall: '-y' },
+    { area: x * z, centroid: [0, hy, 0], wall: '+y' },
+    { area: x * y, centroid: [0, 0, -hz], wall: '-z' },
+    { area: x * y, centroid: [0, 0, hz], wall: '+z' },
   ];
-  const walls: Array<'-x' | '+x' | '-y' | '+y' | '-z' | '+z'> = ['-x', '+x', '-y', '+y', '-z', '+z'];
-  let area = 0, weighted = 0;
-  walls.forEach((w, i) => {
-    const a = faces[i][0];
-    const mat = params.materials[w] ?? 'concrete';
-    area += a;
-    weighted += a * absorptionFor(mat as string)[4]; // ~1 kHz
-  });
-  return { volume: x * y * z, surfaceArea: area, meanAbsorption: area > 0 ? weighted / area : 0.1 };
+  const surfaces: SurfaceSample[] = faces.map((f) => ({
+    area: f.area,
+    absorption: absorptionFor((params.materials[f.wall] ?? 'concrete') as string)[4], // ~1 kHz
+    centroid: f.centroid,
+  }));
+  const area = surfaces.reduce((s, f) => s + f.area, 0);
+  return {
+    volume: x * y * z,
+    surfaceArea: area,
+    meanAbsorption: localMeanAbsorption(surfaces, listener),
+  };
 }
 
 /** Polygon area of a planar convex wall (Newell's method). */
@@ -59,14 +128,15 @@ function polyArea(verts: Array<[number, number, number]>): number {
  * absorption = area-weighted mid-band absorption (walls carry per-band absorption),
  * volume = bounding-box volume (a robust approximation for the RT60 estimate).
  */
-function wallsRoom(walls: WallDef[]): RoomGeom {
-  let area = 0, weighted = 0;
+function wallsRoom(walls: WallDef[], listener?: [number, number, number]): RoomGeom {
+  let area = 0;
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  const surfaces: SurfaceSample[] = [];
   for (const w of walls) {
     const a = polyArea(w.verts);
     area += a;
-    weighted += a * (w.absorption[4] ?? 0.1);
+    surfaces.push({ area: a, absorption: w.absorption[4] ?? 0.1, centroid: polyCentroid(w.verts) });
     for (const v of w.verts) {
       minX = Math.min(minX, v[0]); maxX = Math.max(maxX, v[0]);
       minY = Math.min(minY, v[1]); maxY = Math.max(maxY, v[1]);
@@ -76,7 +146,8 @@ function wallsRoom(walls: WallDef[]): RoomGeom {
   const volume = Number.isFinite(minX)
     ? Math.max(0, maxX - minX) * Math.max(0, maxY - minY) * Math.max(0, maxZ - minZ)
     : 0;
-  return { volume, surfaceArea: area, meanAbsorption: area > 0 ? weighted / area : 0.1 };
+  // V and S stay GLOBAL (whole-room); only meanAbsorption becomes listener-local.
+  return { volume, surfaceArea: area, meanAbsorption: localMeanAbsorption(surfaces, listener) };
 }
 
 export interface ClapRoomConfig {
@@ -207,7 +278,7 @@ export class ClapRoom {
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
       scattering: opts.scattering ?? 0.1,
-      room: wallsRoom(walls),
+      room: wallsRoom(walls, listener),
     });
     this.swapIr(ir);
   }
@@ -252,7 +323,7 @@ export class ClapRoom {
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
       scattering: opts.scattering ?? 0.1,
-      room: wallsRoom(walls),
+      room: wallsRoom(walls, listener),
     });
     this.swapIr(ir);
     return true;

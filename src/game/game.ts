@@ -299,9 +299,12 @@ export class Game {
       yaw: this.audioYaw,
       source: [this.level.beacon.x, this.headHeight, this.level.beacon.z],
       speedOfSound: this.level.speedOfSound,
-      // Phase 1: direct + first-order edge diffraction only (Phase 2 raises order
-      // for full reflections).
-      maxOrder: 1,
+      // Phase 2: full reflections at order 3. Energy pruning (geometry.rs) keeps the
+      // candidate search cheap, and the `orderTapCap` guard below auto-drops to a
+      // lower order on large low-absorption enclosures (cathedral-class) whose
+      // high-order chains stay audible and would otherwise blow the IR-build budget.
+      maxOrder: 3,
+      orderTapCap: 24,
       scattering: this.level.acousticScattering ?? 0.1,
     });
   }
