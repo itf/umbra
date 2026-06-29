@@ -14,7 +14,8 @@
 import { initAcoustics } from '../engine/acoustics/core';
 import { startAudio } from '../engine/audioGraph';
 import { HrtfRenderer } from '../engine/hrtf/renderer';
-import { ScenePlayer } from '../debug/scenePlayer';
+import { ScenePlayer, type ProbeSpec } from '../debug/scenePlayer';
+import { PROBE_PRESETS, isProbeName } from '../debug/probes';
 import {
   makeRandomQuestion,
   type Question,
@@ -41,6 +42,29 @@ function announce(msg: string) {
 /** Difficulty grows with the streak (contrast shrinks): easy -> subtle. */
 function difficulty(): number {
   return Math.min(1, streak * 0.12);
+}
+
+/** A user-picked File decoded once and reused as a probe buffer. */
+let pickedProbeBuffer: AudioBuffer | null = null;
+
+/**
+ * Resolve the probe chosen in the UI into a ScenePlayer ProbeSpec. The same probe
+ * is applied to BOTH rooms so the A/B comparison stays fair. Custom: a picked File
+ * (decoded buffer) wins over a typed URL; falls back to the synth clap if neither.
+ */
+function selectedProbe(): ProbeSpec {
+  const value = ($('probe') as HTMLSelectElement).value;
+  if (isProbeName(value)) return value;
+  // 'custom'
+  if (pickedProbeBuffer) return { buffer: pickedProbeBuffer };
+  const url = ($('probe-url') as HTMLInputElement).value.trim();
+  if (url) return { url };
+  return 'clap'; // nothing supplied → fall back
+}
+
+/** Apply the current UI probe to the player (awaited so loads finish before fire). */
+async function applyProbe(p: ScenePlayer): Promise<void> {
+  await p.setProbe(selectedProbe());
 }
 
 async function ensurePlayer(): Promise<ScenePlayer> {
@@ -98,6 +122,7 @@ async function playRoom(room: 'A' | 'B') {
     p.load(scene);
     loadedRoom = room;
   }
+  await applyProbe(p);
   p.clap();
   announce(`Playing Room ${room}.`);
 }
@@ -111,7 +136,10 @@ async function playSingle() {
   }
   // Direction scenes use a continuous tone beacon (loaded on `load`); for any
   // clap-bearing scene also fire a clap.
-  if (p.hasClap) p.clap();
+  if (p.hasClap) {
+    await applyProbe(p);
+    p.clap();
+  }
   announce('Playing the sound. Where is it coming from?');
 }
 
@@ -142,7 +170,45 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   ($('next') as HTMLButtonElement).focus();
 }
 
+/** Populate the probe picker and wire the custom URL/file inputs. */
+function setupProbePicker() {
+  const sel = $('probe') as HTMLSelectElement;
+  const hint = $('probe-hint') as HTMLElement;
+  for (const preset of PROBE_PRESETS) {
+    const opt = document.createElement('option');
+    opt.value = preset.name;
+    opt.textContent = preset.label;
+    sel.appendChild(opt);
+  }
+  const custom = document.createElement('option');
+  custom.value = 'custom';
+  custom.textContent = 'Custom recording…';
+  sel.appendChild(custom);
+
+  const updateHint = () => {
+    const preset = PROBE_PRESETS.find((p) => p.name === sel.value);
+    hint.textContent = preset ? preset.hint : 'play your own recording as the echo probe';
+  };
+  sel.addEventListener('change', updateHint);
+  updateHint();
+
+  // Decode a picked File once (via the AudioContext) and cache it as the buffer.
+  ($('probe-file') as HTMLInputElement).addEventListener('change', async (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) { pickedProbeBuffer = null; return; }
+    try {
+      const p = await ensurePlayer();
+      pickedProbeBuffer = await p.decodeFile(file);
+      sel.value = 'custom';
+      updateHint();
+    } catch {
+      pickedProbeBuffer = null; // bad file → selectedProbe() falls back to clap
+    }
+  });
+}
+
 function main() {
+  setupProbePicker();
   $('begin').addEventListener('click', async () => {
     ($('begin') as HTMLButtonElement).disabled = true;
     announce('Loading audio…');

@@ -12,6 +12,16 @@ import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
 import { computeRoomTaps } from '../engine/acoustics/core';
 import { buildRoomIr } from '../engine/acoustics/roomIr';
 import { type Scene, sceneWalls } from './scenes';
+import { resolveProbe, type ProbeName } from './probes';
+import { loadCustomLoop } from '../game/customAudio';
+
+/**
+ * What probe to fire through the room IR:
+ *  - a synth preset name ('clap' | 'click' | 'hiss' | 'snap'),
+ *  - a recorded file `{ url }` (fetched/decoded/cached via loadCustomLoop),
+ *  - a pre-decoded `{ buffer }` (e.g. a user-picked File already decoded).
+ */
+export type ProbeSpec = ProbeName | { url: string } | { buffer: AudioBuffer };
 
 export class ScenePlayer {
   private graph: AudioGraph;
@@ -20,6 +30,10 @@ export class ScenePlayer {
   private tones: Array<{ src: HrtfSource; osc: OscillatorNode; lfo: OscillatorNode; pos: [number, number, number] }> = [];
   private convolver: ConvolverNode;
   private yaw = 0;
+  /** The currently selected probe (default: the legacy synth clap). */
+  private probe: ProbeSpec = 'clap';
+  /** A recorded probe buffer once loaded, or null if none / load failed. */
+  private recordedBuffer: AudioBuffer | null = null;
 
   constructor(graph: AudioGraph, renderer: HrtfRenderer) {
     this.graph = graph;
@@ -114,20 +128,59 @@ export class ScenePlayer {
     this.convolver.buffer = buf;
   }
 
-  /** Fire any clap source in the scene through the room IR. */
-  clap() {
+  /**
+   * Select which probe `clap()` fires:
+   *  - a synth preset name, OR
+   *  - `{ url }` for a recorded file (fetched/decoded/cached via loadCustomLoop),
+   *  - `{ buffer }` for a pre-decoded recording (e.g. a user-picked File).
+   * For a recorded probe the buffer is loaded eagerly; if the load fails we fall
+   * back to the synth `clap` at fire time.
+   */
+  async setProbe(probe: ProbeSpec): Promise<void> {
+    this.probe = probe;
+    this.recordedBuffer = null;
+    if (typeof probe === 'object') {
+      if ('buffer' in probe) {
+        this.recordedBuffer = probe.buffer;
+      } else {
+        // Reuse the shared fetch+decode+cache helper; null on failure.
+        this.recordedBuffer = await loadCustomLoop(this.graph.ctx, probe.url);
+      }
+    }
+  }
+
+  /** Decode a user-picked audio File/Blob into an AudioBuffer for use as a probe. */
+  async decodeFile(file: Blob): Promise<AudioBuffer> {
+    const bytes = await file.arrayBuffer();
+    return this.graph.ctx.decodeAudioData(bytes);
+  }
+
+  /** Build the mono excitation buffer for the current probe (synth fallback). */
+  private probeBuffer(): AudioBuffer {
+    const ctx = this.graph.ctx;
+    if (typeof this.probe === 'object' && this.recordedBuffer) {
+      return this.recordedBuffer; // recorded probe (loaded ok)
+    }
+    // Synth probe, or recorded-probe fallback to clap on load failure.
+    const name = typeof this.probe === 'string' ? this.probe : 'clap';
+    const samples = resolveProbe(name)(ctx.sampleRate);
+    const buf = ctx.createBuffer(1, samples.length, ctx.sampleRate);
+    buf.getChannelData(0).set(samples);
+    return buf;
+  }
+
+  /**
+   * Fire the currently-selected probe through the scene's room IR. The optional
+   * arg is a synth preset NAME only; to use a recorded (url/buffer) probe, call
+   * `setProbe(...)` first (it's async) — the type reflects that.
+   */
+  clap(probe?: ProbeName) {
     if (!this.scene) return;
     if (!this.scene.sources.some((s) => s.kind === 'clap')) return;
+    if (probe !== undefined) this.probe = probe;
     const ctx = this.graph.ctx;
-    const n = Math.ceil(0.01 * ctx.sampleRate);
-    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
-    const ch = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) {
-      const env = 1 - i / n;
-      ch[i] = (Math.random() * 2 - 1) * env * env;
-    }
     const src = ctx.createBufferSource();
-    src.buffer = buf;
+    src.buffer = this.probeBuffer();
     src.connect(this.convolver);
     src.start();
   }

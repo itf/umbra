@@ -48,6 +48,18 @@
           <option value="reflector">Panel left vs right (echo direction)</option>
         </select>
       </label>
+      <label style="margin-top:14px">Probe sound (the "echo" you fire)
+        <select id="probe" aria-label="Probe sound">
+        </select>
+      </label>
+      <p id="probe-hint" class="hint" style="margin:4px 0 0"></p>
+      <label style="margin-top:10px">Custom recording (used when "Custom recording" is selected)
+        <input id="probe-url" type="text" inputmode="url" placeholder="https://… audio URL"
+               aria-label="Custom probe recording URL"
+               style="background:#1c1c1c;color:#eee;border:1px solid #333;border-radius:8px;padding:8px;font-size:1rem;min-height:44px" />
+      </label>
+      <input id="probe-file" type="file" accept="audio/*" aria-label="Custom probe recording file"
+             style="margin-top:8px;color:#9aa" />
       <button id="begin" class="big" style="margin-top:14px">▶ Begin (headphones on)</button>
     </div>
 

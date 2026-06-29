@@ -17,6 +17,16 @@ room's impulse response), then answers a single contrast question. The answer is
 scored, and *Next* advances. The **direction** exercise is a single-scene variant
 (one room, one positioned source).
 
+## Selectable probe sounds
+
+The "echo" you fire is **selectable** via a probe picker on the page: synth presets
+(clap / tongue-click / hiss / finger-snap) plus a **custom recording** (URL or a
+picked audio file). The chosen probe is applied to **both Room A and Room B** so the
+A/B comparison stays fair. A sharp transient (click/snap) sharpens echo *timing*; a
+sustained hiss makes *faint* reflections ring out. The clap fires from the scene's
+clap-source position, so an off-centre clap genuinely changes the reflection
+pattern. See `docs/engine/probe-sounds.md`.
+
 ## Fairness: one variable at a time
 
 The drill only trains the right cue if the two rooms differ in **exactly** the

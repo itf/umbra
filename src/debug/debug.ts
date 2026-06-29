@@ -10,6 +10,7 @@ import { MATERIALS, NUM_BANDS } from '../engine/acoustics/materials';
 import { startAudio } from '../engine/audioGraph';
 import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { ScenePlayer } from './scenePlayer';
+import { PROBE_PRESETS, type ProbeName } from './probes';
 import { SCENES } from './scenes';
 import { TurnControl, headingDescription } from '../game/turnControl';
 import {
@@ -208,6 +209,14 @@ function setupScenes() {
     select.appendChild(opt);
   }
 
+  const probeSel = $('scene-probe') as HTMLSelectElement;
+  for (const preset of PROBE_PRESETS) {
+    const opt = document.createElement('option');
+    opt.value = preset.name;
+    opt.textContent = preset.label;
+    probeSel.appendChild(opt);
+  }
+
   let player: ScenePlayer | null = null;
 
   const ensure = async (): Promise<ScenePlayer> => {
@@ -231,6 +240,7 @@ function setupScenes() {
   select.addEventListener('change', loadCurrent);
   $('scene-clap').addEventListener('click', async () => {
     const p = await ensure();
+    await p.setProbe(probeSel.value as ProbeName);
     p.clap();
   });
 
