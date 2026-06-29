@@ -5,7 +5,7 @@
  * block is skipped with a clear message so CI stays green.
  */
 import { describe, it, expect } from 'vitest';
-import { MonsterVoice } from '../src/game/monsterSounds';
+import { MonsterVoice, resolveMonsterPreset, MONSTER_PRESETS } from '../src/game/monsterSounds';
 
 let OfflineAudioContext: any = null;
 let importError = '';
@@ -20,6 +20,17 @@ function rms(buf: Float32Array): number {
   for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
   return Math.sqrt(s / buf.length);
 }
+
+describe('monster preset resolution (pure)', () => {
+  it('maps known names and defaults unknown to growl', () => {
+    expect(resolveMonsterPreset('hum')).toBe('hum');
+    expect(resolveMonsterPreset('growl')).toBe('growl');
+    expect(resolveMonsterPreset(undefined)).toBe('growl');
+    expect(resolveMonsterPreset('whatever')).toBe('growl');
+    expect(MONSTER_PRESETS).toContain('growl');
+    expect(MONSTER_PRESETS).toContain('hum');
+  });
+});
 
 const d = OfflineAudioContext ? describe : describe.skip;
 if (!OfflineAudioContext) {
@@ -38,6 +49,26 @@ d('monster voice (offline render)', () => {
     const level = rms(buf.getChannelData(0));
     // Not silent, and a substantial drone (well above a noise floor).
     expect(level).toBeGreaterThan(0.05);
+  });
+
+  it('the hum preset is audible too', async () => {
+    const ctx = new OfflineAudioContext(1, sr * 1.0, sr);
+    const voice = new MonsterVoice(ctx, ctx.destination, 'hum');
+    voice.start();
+    const level = rms((await ctx.startRendering()).getChannelData(0));
+    expect(level).toBeGreaterThan(0.05);
+  });
+
+  it('the growl is more present (louder) than the hum', async () => {
+    // The growl voice is the aggressive one — clearly louder/more present than the
+    // calmer hum, so a chasing monster is unmistakable. (Both share the dark body;
+    // the growl adds the rasp layer and a higher output level.)
+    const level = async (preset: 'growl' | 'hum') => {
+      const ctx = new OfflineAudioContext(1, sr * 1.0, sr);
+      new MonsterVoice(ctx, ctx.destination, preset).start();
+      return rms((await ctx.startRendering()).getChannelData(0));
+    };
+    expect(await level('growl')).toBeGreaterThan(await level('hum'));
   });
 
   it('the growl is rough (amplitude flutter), not a smooth tone', async () => {

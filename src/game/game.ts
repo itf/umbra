@@ -18,7 +18,7 @@ import {
   DEFAULT_CATCH_RADIUS,
   type MonsterState,
 } from './monster';
-import { MonsterVoice } from './monsterSounds';
+import { MonsterVoice, resolveMonsterPreset } from './monsterSounds';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -139,7 +139,7 @@ export class Game {
     for (const m of level.monsters ?? []) {
       const src = renderer.createSource();
       src.output.connect(graph.master);
-      const voice = new MonsterVoice(this.graph.ctx, src.input);
+      const voice = new MonsterVoice(this.graph.ctx, src.input, resolveMonsterPreset(m.sound));
       voice.start();
       src.setPosition(m.x, this.headHeight, m.z);
       this.monsters.push({ state: makeMonster(m.x, m.z, m.speed), src, voice });

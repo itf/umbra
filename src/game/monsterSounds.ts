@@ -11,15 +11,26 @@
  * AudioContext, so it is ear-verified rather than unit-tested (like BeaconVoice).
  */
 
-/** A low growling/breathing drone, distinct from any beacon preset. */
+/** Selectable monster voices. `growl` is rough/menacing; `hum` is a calmer drone. */
+export type MonsterPreset = 'growl' | 'hum';
+export const MONSTER_PRESETS: MonsterPreset[] = ['growl', 'hum'];
+
+/** Normalize an arbitrary stored `sound` label to a known preset (default growl). */
+export function resolveMonsterPreset(name: string | undefined): MonsterPreset {
+  return name === 'hum' ? 'hum' : 'growl';
+}
+
+/** A low monster drone, distinct from any beacon preset. Voice chosen by preset. */
 export class MonsterVoice {
   private ctx: BaseAudioContext;
   private out: GainNode;
   private oscillators: OscillatorNode[] = [];
   private running = false;
+  private preset: MonsterPreset;
 
-  constructor(ctx: BaseAudioContext, dest: AudioNode) {
+  constructor(ctx: BaseAudioContext, dest: AudioNode, preset: MonsterPreset = 'growl') {
     this.ctx = ctx;
+    this.preset = preset;
     this.out = ctx.createGain();
     this.out.gain.value = 1;
     this.out.connect(dest);
@@ -30,8 +41,8 @@ export class MonsterVoice {
     this.running = true;
     const ctx = this.ctx;
 
-    // Low growl: a couple of detuned saw-ish oscillators an octave apart through a
-    // lowpass for a throaty, dark timbre.
+    // Shared dark body: detuned low oscillators through a lowpass for a throaty,
+    // dark timbre — the base both voices are built on.
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 420;
@@ -56,29 +67,40 @@ export class MonsterVoice {
       this.oscillators.push(osc);
     }
 
-    // GRITTY GROWL: a fast amplitude flutter (~22 Hz) gives the drone a rough,
-    // throaty "rrrr" rasp instead of a smooth hum — this is what reads as a growl
-    // by ear. Layered under a slow ~0.7 Hz "breath" heave so it also sounds alive
-    // and its onset/offset are obvious as it moves.
-    this.out.gain.value = 0.9; // louder so it's clearly audible while chasing
+    if (this.preset === 'growl') {
+      // GROWL: a fast amplitude flutter (~22 Hz) gives a rough, throaty "rrrr" rasp,
+      // over a slow ~0.7 Hz breath heave. Louder, menacing.
+      this.out.gain.value = 0.9;
+      const growl = ctx.createOscillator();
+      growl.type = 'sawtooth';
+      growl.frequency.value = 22;
+      const growlDepth = ctx.createGain();
+      growlDepth.gain.value = 0.4;
+      growl.connect(growlDepth).connect(this.out.gain);
+      growl.start();
+      this.oscillators.push(growl);
 
-    const growl = ctx.createOscillator();
-    growl.type = 'sawtooth';
-    growl.frequency.value = 22; // rasp rate
-    const growlDepth = ctx.createGain();
-    growlDepth.gain.value = 0.4; // deep modulation = audible grit
-    growl.connect(growlDepth).connect(this.out.gain);
-    growl.start();
-    this.oscillators.push(growl);
-
-    const breath = ctx.createOscillator();
-    breath.type = 'sine';
-    breath.frequency.value = 0.7;
-    const breathGain = ctx.createGain();
-    breathGain.gain.value = 0.25;
-    breath.connect(breathGain).connect(this.out.gain);
-    breath.start();
-    this.oscillators.push(breath);
+      const breath = ctx.createOscillator();
+      breath.type = 'sine';
+      breath.frequency.value = 0.7;
+      const breathGain = ctx.createGain();
+      breathGain.gain.value = 0.25;
+      breath.connect(breathGain).connect(this.out.gain);
+      breath.start();
+      this.oscillators.push(breath);
+    } else {
+      // HUM: the calmer original — just the slow ~0.7 Hz breathing heave, no rasp,
+      // so it reads as a steady alive presence rather than an aggressive growl.
+      this.out.gain.value = 0.65;
+      const breath = ctx.createOscillator();
+      breath.type = 'sine';
+      breath.frequency.value = 0.7;
+      const breathGain = ctx.createGain();
+      breathGain.gain.value = 0.35;
+      breath.connect(breathGain).connect(this.out.gain);
+      breath.start();
+      this.oscillators.push(breath);
+    }
   }
 
   /**
