@@ -59,4 +59,12 @@ export default defineConfig({
       },
     }),
   ],
+  // Several suites load the WASM acoustics core and/or node-web-audio-api native
+  // audio contexts; running every test file in its own fork in parallel piled up
+  // enough native memory to OOM the default heap. Cap the fork pool so memory
+  // stays bounded — the suite is fast, so the small loss of parallelism is fine.
+  test: {
+    pool: 'forks',
+    poolOptions: { forks: { maxForks: 4, minForks: 1 } },
+  },
 });
