@@ -9,6 +9,7 @@ import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
 import { Footsteps } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
+import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -21,7 +22,7 @@ export interface FloorRegion {
 
 export interface GameLevel {
   start: { x: number; z: number; yaw: number };
-  beacon: { x: number; z: number; freq: number };
+  beacon: { x: number; z: number; freq: number; sound?: BeaconPreset; soundUrl?: string };
   /** Win when within this many metres of the beacon. */
   goalRadius: number;
   headHeight?: number;
@@ -48,8 +49,12 @@ export class Game {
   private cb: GameCallbacks;
   private footsteps: Footsteps;
   private beacon: HrtfSource;
-  private beaconOsc: OscillatorNode;
-  private beaconLfo: OscillatorNode;
+  /** The synthesized beacon voice (null while a custom audio file is playing). */
+  private beaconVoice: BeaconVoice | null = null;
+  /** Looping custom-audio source, when `soundUrl` loaded successfully. */
+  private beaconCustom: AudioBufferSourceNode | null = null;
+  /** Cache of decoded custom-audio buffers, keyed by url. */
+  private static customCache = new Map<string, AudioBuffer | null>();
   private headHeight: number;
   private won = false;
   /**
@@ -83,25 +88,67 @@ export class Game {
       (pose) => this.applyAudioPose(pose),
     );
 
-    // Beacon: a pulsed tone at the goal, so it's easy to localize and home in on.
-    const ctx = graph.ctx;
-    this.beaconOsc = ctx.createOscillator();
-    this.beaconOsc.type = 'sine';
-    this.beaconOsc.frequency.value = level.beacon.freq;
-    const trem = ctx.createGain();
-    this.beaconLfo = ctx.createOscillator();
-    this.beaconLfo.frequency.value = 1.6;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.5;
-    this.beaconLfo.connect(lfoGain).connect(trem.gain);
-    trem.gain.value = 0.5;
+    // Beacon at the goal — easy to localize and home in on. Its dry signal comes
+    // from the chosen synth preset (or a looped custom audio file); either way it
+    // feeds the HrtfSource so all spatial/Doppler/propagation work is shared.
     this.beacon = renderer.createSource();
-    this.beaconOsc.connect(trem).connect(this.beacon.input);
     this.beacon.output.connect(graph.master);
-    this.beaconOsc.start();
-    this.beaconLfo.start();
+    this.startBeaconSource();
 
     this.syncListener();
+  }
+
+  /**
+   * Build the beacon's dry source. If the level's beacon has a `soundUrl`, try to
+   * play it looped (fetch + decode, cached); otherwise — or on failure — play the
+   * chosen synth preset (default 'tone'). Both feed `this.beacon.input`.
+   */
+  private startBeaconSource() {
+    const url = this.level.beacon.soundUrl;
+    if (url) {
+      this.playCustomBeacon(url);
+      // While the custom file loads, run the synth preset as an immediate
+      // fallback; if/when the buffer arrives, we swap to it.
+    }
+    this.startSynthBeacon();
+  }
+
+  /** Start (or restart) the synthesized preset voice. */
+  private startSynthBeacon() {
+    const preset: BeaconPreset = resolveBeaconPreset(this.level.beacon.sound);
+    this.beaconVoice?.stop();
+    this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beacon.input, preset, this.level.beacon.freq);
+    this.beaconVoice.start();
+  }
+
+  /** Fetch + decode (cached) the custom audio and loop it through the beacon. */
+  private playCustomBeacon(url: string) {
+    const cached = Game.customCache.get(url);
+    if (cached) { this.swapToCustom(cached); return; }
+    if (cached === null) return; // known-failed; stick with synth
+    if (Game.customCache.has(url)) return; // in flight
+    Game.customCache.set(url, null); // mark in-flight / failed-until-resolved
+    fetch(url)
+      .then((r) => r.arrayBuffer())
+      .then((b) => this.graph.ctx.decodeAudioData(b))
+      .then((buf) => {
+        Game.customCache.set(url, buf);
+        if (!this.won) this.swapToCustom(buf);
+      })
+      .catch(() => { Game.customCache.set(url, null); /* keep the synth fallback */ });
+  }
+
+  /** Replace the synth voice with a looped custom buffer. */
+  private swapToCustom(buf: AudioBuffer) {
+    if (this.beaconCustom) return; // already swapped
+    this.beaconVoice?.stop();
+    this.beaconVoice = null;
+    const src = this.graph.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(this.beacon.input);
+    src.start();
+    this.beaconCustom = src;
   }
 
   /**
@@ -233,8 +280,12 @@ export class Game {
   }
 
   destroy() {
-    this.beaconOsc.stop();
-    this.beaconLfo.stop();
+    this.beaconVoice?.stop();
+    this.beaconVoice = null;
+    if (this.beaconCustom) {
+      try { this.beaconCustom.stop(); } catch { /* already stopped */ }
+      this.beaconCustom = null;
+    }
     this.beacon.disconnect();
   }
 }

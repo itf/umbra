@@ -243,7 +243,7 @@ export function loadLevel(level: Level): LoadedLevel {
   const game: GameLevel = {
     start: { x: level.start.x, z: level.start.z, yaw: level.start.yaw },
     beacon: first
-      ? { x: first.x, z: first.z, freq: first.freq }
+      ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
       : { x: level.room.width / 2, z: 1, freq: 440 },
     goalRadius: first?.goalRadius ?? 0.8,
     headHeight: 1.6,

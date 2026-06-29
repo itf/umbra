@@ -13,6 +13,7 @@ import {
 import {
   fitView, draw, screenToWorld, worldToScreen, type ViewState, MATERIAL_NAMES,
 } from './view';
+import { beaconPresetNames, resolveBeaconPreset, BeaconVoice, type BeaconPreset } from '../game/beaconSounds';
 
 type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster';
 
@@ -210,6 +211,14 @@ function renderProps() {
   } else if (o.kind === 'beacon') {
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('freq', 'freq', o.ref.freq, 10), numRow('goal r', 'goalRadius', o.ref.goalRadius, 0.1));
+    const cur = resolveBeaconPreset(o.ref.sound);
+    rows.push(
+      `<label>sound<select data-k="sound">${beaconPresetNames().map(
+        (p) => `<option ${p === cur ? 'selected' : ''}>${p}</option>`,
+      ).join('')}</select></label>`,
+      `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`,
+      '<button class="row-btn" id="preview-beacon">Preview sound</button>',
+    );
   } else if (o.kind === 'wall') {
     rows.push(numRow('ax', 'ax', o.ref.ax), numRow('az', 'az', o.ref.az),
       numRow('bx', 'bx', o.ref.bx), numRow('bz', 'bz', o.ref.bz), matRow(o.ref.material));
@@ -254,13 +263,36 @@ function renderProps() {
     el.addEventListener('input', () => applyProp(o, el.dataset.k!, el.value));
   });
   $('del-obj')?.addEventListener('click', () => deleteSelected());
+  if (o.kind === 'beacon') {
+    $('preview-beacon')?.addEventListener('click', () => previewBeacon(o.ref as BeaconObj));
+  }
+}
+
+// Lazily-created AudioContext for the editor's beacon preview.
+let previewCtx: AudioContext | null = null;
+let previewVoice: BeaconVoice | null = null;
+function previewBeacon(b: BeaconObj) {
+  previewCtx ??= new AudioContext();
+  void previewCtx.resume();
+  previewVoice?.stop();
+  const preset: BeaconPreset = resolveBeaconPreset(b.sound);
+  const gain = previewCtx.createGain();
+  gain.gain.value = 0.5;
+  gain.connect(previewCtx.destination);
+  previewVoice = new BeaconVoice(previewCtx, gain, preset, b.freq);
+  previewVoice.start();
+  // Auto-stop after a couple of seconds so it's a sample, not a drone.
+  window.setTimeout(() => previewVoice?.stop(), 2500);
 }
 
 function applyProp(o: StartLike, key: string, raw: string) {
   const num = parseFloat(raw);
   const r = o.ref as unknown as Record<string, unknown>;
   if (key === 'yawDeg') { (level.start.yaw as number) = (num * Math.PI) / 180; }
-  else if (key === 'material' || key === 'sound') { r[key] = raw; }
+  else if (key === 'material' || key === 'sound' || key === 'soundUrl') {
+    if (key === 'soundUrl' && raw === '') delete r.soundUrl;
+    else r[key] = raw;
+  }
   else if (o.kind === 'wall' && key.startsWith('motion')) {
     applyWallMotion(o.ref, key, raw, num);
     renderProps(); // motion-kind change toggles which param fields show
