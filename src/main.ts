@@ -72,7 +72,18 @@ startButton.addEventListener('click', async () => {
     startScreen.hidden = true;
     gameScreen.hidden = false;
 
-    let won = false;
+    // The run's end-state. `ended` freezes input (step buttons stop responding);
+    // `outcome` distinguishes a win from being caught, so messaging/future logic
+    // never has to overload one flag for both.
+    let ended = false;
+    let outcome: 'won' | 'caught' | null = null;
+    // End the run with a distinct, spoken outcome (this is an eyes-free game, so
+    // win vs. caught must be clearly announced, not just visually alerted).
+    const endRun = (result: 'won' | 'caught') => {
+      ended = true;
+      outcome = result;
+      say(outcome === 'won' ? 'You win.' : 'Caught!');
+    };
     const game = new Game(graph, renderer, LEVEL, {
       onStep: (foot, stride) =>
         say(`Step ${foot === 'L' ? 'left' : 'right'} (${stride.toFixed(2)} m).`),
@@ -87,8 +98,13 @@ startButton.addEventListener('click', async () => {
                 : 'Recovering…',
         ),
       onWin: () => {
-        won = true;
+        endRun('won');
         alert('You reached the beacon. Level complete!');
+      },
+      onCaught: () => {
+        // The monster physically reached you — a loss, distinct from a win.
+        endRun('caught');
+        alert('A monster caught you. Press start to try again.');
       },
       onProgress: (d) => updateFootHints(d),
     });
@@ -100,7 +116,7 @@ startButton.addEventListener('click', async () => {
     const stepLeft = document.getElementById('step-left') as HTMLButtonElement;
     const stepRight = document.getElementById('step-right') as HTMLButtonElement;
     const doStep = (foot: 'L' | 'R') => {
-      if (won) return;
+      if (ended) return;
       game.step(foot);
       updateFeet(game); // refresh immediately after a step
     };

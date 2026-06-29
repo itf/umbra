@@ -260,6 +260,17 @@ Wires the player to audio. On each `step`:
 The beacon is an `HrtfSource` fed by a chosen synth **preset** (or a looped custom
 audio file) — see `docs/engine/beacon-sounds.md`; win = within `goalRadius`.
 
+### 7.2a Monster chase AI (`monster.ts` + `monsterSounds.ts`)
+Monsters are **deaf to the player's position** — they hunt the last place the
+player made noise (`NoiseTracker.lastNoise()`). The AI core is a **pure** function
+`updateMonster(state, noise, now, dt)`: retarget to a *fresh, still-audible* noise
+(decayed loudness ≥ threshold), move toward it clamped to `speed·dt`, idle/linger
+on arrival; a faded noise no longer attracts (the evasion lever). `game.ts` runs
+them in `tick(nowMs)`, repositions each one's `HrtfSource` (so a chasing monster
+Dopplers + glides), and **catches** the player by **real proximity** → `onCaught`
+(freeze + fade, like win). No monsters ⇒ zero per-frame cost. Full design +
+tuning knobs in `docs/engine/monster-chase.md`.
+
 ### 7.3 Turning (`heading.ts` + `compass.ts`)
 Turn input sets a **target** heading; `Heading` slews the actual heading toward it
 at a capped **angular velocity** (~100°/s). This makes turning physically plausible
@@ -285,7 +296,8 @@ synthesis (noise transient + low thump; granular "crunch" grains for gravel/gras
 ### 8.1 Schema (`schema.ts`)
 `Level` = room dims + an `open` flag (no enclosing box → street/field) + `hasCeiling`
 + materials + `start`, `beacons[]`, `walls[]`, `floors[]` (material zones),
-`ceilings[]` (per-location height/material zones), `monsters[]` (place-only). `isLevel`
+`ceilings[]` (per-location height/material zones), `monsters[]` (position/speed/sound;
+now chase the player's last noise — §7 / `monster-chase.md`). `isLevel`
 back-fills fields added over time so old saved levels still load.
 
 ### 8.2 Storage (`storage.ts`)
@@ -379,7 +391,11 @@ WASM, or FFT convolution — 10–50× expected) or throttle to ~10 Hz and cross
 ## 12. Known limitations & follow-ups
 
 - **IR build is JS** (~32 ms) — the one perf item for real-time moving geometry.
-- **Monsters are place-only** — the editor saves them; the game has no chase AI yet.
+- **Monsters chase your last noise** — a pure AI core (`src/game/monster.ts`)
+  hunts `NoiseTracker.lastNoise()`, not the player position; a growl voice
+  (`monsterSounds.ts`) through an `HrtfSource` makes them locatable + Dopplers as
+  they near; catch = real proximity → `onCaught`. See
+  `docs/engine/monster-chase.md`. Single-target investigate→idle (no patrol yet).
 - **Beacon sounds**: per-beacon synth presets (tone/bell/musicbox/drip/hum) +
   optional custom audio file (`docs/engine/beacon-sounds.md`).
 - **Diffraction is first-order, geometric approximation** — no true UTD coefficient,
@@ -403,8 +419,10 @@ WASM, or FFT convolution — 10–50× expected) or throttle to ~10 Hz and cross
 - **New acoustic geometry kind** (ramp, curved wall): add to `schema.ts`, render in
   the editor `view.ts`, and emit `WallDef`s in `load.ts`. The general solver takes
   any convex polygon.
-- **Monster AI**: monsters are already in the schema/level; add a movement + catch
-  loop in `game.ts` and a spatialized sound source.
+- **Monster behaviour**: the AI core is pure (`monster.ts`); extend
+  `updateMonster` (e.g. add a patrol/wander phase when idle, or a per-monster
+  noise threshold) without touching audio. Tuning lives in `MonsterTuning` +
+  `GameLevel.catchRadius`.
 - **Real-time moving walls**: port the HRIR convolution in `roomIr.ts` to WASM (or
   FFT), then recompute `WALLS` + IR on a throttle with a crossfade.
 - **Better diffraction**: replace the attenuation term in `diffraction.rs` with a

@@ -90,6 +90,18 @@ describe('level → game geometry', () => {
     expect(hasCorner).toBe(false);
   });
 
+  it('plumbs monsters from Level into GameLevel', () => {
+    const lvl = emptyLevel();
+    lvl.monsters = [{ id: 'm1', x: 3, z: 4, speed: 1.5, sound: 'growl' }];
+    const { game } = loadLevel(lvl);
+    expect(game.monsters).toEqual([{ x: 3, z: 4, speed: 1.5, sound: 'growl' }]);
+  });
+
+  it('a no-monster level yields an empty monster list (inert)', () => {
+    const { game } = loadLevel(emptyLevel());
+    expect(game.monsters).toEqual([]);
+  });
+
   it('reports a representative scattering coefficient', () => {
     const lvl = emptyLevel();
     lvl.roomMaterial = 'brick'; // high scatter

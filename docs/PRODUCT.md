@@ -56,6 +56,13 @@ It runs in any modern browser, installs as an app (PWA), and works offline.
 - **Bumping into walls** is felt: you stop, and the wall's material colors the bump
   sound. **Footsteps change with the floor** under you — concrete sounds sharp,
   carpet soft, gravel crunches.
+- **Monsters hunt you by sound.** A monster you place in a level prowls with a low,
+  unmistakable growl you can hear and locate. It is **deaf to where you actually
+  are** — it chases the **last place you made noise**. Stumble, rush, or cross a
+  loud floor (gravel, stone) and you give yourself away; tiptoe on carpet or foam
+  and the trail goes cold — it drifts to where it last heard you while you slip past.
+  As it closes in, its growl pitches up (Doppler) — your cue to freeze or change
+  course. Let it reach you and you're **caught**.
 
 ### Explore the acoustics (debug page)
 A set of **listenable scenes** lets you hear the engine directly: a beacon to turn
@@ -113,8 +120,6 @@ by sound, in a room whose echoes are real) is there.
 ## Where it's going
 
 Near-term, the most impactful additions:
-- **Monsters that chase you** — the editor already places them; bringing them to
-  life adds the danger and tension the original was known for.
 - **Richer beacon sounds** — bells, voices, water, or your own audio clips, so each
   goal has a character instead of a plain tone.
 - **More varied levels** — multi-room layouts, streets, and training courses that

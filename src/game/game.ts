@@ -11,6 +11,14 @@ import { Footsteps } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
 import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
+import {
+  makeMonster,
+  updateMonster,
+  caught as monsterCaught,
+  DEFAULT_CATCH_RADIUS,
+  type MonsterState,
+} from './monster';
+import { MonsterVoice } from './monsterSounds';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -19,6 +27,10 @@ export interface CollisionWall {
 /** A rectangular floor zone (for per-material footstep sounds). */
 export interface FloorRegion {
   x: number; z: number; w: number; d: number; material: string;
+}
+/** A monster placement for the chase AI (position + speed + sound label). */
+export interface MonsterSpawn {
+  x: number; z: number; speed: number; sound: string;
 }
 
 export interface GameLevel {
@@ -33,12 +45,18 @@ export interface GameLevel {
   floors?: FloorRegion[];
   /** Walls you can bump into (optional). */
   walls?: CollisionWall[];
+  /** Monsters that chase the player's last noise (optional). */
+  monsters?: MonsterSpawn[];
+  /** Real-proximity radius (m) at which a monster catches the player. */
+  catchRadius?: number;
 }
 
 export interface GameCallbacks {
   onStep?: (foot: Foot, stride: number) => void;
   onStumble?: (reason: string) => void;
   onWin?: () => void;
+  /** Fired once when a monster physically reaches the player (lose state). */
+  onCaught?: () => void;
   onProgress?: (distance: number) => void;
   /** Fired whenever the player makes noise (step/stumble/bump). Foundation for monster AI. */
   onNoise?: (event: NoiseEvent) => void;
@@ -67,6 +85,16 @@ export class Game {
   private static customCache = new Map<string, AudioBuffer | null>();
   private headHeight: number;
   private won = false;
+  private caught = false;
+  /**
+   * Live monster runtime, one entry per level monster. Each has a PURE AI state
+   * (monster.ts) and its own spatialized growl voice through an HrtfSource, so a
+   * chasing monster Dopplers/glides as it nears. Empty (and zero per-frame cost)
+   * when the level has no monsters. See docs/engine/monster-chase.md.
+   */
+  private monsters: { state: MonsterState; src: HrtfSource; voice: MonsterVoice }[] = [];
+  /** ms timestamp of the previous tick, for per-frame dt. */
+  private lastTickMs: number | null = null;
   /**
    * Audio-only listener glide. The HRTF listener + beacon follow this smoothly
    * interpolated pose across a step window; the LOGICAL player position (used for
@@ -105,6 +133,17 @@ export class Game {
     this.beacon = renderer.createSource();
     this.beacon.output.connect(graph.master);
     this.startBeaconSource();
+
+    // Monsters: a PURE AI state + a looping growl through its own HrtfSource so it's
+    // locatable by ear and Dopplers as it chases. No-op when the level has none.
+    for (const m of level.monsters ?? []) {
+      const src = renderer.createSource();
+      src.output.connect(graph.master);
+      const voice = new MonsterVoice(this.graph.ctx, src.input);
+      voice.start();
+      src.setPosition(m.x, this.headHeight, m.z);
+      this.monsters.push({ state: makeMonster(m.x, m.z, m.speed), src, voice });
+    }
 
     this.syncListener();
   }
@@ -197,6 +236,36 @@ export class Game {
    */
   tick(nowMs = this.graph.ctx.currentTime * 1000) {
     this.glide.tick(nowMs);
+    this.tickMonsters(nowMs);
+  }
+
+  /**
+   * Advance every monster's AI by the per-frame dt: feed it the LAST noise the
+   * player made (it hunts that, not the player), move it toward its target,
+   * reposition its spatial voice, and run the real-proximity catch test against the
+   * player. Frozen once won or caught. Entirely skipped when there are no monsters.
+   */
+  private tickMonsters(nowMs: number) {
+    if (this.monsters.length === 0) { this.lastTickMs = nowMs; return; }
+    const dtMs = this.lastTickMs == null ? 0 : Math.max(0, nowMs - this.lastTickMs);
+    this.lastTickMs = nowMs;
+    if (this.won || this.caught) return;
+
+    const noise = this.noise.lastNoise();
+    const p = this.player.state;
+    const radius = this.level.catchRadius ?? DEFAULT_CATCH_RADIUS;
+    for (const m of this.monsters) {
+      m.state = updateMonster(m.state, noise, nowMs, dtMs);
+      m.src.setPosition(m.state.x, this.headHeight, m.state.z);
+      if (!this.caught && monsterCaught(m.state, p.x, p.z, radius)) {
+        this.caught = true;
+        // Freeze + fade all audio (mirrors win).
+        const t = this.graph.ctx.currentTime;
+        this.beacon.output.gain.setTargetAtTime(0, t, 0.3);
+        for (const mm of this.monsters) mm.src.output.gain.setTargetAtTime(0, t, 0.3);
+        this.cb.onCaught?.();
+      }
+    }
   }
 
   /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */
@@ -211,7 +280,7 @@ export class Game {
 
   /** Take a step with the given foot at time nowMs (default: audio clock). */
   step(foot: Foot, nowMs = this.graph.ctx.currentTime * 1000) {
-    if (this.won) return;
+    if (this.won || this.caught) return;
     const before = { x: this.player.state.x, z: this.player.state.z };
     const result = this.player.step(foot, nowMs);
     const s = this.player.state;
@@ -314,6 +383,11 @@ export class Game {
       this.beaconCustom = null;
     }
     this.beacon.disconnect();
+    for (const m of this.monsters) {
+      m.voice.stop();
+      m.src.disconnect();
+    }
+    this.monsters = [];
   }
 }
 

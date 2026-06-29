@@ -33,23 +33,27 @@ with tests + per-feature docs under `docs/engine/`:
   `docs/engine/audio-artifacts-and-clipping.md`. (covers the "Live-render tests" item below)
 
 Done recently: auto-derived diffraction edges + UTD diffraction coefficient.
-In progress / next: a player **noise-event model**, then **monster chase AI**
-(hunts your last noise).
+Done: a player **noise-event model** and **monster chase AI** (hunts your last
+noise, not your position).
 
 ---
 
 ## Gameplay
 
-### 🔴 Monster chase AI
-Monsters are **place-only** today — the editor saves them into the level
-(`schema.ts` `MonsterObj`: position, speed, sound) but the game ignores them.
-- Add a movement loop in `game.ts`: each monster emits a spatialized sound
-  (`HrtfSource`) and moves toward the player at its `speed`.
-- "Caught" when within a radius → a lose/restart state (new `onCaught` callback).
-- Consider simple behaviors: line-of-"sound" chase, patrol, freeze-when-still
-  (the original rewarded standing still).
-- Tuning: monsters should be locatable by ear (distinct, looping sound) so the
-  player can avoid them.
+### ✅ Monster chase AI — DONE
+Monsters are **alive**: each hunts the **last place you made noise**
+(`NoiseTracker.lastNoise()`), not your real position — so quiet movement evades.
+- PURE AI core (`src/game/monster.ts`, unit-tested): `updateMonster(state, noise,
+  now, dt)` retargets to a fresh, still-audible noise and moves toward it at
+  `speed` (clamped to `speed*dt`); idles/lingers at the last-heard spot when no
+  fresh noise arrives. A faded noise (below a decayed-loudness threshold) no longer
+  attracts — that's the evasion lever.
+- Each monster emits a DISTINCT looping growl (`src/game/monsterSounds.ts`,
+  `MonsterVoice`) through its own `HrtfSource`, so it's locatable by ear and
+  Dopplers/glides as it chases.
+- `game.ts` advances them in `tick(nowMs)`; "caught" = real proximity to the
+  player → new `onCaught` callback (freeze + fade, mirroring win).
+- See [engine/monster-chase.md](engine/monster-chase.md).
 
 ### ✅ Richer / custom beacon sounds — DONE
 Beacons now have named synth presets plus an optional custom audio file.
@@ -202,7 +206,8 @@ limiter). `docs/engine/audio-artifacts-and-clipping.md`.
 ## Known limitations (carry forward)
 
 - IR build is JS (~32 ms) — see "Real-time IR build."
-- Monsters place-only; beacon is a bare sine.
+- Beacon presets exist; monster AI is a single-target "investigate last noise →
+  idle" — no patrol/wander or multi-monster coordination yet.
 - Diffraction first-order (geometric detour + UTD coefficient); knife-edge wedge
   assumption; no 2nd-order edge chaining.
 - Open-space levels: the clap uses the general solver (correct), but verify edge

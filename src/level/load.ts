@@ -325,6 +325,7 @@ export function loadLevel(level: Level): LoadedLevel {
       ...level.walls.map((w) => ({ ax: w.ax, az: w.az, bx: w.bx, bz: w.bz, material: w.material })),
       ...(level.open ? [] : perimeterSegments(level)),
     ],
+    monsters: level.monsters.map((m) => ({ x: m.x, z: m.z, speed: m.speed, sound: m.sound })),
   };
   // Open levels have no enclosing box — only the free-standing walls you placed.
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the
