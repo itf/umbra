@@ -12,6 +12,8 @@
  */
 
 import { getIrPair, loadHrtf, nearestDir, type HrtfSet } from './sofa';
+import { DEFAULT_SPEED_OF_SOUND } from '../acoustics/core';
+import { DEFAULT_MAX_DELAY_SEC, propagationDelaySec, clampDelaySec } from './propagation';
 
 export interface ListenerPose {
   x: number;
@@ -37,12 +39,40 @@ export class HrtfRenderer {
   readonly set: HrtfSet;
   private listener: ListenerPose = { x: 0, y: 1.6, z: 0, yaw: 0 };
 
-  private constructor(ctx: AudioContext, set: HrtfSet) {
-    this.ctx = ctx;
-    this.set = set;
+  /**
+   * Speed of sound (m/s) used to turn distance into a propagation delay
+   * (`delay = dist / speedOfSound`). Shared default with the acoustics core so a
+   * single value governs both the baked room IR timing and live-source lag.
+   * Change it via `setSpeedOfSound` (guarded to stay positive) to make sources
+   * arrive sooner/later — subsequent `setPosition` calls pick it up. Read via the
+   * `speedOfSound` getter.
+   */
+  private _speedOfSound = DEFAULT_SPEED_OF_SOUND;
+
+  /** Current speed of sound (m/s). */
+  get speedOfSound(): number {
+    return this._speedOfSound;
   }
 
-  static async create(ctx: AudioContext, hrtfUrl: string): Promise<HrtfRenderer> {
+  /** Max delay each source's DelayNode is allocated; caps the farthest honest lag. */
+  readonly maxDelaySec: number;
+
+  private constructor(ctx: AudioContext, set: HrtfSet, maxDelaySec: number) {
+    this.ctx = ctx;
+    this.set = set;
+    this.maxDelaySec = maxDelaySec;
+  }
+
+  /** Set the speed of sound; affects propagation delay on the next `setPosition`. */
+  setSpeedOfSound(c: number) {
+    if (c > 0 && Number.isFinite(c)) this._speedOfSound = c;
+  }
+
+  static async create(
+    ctx: AudioContext,
+    hrtfUrl: string,
+    opts: { maxDelaySec?: number } = {},
+  ): Promise<HrtfRenderer> {
     const set = await loadHrtf(hrtfUrl);
     if (set.sampleRate !== ctx.sampleRate) {
       // Convolver uses buffer's own rate via resampling on decode; we build the
@@ -51,7 +81,7 @@ export class HrtfRenderer {
         `HRTF sampleRate ${set.sampleRate} != ctx ${ctx.sampleRate}; convolution buffers will be created at HRIR rate.`,
       );
     }
-    return new HrtfRenderer(ctx, set);
+    return new HrtfRenderer(ctx, set, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC);
   }
 
   setListener(pose: ListenerPose) {
@@ -105,7 +135,12 @@ interface ConvChain {
 /**
  * A single positioned binaural source.
  *
- *   input → distanceGain → airLowpass → [chainA, chainB] → output
+ *   input → propDelay → distanceGain → airLowpass → [chainA, chainB] → output
+ *
+ * `propDelay` is a variable DelayNode set to `distance / speedOfSound`: sound takes
+ * time to arrive, and when the source moves the delay changes smoothly, so the
+ * DelayNode resamples and produces DOPPLER for free (approaching = higher pitch).
+ * See docs/engine/doppler-and-propagation-delay.md.
  *
  * Swapping a ConvolverNode's buffer mid-signal produces an audible CLICK, which
  * was very noticeable while turning (the direction index changes constantly).
@@ -116,12 +151,14 @@ interface ConvChain {
 export class HrtfSource {
   readonly input: GainNode; // connect your audio here
   readonly output: GainNode; // connect to master
+  private propDelay: DelayNode;
   private distanceGain: GainNode;
   private airLowpass: BiquadFilterNode;
   private chains: [ConvChain, ConvChain];
   private active = 0; // index of the currently-audible chain
   private lastDirIndex = -1;
   private lastSwapTime = 0; // audio-clock time of the last committed crossfade
+  private placed = false; // has setPosition run at least once (delay snap vs ramp)
   private r: HrtfRenderer;
 
   constructor(r: HrtfRenderer) {
@@ -129,12 +166,14 @@ export class HrtfSource {
     const ctx = r.ctx;
     this.input = ctx.createGain();
     this.output = ctx.createGain();
+    this.propDelay = ctx.createDelay(r.maxDelaySec);
     this.distanceGain = ctx.createGain();
     this.airLowpass = ctx.createBiquadFilter();
     this.airLowpass.type = 'lowpass';
     this.airLowpass.frequency.value = 20000;
 
-    this.input.connect(this.distanceGain);
+    this.input.connect(this.propDelay);
+    this.propDelay.connect(this.distanceGain);
     this.distanceGain.connect(this.airLowpass);
 
     this.chains = [this.makeChain(), this.makeChain()];
@@ -164,6 +203,26 @@ export class HrtfSource {
   setPosition(x: number, y: number, z: number) {
     const ctx = this.r.ctx;
     const dist = this.r.distanceTo(x, y, z);
+
+    // Propagation delay: sound takes dist/c to arrive. Ramp the delayTime smoothly
+    // toward the target so the DelayNode resamples ⇒ Doppler emerges from the
+    // modulation (the physically-correct path; we do NOT compute a separate detune).
+    // Tuning: DOPPLER_TAU is the setTargetAtTime time-constant. SHORT ⇒ delay tracks
+    // motion tightly ⇒ strong Doppler, but too short risks zipper/click artifacts;
+    // LONG ⇒ smooth but the pitch shift washes out. ~0.05 s is the sweet spot.
+    const DOPPLER_TAU = 0.05;
+    const delaySec = clampDelaySec(
+      propagationDelaySec(dist, this.r.speedOfSound),
+      this.r.maxDelaySec,
+    );
+    if (!this.placed) {
+      // First placement: snap the delay so we don't hear it swoop in from zero.
+      this.propDelay.delayTime.setValueAtTime(delaySec, ctx.currentTime);
+    } else {
+      this.propDelay.delayTime.setTargetAtTime(delaySec, ctx.currentTime, DOPPLER_TAU);
+    }
+    this.placed = true;
+
     // 1/r distance law, clamped near the head; reference distance 1m.
     const g = 1 / Math.max(1, dist);
     this.distanceGain.gain.setTargetAtTime(g, ctx.currentTime, 0.02);
