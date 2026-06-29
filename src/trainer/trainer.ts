@@ -23,6 +23,8 @@ import {
   type ExerciseType,
 } from './exercises';
 import { Staircase, difficultyBand } from './adaptive';
+import { selectBackendFromSearch } from '../engine/steamaudio/toggle';
+import type { SpatialBackend } from '../game/game';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 const $ = (id: string) => document.getElementById(id)!;
@@ -88,6 +90,31 @@ async function ensurePlayer(): Promise<ScenePlayer> {
   const graph = await startAudio();
   const renderer = await HrtfRenderer.create(graph.ctx, HRTF_URL);
   player = new ScenePlayer(graph, renderer);
+
+  // High-fidelity toggle: the checkbox (pre-seeded from ?engine=steam) selects the
+  // Steam Audio backend for the continuous TONE / direction exercises. Loaded via a
+  // dynamic import (keeps three + the 6 MB WASM out of the default bundle). On ANY
+  // init failure (no cross-origin isolation, WASM error) we silently keep our engine.
+  const toggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
+  const wantSteam = toggle ? toggle.checked : selectBackendFromSearch(location.search) === 'steam';
+  if (wantSteam) {
+    try {
+      const { SteamAudioBackend } = await import('../engine/steamaudio/backend');
+      const backend: SpatialBackend = await SteamAudioBackend.create(graph.ctx, graph.master, { hrtf: true });
+      player.setSteamBackend(backend);
+      // Pump the Steam Audio sim each frame so occlusion + reflections track turns.
+      let lastT = performance.now();
+      const loop = (now: number) => {
+        player?.tick(Math.min(0.05, (now - lastT) / 1000));
+        lastT = now;
+        requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+      console.info('[trainer] Steam Audio backend active for tone exercises.');
+    } catch (e) {
+      console.warn('[trainer] Steam Audio unavailable — using our engine.', e);
+    }
+  }
   return player;
 }
 
@@ -240,6 +267,9 @@ function setupProbePicker() {
 
 function main() {
   setupProbePicker();
+  // Pre-check the high-fidelity toggle when ?engine=steam is in the URL.
+  const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
+  if (engineToggle) engineToggle.checked = selectBackendFromSearch(location.search) === 'steam';
   $('begin').addEventListener('click', async () => {
     ($('begin') as HTMLButtonElement).disabled = true;
     announce('Loading audio…');

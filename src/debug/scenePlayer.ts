@@ -14,6 +14,8 @@ import { buildRoomIr } from '../engine/acoustics/roomIr';
 import { type Scene, sceneWalls } from './scenes';
 import { resolveProbe, type ProbeName } from './probes';
 import { loadCustomLoop } from '../game/customAudio';
+import type { SpatialBackend } from '../game/game';
+import type { SteamSourceHandle } from '../engine/steamaudio/backend';
 
 /**
  * What probe to fire through the room IR:
@@ -27,9 +29,18 @@ export class ScenePlayer {
   private graph: AudioGraph;
   private renderer: HrtfRenderer;
   private scene: Scene | null = null;
-  private tones: Array<{ src: HrtfSource; osc: OscillatorNode; lfo: OscillatorNode; pos: [number, number, number] }> = [];
+  private tones: Array<{ src: HrtfSource | SteamSourceHandle; osc: OscillatorNode; lfo: OscillatorNode; pos: [number, number, number] }> = [];
   private convolver: ConvolverNode;
   private yaw = 0;
+  /**
+   * Optional Steam Audio backend (when the trainer's high-fidelity toggle is on).
+   * When set, continuous TONE sources route through it (ray-traced occlusion +
+   * reflections), and its listener + `world.step` are driven from load/setYaw/tick.
+   * The clap/room-IR path is UNCHANGED — Steam Audio's reflections are parametric,
+   * not a convolvable one-shot IR, so the size/material/distance/gap exercises keep
+   * using our image-source IR. Null ⇒ everything is our engine (default).
+   */
+  private steam: SpatialBackend | null = null;
   /** The currently selected probe (default: the legacy synth clap). */
   private probe: ProbeSpec = 'clap';
   /** A recorded probe buffer once loaded, or null if none / load failed. */
@@ -43,12 +54,28 @@ export class ScenePlayer {
     this.convolver.connect(graph.master);
   }
 
+  /** Set (or clear) the Steam Audio backend used for continuous tone sources. */
+  setSteamBackend(backend: SpatialBackend | null) {
+    this.steam = backend;
+  }
+
+  /** Advance the Steam Audio sim (no-op when our engine is active). */
+  tick(deltaSeconds = 1 / 60) {
+    this.steam?.step(deltaSeconds);
+  }
+
+  /** Tear down a tone source whichever engine produced it. */
+  private disposeTone(src: HrtfSource | SteamSourceHandle) {
+    if ('dispose' in src) src.dispose();
+    else src.disconnect();
+  }
+
   /** Tear down the current scene's live nodes. */
   private stop() {
     for (const t of this.tones) {
       t.osc.stop();
       t.lfo.stop();
-      t.src.disconnect();
+      this.disposeTone(t.src);
     }
     this.tones = [];
   }
@@ -57,8 +84,15 @@ export class ScenePlayer {
     this.stop();
     this.scene = scene;
     this.renderer.setListener({ x: scene.listener[0], y: scene.listener[1], z: scene.listener[2], yaw: this.yaw });
+    if (this.steam) {
+      // Push this scene's geometry into the Steam Audio world and set its listener.
+      this.steam.setGeometry(sceneWalls(scene));
+      this.steam.setListener(scene.listener[0], scene.listener[1], scene.listener[2], this.yaw);
+    }
 
-    // Build continuous tone beacons.
+    // Build continuous tone beacons. With the Steam Audio toggle on, the tone routes
+    // through a Steam Audio source (ray-traced occlusion + reflections); otherwise our
+    // straight-line HrtfSource.
     for (const s of scene.sources) {
       if (s.kind !== 'tone') continue;
       const ctx = this.graph.ctx;
@@ -72,9 +106,11 @@ export class ScenePlayer {
       lfoGain.gain.value = 0.5;
       lfo.connect(lfoGain).connect(trem.gain);
       trem.gain.value = 0.5;
-      const src = this.renderer.createSource();
+      const src: HrtfSource | SteamSourceHandle = this.steam
+        ? this.steam.createSource()
+        : this.renderer.createSource();
       osc.connect(trem).connect(src.input);
-      src.output.connect(this.graph.master);
+      if (!this.steam) (src as HrtfSource).output.connect(this.graph.master); // steam wires its own output → master
       osc.start();
       lfo.start();
       this.tones.push({ src, osc, lfo, pos: s.pos });
@@ -93,6 +129,7 @@ export class ScenePlayer {
       z: this.scene.listener[2],
       yaw,
     });
+    this.steam?.setListener(this.scene.listener[0], this.scene.listener[1], this.scene.listener[2], yaw);
     this.updatePositions();
     this.refreshIr(); // reflections are head-relative, so rebuild on turn
   }
