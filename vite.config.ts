@@ -1,5 +1,30 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { cpSync, existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+/**
+ * Copy the committed `assets/` tree (HRTF binary, audio, icons) verbatim into the
+ * build output as `dist/assets/…`. The app references these by a plain runtime URL
+ * (`/assets/hrtf/sadie_h3.hrtf`), NOT a Vite `import … ?url`, so Vite doesn't know
+ * to emit them — without this, the production build ships no HRTF and ALL spatial
+ * audio fails (the page's index.html is served in its place). `vite dev` works
+ * because it serves the project root directly; only the build needed this.
+ */
+function copyAssets(): Plugin {
+  return {
+    name: 'copy-runtime-assets',
+    apply: 'build',
+    closeBundle() {
+      const src = resolve(__dirname, 'assets');
+      const out = resolve(__dirname, 'dist/assets');
+      if (!existsSync(src)) return;
+      // Ship everything EXCEPT the raw .sofa dataset — it's the 11 MB build-time
+      // source that `bake-hrtf` converts into the 5.5 MB .hrtf the app loads.
+      cpSync(src, out, { recursive: true, filter: (p) => !p.endsWith('.sofa') });
+    },
+  };
+}
 
 export default defineConfig({
   // AudioWorklet + WASM both need to be served with correct MIME and cross-origin
@@ -25,6 +50,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    copyAssets(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['assets/**/*'],
