@@ -4,7 +4,7 @@
  * (JSON). Produces a Level (src/level/schema.ts) the game can load.
  */
 import {
-  emptyLevel, type Level, type MaterialName, type WallMotion,
+  emptyLevel, type Level, type MaterialName,
   type WallObj, type BeaconObj, type FloorZone, type MonsterObj, type CeilingZone,
 } from '../level/schema';
 import {
@@ -14,6 +14,7 @@ import {
   fitView, draw, screenToWorld, worldToScreen, type ViewState, MATERIAL_NAMES,
 } from './view';
 import { beaconPresetNames, resolveBeaconPreset, BeaconVoice, type BeaconPreset } from '../game/beaconSounds';
+import { applyWallMotion } from './apply';
 
 type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster';
 
@@ -303,22 +304,6 @@ function applyProp(o: StartLike, key: string, raw: string) {
   render();
 }
 
-/** Edit a wall's optional motion spec from a properties-panel field. */
-function applyWallMotion(w: WallObj, key: string, raw: string, num: number) {
-  if (key === 'motionKind') {
-    if (raw === 'none') { delete w.motion; return; }
-    if (raw === 'translate') { w.motion = { kind: 'translate', dx: 2, dz: 0, period: 4 }; return; }
-    if (raw === 'slide') { w.motion = { kind: 'slide', openFraction: 1, period: 4 }; return; }
-    return;
-  }
-  if (!w.motion || Number.isNaN(num)) return;
-  const m: WallMotion = w.motion;
-  if (key === 'motionPeriod' && num > 0) m.period = num;
-  else if (m.kind === 'translate' && key === 'motionDx') m.dx = num;
-  else if (m.kind === 'translate' && key === 'motionDz') m.dz = num;
-  else if (m.kind === 'slide' && key === 'motionOpen') m.openFraction = Math.max(0, Math.min(1, num));
-}
-
 function deleteSelected() {
   if (!selectedId || selectedId === 'start') return;
   level.beacons = level.beacons.filter((o) => o.id !== selectedId);
@@ -357,6 +342,18 @@ function bindRoom(id: string, key: 'width' | 'depth' | 'height') {
   });
 }
 bindRoom('room-w', 'width'); bindRoom('room-d', 'depth'); bindRoom('room-h', 'height');
+
+// Default materials for the perimeter wall / floor / ceiling (schema fields that
+// otherwise had no UI). Each is a material dropdown that writes the Level field.
+function bindRoomMaterial(id: string, key: 'roomMaterial' | 'floorMaterial' | 'ceilingMaterial') {
+  const el = $(id) as HTMLSelectElement;
+  el.innerHTML = MATERIAL_NAMES.map((m) => `<option>${m}</option>`).join('');
+  el.value = level[key];
+  el.addEventListener('change', () => { level[key] = el.value as MaterialName; render(); });
+}
+bindRoomMaterial('room-mat', 'roomMaterial');
+bindRoomMaterial('floor-mat', 'floorMaterial');
+bindRoomMaterial('ceil-mat', 'ceilingMaterial');
 
 // Open-space toggle: opening a level removes its ceiling by default (sky).
 const openEl = $('room-open') as HTMLInputElement;
@@ -445,6 +442,9 @@ function syncRoomInputs() {
   ($('ceil-h') as HTMLInputElement).value = String(level.room.height);
   ($('room-open') as HTMLInputElement).checked = !!level.open;
   ($('room-ceil') as HTMLInputElement).checked = !!level.hasCeiling;
+  ($('room-mat') as HTMLSelectElement).value = level.roomMaterial;
+  ($('floor-mat') as HTMLSelectElement).value = level.floorMaterial;
+  ($('ceil-mat') as HTMLSelectElement).value = level.ceilingMaterial;
 }
 let hintTimer = 0;
 function flashHint(msg: string) {

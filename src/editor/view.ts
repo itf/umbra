@@ -3,7 +3,7 @@
  * World is the x/z plane in metres; screen is canvas pixels. We fit the room into
  * the canvas with margin and a uniform scale, so 1 metre = `scale` px.
  */
-import type { Level } from '../level/schema';
+import type { Level, WallObj } from '../level/schema';
 import { MATERIALS } from '../engine/acoustics/materials';
 
 export interface ViewState {
@@ -119,14 +119,20 @@ export function draw(
     ctx.strokeRect(rx, ry, rw, rd);
   }
 
-  // Interior walls.
+  // Interior walls. Moving walls (motion set) draw DASHED with a cue: translate
+  // shows a travel arrow along (dx,dz); slide shows the door's open extent + a "↔".
   for (const w of level.walls) {
     const [ax, ay] = worldToScreen(v, w.ax, w.az);
     const [bx, by] = worldToScreen(v, w.bx, w.bz);
-    ctx.strokeStyle = w.id === opts.selectedId ? '#ffd166' : matColor(w.material);
-    ctx.lineWidth = w.id === opts.selectedId ? 6 : 5;
+    const sel = w.id === opts.selectedId;
+    ctx.save();
+    ctx.strokeStyle = sel ? '#ffd166' : matColor(w.material);
+    ctx.lineWidth = sel ? 6 : 5;
     ctx.lineCap = 'round';
+    if (w.motion) ctx.setLineDash([8, 5]);
     ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.restore();
+    if (w.motion) drawWallMotion(ctx, v, w, ax, ay, bx, by);
   }
 
   // Beacons.
@@ -137,7 +143,8 @@ export function draw(
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.arc(bx, by, b.goalRadius * v.scale, 0, Math.PI * 2); ctx.stroke();
     dot(ctx, bx, by, b.id === opts.selectedId ? '#fff' : '#ffd166', 8);
-    label(ctx, bx, by - 14, `♪ ${b.freq}Hz`);
+    const snd = b.soundUrl ? 'file' : (b.sound ?? 'tone');
+    label(ctx, bx, by - 14, `♪ ${b.freq}Hz ${snd}`);
   }
 
   // Monsters.
@@ -156,6 +163,35 @@ export function draw(
   ctx.strokeStyle = '#6ee787'; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(sx + dx, sy + dz); ctx.stroke();
   label(ctx, sx, sy + 18, 'START');
+}
+
+/** Draw the motion cue for a moving wall (arrow for translate, "↔" + label). */
+function drawWallMotion(
+  ctx: CanvasRenderingContext2D, v: ViewState, w: WallObj,
+  ax: number, ay: number, bx: number, by: number,
+) {
+  const midx = (ax + bx) / 2, midy = (ay + by) / 2;
+  ctx.save();
+  ctx.strokeStyle = '#ff9ed8';
+  ctx.fillStyle = '#ff9ed8';
+  ctx.lineWidth = 2;
+  if (w.motion!.kind === 'translate') {
+    // Arrow from the wall midpoint along the travel vector (dx,dz) in px.
+    const ex = midx + w.motion!.dx * v.scale;
+    const ey = midy + w.motion!.dz * v.scale;
+    ctx.beginPath(); ctx.moveTo(midx, midy); ctx.lineTo(ex, ey); ctx.stroke();
+    const ang = Math.atan2(ey - midy, ex - midx);
+    const head = 7;
+    ctx.beginPath();
+    ctx.moveTo(ex, ey);
+    ctx.lineTo(ex - head * Math.cos(ang - 0.5), ey - head * Math.sin(ang - 0.5));
+    ctx.lineTo(ex - head * Math.cos(ang + 0.5), ey - head * Math.sin(ang + 0.5));
+    ctx.closePath(); ctx.fill();
+    label(ctx, midx, midy - 8, `⇄ ${w.motion!.period}s`);
+  } else {
+    label(ctx, midx, midy - 8, `↔ door ${w.motion!.period}s`);
+  }
+  ctx.restore();
 }
 
 function dot(ctx: CanvasRenderingContext2D, x: number, y: number, color: string, r: number) {
