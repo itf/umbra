@@ -13,6 +13,8 @@ import {
 } from '../src/editor/apply';
 import { emptyLevel, type Level, type WallObj } from '../src/level/schema';
 import { exportLevel, importLevel } from '../src/level/storage';
+import { kindLabel, objectListModel, type SelKind } from '../src/editor/objectList';
+import { MONSTER_PRESETS } from '../src/game/monsterSounds';
 
 function wall(): WallObj {
   return { id: 'w1', ax: 0, az: 0, bx: 4, bz: 0, material: 'concrete' };
@@ -70,6 +72,67 @@ describe('applyWallMotion', () => {
 
   it('returns false for non-motion keys', () => {
     expect(applyWallMotion(wall(), 'ax', '2', 2)).toBe(false);
+  });
+});
+
+describe('kindLabel', () => {
+  it('labels every selectable kind', () => {
+    const expected: Record<SelKind, string> = {
+      start: 'Start point',
+      beacon: 'Beacon',
+      wall: 'Wall',
+      floor: 'Floor zone',
+      ceiling: 'Ceiling zone',
+      monster: 'Monster',
+    };
+    for (const [kind, label] of Object.entries(expected)) {
+      expect(kindLabel(kind as SelKind)).toBe(label);
+    }
+  });
+});
+
+describe('objectListModel', () => {
+  it('lists start first, then every object with kind + id labels', () => {
+    const lvl = emptyLevel('List');
+    lvl.beacons = [{ id: 'b1', x: 1, z: 1, freq: 440, goalRadius: 0.8 }];
+    lvl.walls = [{ id: 'wall-1', ax: 0, az: 0, bx: 2, bz: 0, material: 'concrete' }];
+    lvl.floors = [{ id: 'f2', x: 0, z: 0, w: 1, d: 1, material: 'carpet' }];
+    lvl.ceilings = [{ id: 'c1', x: 0, z: 0, w: 1, d: 1, height: 2, material: 'wood' }];
+    lvl.monsters = [{ id: 'm1', x: 3, z: 3, speed: 1, sound: 'growl' }];
+
+    const model = objectListModel(lvl);
+    // Exactly one entry per object (1 start + 1 each).
+    expect(model.map((e) => e.id)).toEqual(['start', 'b1', 'wall-1', 'f2', 'c1', 'm1']);
+    expect(model.map((e) => e.kind)).toEqual(['start', 'beacon', 'wall', 'floor', 'ceiling', 'monster']);
+    expect(model[0].label).toBe('Start');
+    expect(model[1].label).toBe('Beacon b1');
+    expect(model[2].label).toBe('Wall wall-1');
+    expect(model[3].label).toBe('Floor f2 (carpet)');
+    expect(model[4].label).toBe('Ceiling c1 (wood)');
+    expect(model[5].label).toBe('Monster m1');
+  });
+
+  it('includes every object as multiple are added', () => {
+    const lvl = emptyLevel('Many');
+    lvl.beacons = [
+      { id: 'b1', x: 1, z: 1, freq: 440, goalRadius: 0.8 },
+      { id: 'b2', x: 2, z: 2, freq: 440, goalRadius: 0.8 },
+    ];
+    lvl.monsters = [
+      { id: 'm1', x: 3, z: 3, speed: 1, sound: 'growl' },
+      { id: 'm2', x: 4, z: 4, speed: 1, sound: 'hum' },
+    ];
+    const model = objectListModel(lvl);
+    // start + 2 beacons + 2 monsters = 5.
+    expect(model).toHaveLength(5);
+    expect(model.filter((e) => e.kind === 'beacon')).toHaveLength(2);
+    expect(model.filter((e) => e.kind === 'monster')).toHaveLength(2);
+  });
+});
+
+describe('monster sound options', () => {
+  it('come from MONSTER_PRESETS (growl/hum)', () => {
+    expect(MONSTER_PRESETS).toEqual(['growl', 'hum']);
   });
 });
 

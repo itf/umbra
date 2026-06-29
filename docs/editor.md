@@ -12,8 +12,8 @@ The editor exposes **every field the schema supports**. This doc is the full sur
 
 - **Topbar** — level name, New / Save / load-saved dropdown / Delete, Export JSON /
   Import JSON, ▶ Play.
-- **Palette (left)** — tool buttons, the new-object material, the Room panel, and the
-  Selection (properties) panel for whatever is selected.
+- **Palette (left)** — tool buttons, the new-object material, the Room panel, the
+  Selection (properties) panel for whatever is selected, and the Objects outline.
 - **Canvas (centre)** — the map; a status bar shows cursor coords + a hint.
 
 ## Tools
@@ -49,6 +49,11 @@ All of `Level`'s room/global fields are editable here:
 
 ## Selection / properties panel
 
+The panel opens with a **kind heading** announcing WHAT is selected — "Start point",
+"Beacon", "Wall", "Floor zone", "Ceiling zone", or "Monster" — plus the object's `id`
+(everything except the singleton Start). Headings/labels come from `kindLabel()` in
+`src/editor/objectList.ts`.
+
 Fields shown depend on the selected object kind. Numeric fields write live; a
 material dropdown writes the object's `material`.
 
@@ -62,7 +67,20 @@ material dropdown writes the object's `material`.
 - **Wall** — `ax, az, bx, bz`, material, plus **motion** (see below).
 - **Floor zone** — `x, z, w, d`, material.
 - **Ceiling zone** — `x, z, w, d`, `height`, material.
-- **Monster** — `x, z`, `speed` (m/s), `sound` (label/id).
+- **Monster** — `x, z`, `speed` (m/s), and **sound** — a preset dropdown
+  (`growl | hum`) sourced from `MONSTER_PRESETS` in `src/game/monsterSounds.ts`
+  (not hardcoded), defaulting via `resolveMonsterPreset` and writing `MonsterObj.sound`.
+
+## Objects outline
+
+A collapsible **Objects** section in the palette lists every object in the scene,
+labelled by kind + id (e.g. `Start`, `Beacon b1`, `Wall wall-1`, `Floor f2 (carpet)`,
+`Ceiling c1 (wood)`, `Monster m1`). Each row is a real button: clicking it selects
+that object exactly as clicking it on the canvas would — it sets `selectedId`, renders
+its properties, and highlights it on the map. This makes tiny or overlapping objects
+reachable. The list is rebuilt on every render, so it stays in sync as objects are
+added, removed, moved, or a level is loaded. The flat model (`level → [{id, kind,
+label}]`) is built by `objectListModel()` in `src/editor/objectList.ts`.
 
 ### Wall motion
 
@@ -111,6 +129,10 @@ and the default materials) round-trips through Save/Load (IndexedDB) and Export/
 - `applyWallMotion` seeds translate/slide defaults, clears to `none` (removing the
   key), edits params, clamps `openFraction`, ignores cross-kind/non-positive/non-motion
   keys.
+- `kindLabel` labels every selectable kind correctly.
+- `objectListModel` lists Start first then every object with kind + id labels, and
+  includes every object as more are added.
+- Monster sound options come from `MONSTER_PRESETS` (`growl`/`hum`).
 - A level built with **every feature** (moving translate + slide walls, beacon preset
   + custom url, monster, ceiling zone, open toggle, all default materials) survives a
   JSON export/import with **deep equality**.

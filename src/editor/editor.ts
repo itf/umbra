@@ -15,7 +15,9 @@ import {
   fitView, draw, screenToWorld, worldToScreen, type ViewState, MATERIAL_NAMES,
 } from './view';
 import { beaconPresetNames, resolveBeaconPreset, BeaconVoice, type BeaconPreset } from '../game/beaconSounds';
+import { MONSTER_PRESETS, resolveMonsterPreset } from '../game/monsterSounds';
 import { applyWallMotion } from './apply';
+import { kindLabel, objectListModel } from './objectList';
 
 type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster';
 
@@ -46,6 +48,25 @@ function resize() {
 function render() {
   view = fitView(level, canvas);
   draw(ctx, canvas, level, view, { selectedId, grid: true });
+  renderObjectList();
+}
+
+/** Select an object by id (as if clicked on the canvas) and reveal its props. */
+function selectById(id: string) {
+  selectedId = id;
+  renderProps();
+  render();
+}
+
+/** Build the "Objects" outline: a clickable button per object, kept in sync. */
+function renderObjectList() {
+  const host = $('object-list');
+  const entries = objectListModel(level);
+  host.innerHTML = entries.map((e) =>
+    `<button class="obj-item${e.id === selectedId ? ' selected' : ''}" data-id="${e.id}">${e.label}</button>`,
+  ).join('');
+  host.querySelectorAll<HTMLButtonElement>('.obj-item').forEach((btn) =>
+    btn.addEventListener('click', () => selectById(btn.dataset.id!)));
 }
 
 // ---------- helpers ----------
@@ -199,6 +220,12 @@ function renderProps() {
   const o = findObj(selectedId);
   if (!o) { host.innerHTML = '<p class="hint">Nothing selected.</p>'; return; }
 
+  // Announce WHAT is selected: a clear kind heading + the object's id.
+  const heading =
+    `<div class="sel-kind">${kindLabel(o.kind)}` +
+    (o.kind === 'start' ? '' : ` <span class="sel-id">${selectedId}</span>`) +
+    '</div>';
+
   const rows: string[] = [];
   const numRow = (label: string, key: string, val: number, step = 0.5) =>
     `<label>${label}<input data-k="${key}" type="number" step="${step}" value="${val}"></label>`;
@@ -253,12 +280,15 @@ function renderProps() {
       numRow('w', 'w', o.ref.w), numRow('d', 'd', o.ref.d),
       numRow('height', 'height', o.ref.height), matRow(o.ref.material));
   } else if (o.kind === 'monster') {
+    const mcur = resolveMonsterPreset(o.ref.sound);
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('speed', 'speed', o.ref.speed, 0.1),
-      `<label>sound<input data-k="sound" value="${o.ref.sound}"></label>`);
+      `<label>sound<select data-k="sound">${MONSTER_PRESETS.map(
+        (p) => `<option ${p === mcur ? 'selected' : ''}>${p}</option>`,
+      ).join('')}</select></label>`);
   }
   const canDelete = o.kind !== 'start';
-  host.innerHTML = rows.join('') +
+  host.innerHTML = heading + rows.join('') +
     (canDelete ? '<button class="row-btn" id="del-obj">Delete object</button>' : '');
 
   host.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-k]').forEach((el) => {

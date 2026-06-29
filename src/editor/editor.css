@@ -42,3 +42,14 @@ button:hover, #btn-play:hover { background: #262626; }
   font-family: ui-monospace, monospace; font-size: 12px; color: #aaa;
 }
 .hint { color: #888; }
+
+#props .sel-kind { font-weight: 600; color: #ffd166; margin-bottom: 6px; }
+#props .sel-id { color: #888; font-weight: 400; font-family: ui-monospace, monospace; font-size: 12px; }
+
+#objects-section { margin-top: 16px; }
+#objects-section summary {
+  font-size: 12px; text-transform: uppercase; color: #888; cursor: pointer; margin-bottom: 6px;
+}
+#object-list { display: flex; flex-direction: column; gap: 2px; }
+.obj-item { text-align: left; width: 100%; padding: 4px 8px; font-size: 13px; }
+.obj-item.selected { background: #ffd166; color: #000; border-color: #ffd166; }
