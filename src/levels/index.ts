@@ -19,6 +19,7 @@ import beaconGarden from './beacon-garden.json';
 import monsterCellar from './monster-cellar.json';
 import openStreet from './open-street.json';
 import steppedCeiling from './stepped-ceiling-alcove.json';
+import sBendMaze from './s-bend-maze.json';
 
 export interface BuiltinEntry {
   id: string;
@@ -89,5 +90,11 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     name: 'Cathedral Alcove',
     description: 'A tall marble nave with a low-ceilinged wooden alcove — hear the ceiling drop as you enter.',
     json: steppedCeiling,
+  },
+  {
+    id: 's-bend-maze',
+    name: 'S-Bend Maze',
+    description: 'Two walls to weave past: go right around the first, then left around the second, to reach the bell.',
+    json: sBendMaze,
   },
 ];
