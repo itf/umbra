@@ -18,13 +18,24 @@ pub struct Wall {
     pub verts: Vec<Vec3>,
     pub normal: Vec3, // unit, points into the room
     pub absorption: [f32; NUM_BANDS],
+    /// If true, the wall reflects from BOTH faces (an interior wall / free-standing
+    /// panel is exposed on both sides). If false (the default), only the normal
+    /// side reflects (a perimeter wall, where you're always on the inside).
+    pub double_sided: bool,
 }
 
 impl Wall {
     pub fn new(verts: Vec<Vec3>, absorption: [f32; NUM_BANDS]) -> Wall {
         // Normal from the first three vertices (assumed planar, CCW seen from room).
         let n = verts[1].sub(verts[0]).cross(verts[2].sub(verts[0])).normalized();
-        Wall { verts, normal: n, absorption }
+        Wall { verts, normal: n, absorption, double_sided: false }
+    }
+
+    /// Like `new`, but the wall reflects from both faces.
+    pub fn new_double_sided(verts: Vec<Vec3>, absorption: [f32; NUM_BANDS]) -> Wall {
+        let mut w = Wall::new(verts, absorption);
+        w.double_sided = true;
+        w
     }
 
     /// Signed distance from a point to the wall's plane (positive on normal side).
@@ -100,7 +111,10 @@ impl Room {
         }
         let centroid = sum.scale(1.0 / count.max(1.0));
         for w in &mut walls {
-            if w.signed_dist(centroid) < 0.0 {
+            // Double-sided walls reflect from both faces, so the normal's direction
+            // is immaterial — leave it as authored (don't force it toward the
+            // centroid, which for a coincident/interior wall is meaningless).
+            if !w.double_sided && w.signed_dist(centroid) < 0.0 {
                 w.normal = w.normal.scale(-1.0);
             }
         }
@@ -143,6 +157,39 @@ mod tests {
             // Center should be on the positive (normal) side of every wall.
             assert!(w.signed_dist(center) > 0.0, "normal points outward");
         }
+    }
+
+    #[test]
+    fn double_sided_wall_reflects_from_both_faces() {
+        // A divider on the z=4 plane inside an 8x3x16 room. The room's vertex
+        // centroid sits at z>4 (the larger side), so a SINGLE-sided divider's normal
+        // is forced toward +z and its -z (small-side) face is dead. A listener on
+        // that small side (z=2) should get NO near echo from the divider when it's
+        // single-sided, but SHOULD when it's double-sided (round trip 2*2=4m).
+        let a = [0.0; NUM_BANDS];
+        let v = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
+        let divider = || vec![v(0.0, 0.0, 4.0), v(8.0, 0.0, 4.0), v(8.0, 3.0, 4.0), v(0.0, 3.0, 4.0)];
+        let mut single_walls = box_room(8.0, 3.0, 16.0).walls;
+        single_walls.push(Wall::new(divider(), a));
+        let single = Room::new(single_walls);
+
+        let mut double_walls = box_room(8.0, 3.0, 16.0).walls;
+        double_walls.push(Wall::new_double_sided(divider(), a));
+        let double = Room::new(double_walls);
+
+        let l = Vec3::new(4.0, 1.5, 2.0); // small side
+        // The near divider echo: arrives from +z, round trip 2*(4-2)=4m.
+        let near = |room: &Room| -> Vec<f32> {
+            room.compute_taps(l, l, 1, SPEED_OF_SOUND)
+                .into_iter()
+                .filter(|t| t.order >= 1 && t.dir.z > 0.5 && t.delay < 0.02)
+                .map(|t| t.delay)
+                .collect()
+        };
+        assert!(near(&single).is_empty(), "single-sided back face must be dead");
+        let d = near(&double);
+        assert_eq!(d.len(), 1, "double-sided echoes exactly once (no double-count)");
+        assert!((d[0] - 4.0 / SPEED_OF_SOUND).abs() < 1e-4, "4m round trip");
     }
 
     #[test]
@@ -212,9 +259,17 @@ impl Room {
                 if chain.last() == Some(&i) {
                     continue; // can't reflect off the same wall twice in a row
                 }
-                // Only reflect across a wall the image is in front of.
-                if wall.signed_dist(img) <= 1e-4 {
-                    continue;
+                // Reflect across a wall the image is in front of. A single-sided
+                // wall reflects only from its normal face; a double-sided wall
+                // reflects from EITHER face (interior walls / panels are exposed on
+                // both sides), so any image off the plane qualifies.
+                let sd = wall.signed_dist(img);
+                if wall.double_sided {
+                    if sd.abs() <= 1e-4 {
+                        continue; // image lies on the plane — degenerate
+                    }
+                } else if sd <= 1e-4 {
+                    continue; // behind the (single) face
                 }
                 let new_img = wall.mirror(img);
                 let mut new_chain = chain.clone();

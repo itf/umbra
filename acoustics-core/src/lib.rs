@@ -117,6 +117,7 @@ pub fn compute_room_taps(
     verts: &[f32],
     wall_sizes: &[u32],
     wall_abs: &[f32],
+    wall_double_sided: &[u32],
     edges: &[f32],
     listener: &[f32],
     source: &[f32],
@@ -126,6 +127,7 @@ pub fn compute_room_taps(
     assert_eq!(listener.len(), 3);
     assert_eq!(source.len(), 3);
     assert_eq!(wall_abs.len(), wall_sizes.len() * NUM_BANDS);
+    assert_eq!(wall_double_sided.len(), wall_sizes.len());
     assert_eq!(edges.len() % 6, 0);
 
     // Sanitize c: a 0/negative/NaN speed would produce inf/NaN delays.
@@ -148,7 +150,11 @@ pub fn compute_room_taps(
         for b in 0..NUM_BANDS {
             absb[b] = wall_abs[w * NUM_BANDS + b];
         }
-        walls.push(Wall::new(vs, absb));
+        if wall_double_sided[w] != 0 {
+            walls.push(Wall::new_double_sided(vs, absb));
+        } else {
+            walls.push(Wall::new(vs, absb));
+        }
     }
     let room = Room::new(walls);
 

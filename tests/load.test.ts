@@ -16,7 +16,8 @@ describe('level → game geometry', () => {
     lvl.hasCeiling = false;
     lvl.walls.push({ id: 'w1', ax: 1, az: 1, bx: 5, bz: 1, material: 'brick' });
     const { walls } = loadLevel(lvl);
-    expect(walls.length).toBe(1); // just the one free wall
+    expect(walls.length).toBe(1); // one free wall (double-sided via a flag, still one quad)
+    expect(walls[0].doubleSided).toBe(true); // interior walls reflect from both faces
   });
 
   it('a dropped ceiling zone adds its plane PLUS 4 step-down side walls', () => {

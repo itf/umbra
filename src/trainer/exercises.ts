@@ -17,6 +17,8 @@
  */
 import type { Scene, SceneSource } from '../debug/scenes';
 import type { ShoeboxMaterialMap } from '../engine/acoustics/materials';
+import type { WallDef } from '../engine/acoustics/core';
+import { MATERIALS } from '../engine/acoustics/materials';
 
 // --- Deterministic RNG (mulberry32) -----------------------------------------
 
@@ -36,9 +38,10 @@ export function makeRng(seed: number): Rng {
 
 // --- Public types ------------------------------------------------------------
 
-export type ExerciseType = 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction';
+export type ExerciseType =
+  | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector';
 
-export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick'];
+export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector'];
 export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction'];
 
 export type Direction = 'forward' | 'behind' | 'left' | 'right';
@@ -269,6 +272,112 @@ function genDirection(rng: Rng, difficulty: number): Question {
   };
 }
 
+// --- Reflector localization --------------------------------------------------
+
+/**
+ * Build a small ~1 m square reflecting panel centred at (cx, cz) at ear height,
+ * its face perpendicular to the listener→panel direction. A single DOUBLE-SIDED
+ * quad — the solver reflects from either face (flagged via `doubleSided`), so the
+ * panel echoes regardless of which side the clap is on.
+ */
+function makePanel(
+  listener: [number, number, number],
+  cx: number,
+  cz: number,
+  material: keyof typeof MATERIALS,
+  sizeM = 1,
+): WallDef[] {
+  const h = sizeM / 2;
+  const [lx, , lz] = listener;
+  let dx = cx - lx, dz = cz - lz;
+  const len = Math.hypot(dx, dz) || 1;
+  dx /= len; dz /= len;
+  const px = -dz, pz = dx; // width axis: perpendicular to listener→panel in xz
+  const ey = 1.6;
+  const vert = (s: number, y: number): [number, number, number] => [cx + px * s, ey + y, cz + pz * s];
+  return [{
+    verts: [vert(-h, -h), vert(h, -h), vert(h, h), vert(-h, h)],
+    absorption: [...MATERIALS[material]],
+    doubleSided: true,
+  }];
+}
+
+/** Bearing → world panel position at `dist` (engine front = -z, right = +x). */
+function bearingToPos(
+  listener: [number, number, number],
+  bearingDeg: number,
+  dist: number,
+): [number, number] {
+  const [lx, , lz] = listener;
+  const rad = (bearingDeg * Math.PI) / 180;
+  return [lx + Math.sin(rad) * dist, lz - Math.cos(rad) * dist];
+}
+
+/**
+ * REFLECTOR LOCALIZATION (the real echolocation skill): an OPEN space with one
+ * small panel off to the front-left vs front-right at the same distance. The clap
+ * echoes off it; the player says which SIDE the echo is on. No room, so there's no
+ * loudness/room-size cue — only the direction (and a faint delay) of the single
+ * reflection. The two scenes are MIRRORED (same |bearing|, same distance, same
+ * material), so the only difference is left vs right — fair by construction.
+ */
+function genReflector(rng: Rng, difficulty: number): Question {
+  // Bearing off straight-ahead: ~40° (easy, well to the side) → ~20° (hard, subtle).
+  const offset = contrast(difficulty, 40, 20);
+  // Panel close (2 m) so its early echo is loud and well-separated from the faint,
+  // distant room reflections — the side cue is prominent, not buried.
+  const dist = 2;
+  const listener: [number, number, number] = [4, 1.6, 4];
+
+  const aIsLeft = rng() < 0.5;
+  // Left = negative bearing (toward -x... but engine right is +x, so LEFT is -x →
+  // bearing -offset). Right = +offset.
+  const leftPos = bearingToPos(listener, -offset, dist);
+  const rightPos = bearingToPos(listener, +offset, dist);
+
+  // A large, highly-ABSORBENT room encloses the listener. Two reasons: (1) the
+  // image-source solver only behaves for a listener INSIDE geometry (a lone panel
+  // in open space is degenerate and won't reflect symmetrically); (2) the room is
+  // big + very absorbent (foam), so its own reflections are weak and far-off —
+  // there's no useful size/loudness cue. The DISCRIMINATOR is a hard concrete panel
+  // close to one side, whose crisp early echo stands out by DIRECTION. Both A and B
+  // are the same room + same panel distance/material — only the side differs.
+  const roomSize: [number, number, number] = [16, 4, 16];
+  const center: [number, number, number] = [8, 1.6, 8];
+  const faint = allMat('acoustic_foam');
+
+  const scene = (id: string, pos: [number, number]): Scene => ({
+    id,
+    title: id,
+    description: 'Clap and hear which side the panel echoes from.',
+    listener: center,
+    roomSize,
+    materials: faint, // big absorbent room: weak, distant echoes → no size cue
+    // The panel is a double-sided concrete slab (both faces reflect — see makePanel
+    // / interiorWall). Inside this room the geometry is non-degenerate, so it echoes
+    // crisply from its side regardless of left/right.
+    extraWalls: makePanel(center, center[0] + (pos[0] - listener[0]), center[2] + (pos[1] - listener[2]), 'concrete'),
+    sources: [{ pos: center, kind: 'clap', label: 'clap' }],
+    // Order 1: the panel's single bright echo + the faint first-order room walls.
+    // Keeping it to first order makes the panel's direct reflection the dominant
+    // early cue rather than burying it under higher-order room scatter.
+    maxOrder: 1,
+  });
+
+  const sceneA = scene('reflector-a', aIsLeft ? leftPos : rightPos);
+  const sceneB = scene('reflector-b', aIsLeft ? rightPos : leftPos);
+  return {
+    type: 'reflector',
+    id: '',
+    prompt: 'Which room has the panel on the LEFT? (Clap and listen to the echo.)',
+    choices: ['Room A', 'Room B'],
+    correctAnswer: aIsLeft ? 'Room A' : 'Room B',
+    sceneA,
+    sceneB,
+    bearingDeg: -offset, // the LEFT scene's panel bearing (for tests)
+  };
+}
+
 // --- Entry point -------------------------------------------------------------
 
 const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Question> = {
@@ -278,6 +387,7 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Questio
   carpet: genCarpet,
   brick: genBrick,
   direction: genDirection,
+  reflector: genReflector,
 };
 
 /**

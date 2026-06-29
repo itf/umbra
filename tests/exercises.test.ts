@@ -34,7 +34,9 @@ describe('A/B exercise validity', () => {
       for (const seed of SEEDS) {
         const q = makeQuestion(type, seed);
         for (const s of [q.sceneA, q.sceneB!]) {
-          expect(s.roomSize).toBeTruthy();
+          // A scene is playable if it has reflecting geometry — either a room box
+          // or free-standing walls (the open reflector exercise) — plus a clap.
+          expect(s.roomSize || (s.extraWalls && s.extraWalls.length > 0)).toBeTruthy();
           expect(s.listener).toHaveLength(3);
           expect(s.sources.some((x) => x.kind === 'clap')).toBe(true);
         }
@@ -155,6 +157,60 @@ describe('direction: bearing -> answer mapping', () => {
       const recovered = bearingToDirection((Math.atan2(dx, fwd) * 180) / Math.PI);
       const label = { forward: 'Forward', behind: 'Behind', left: 'Left', right: 'Right' }[recovered];
       expect(q.correctAnswer).toBe(label);
+    }
+  });
+});
+
+describe('reflector: panel side is correct + fair mirror', () => {
+  // Centroid of the panel (a thin box = several faces), and its side relative to
+  // the listener using the ENGINE convention (right = +x, so left = -x).
+  const panelCenter = (s: Scene): { x: number; z: number } => {
+    let x = 0, z = 0, n = 0;
+    for (const w of s.extraWalls!) for (const v of w.verts) { x += v[0]; z += v[2]; n++; }
+    return { x: x / n, z: z / n };
+  };
+
+  it('the "panel on LEFT" scene really has its panel to the left (-x), and the other to the right', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('reflector', seed);
+      const leftScene = q.correctAnswer === 'Room A' ? q.sceneA : q.sceneB!;
+      const rightScene = q.correctAnswer === 'Room A' ? q.sceneB! : q.sceneA;
+      const lc = panelCenter(leftScene), rc = panelCenter(rightScene);
+      const lx = leftScene.listener[0];
+      // Engine right = +x, so the LEFT panel is at x < listener.x, RIGHT at x > listener.x.
+      expect(lc.x).toBeLessThan(lx);
+      expect(rc.x).toBeGreaterThan(lx);
+      // Both panels are in FRONT (-z of the listener) so it's a front-left vs front-right call.
+      expect(lc.z).toBeLessThan(leftScene.listener[2]);
+      expect(rc.z).toBeLessThan(rightScene.listener[2]);
+    }
+  });
+
+  it('fair mirror: both panels at the same distance and mirrored across the forward axis', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('reflector', seed);
+      const a = panelCenter(q.sceneA), b = panelCenter(q.sceneB!);
+      const L = q.sceneA.listener;
+      const dA = Math.hypot(a.x - L[0], a.z - L[2]);
+      const dB = Math.hypot(b.x - L[0], b.z - L[2]);
+      expect(dA).toBeCloseTo(dB, 6); // same distance
+      // Mirrored across the forward (z) axis: x offsets opposite, z equal.
+      expect(a.x - L[0]).toBeCloseTo(-(b.x - L[0]), 6);
+      expect(a.z).toBeCloseTo(b.z, 6);
+      // Same material on both panels (fairness — only side differs).
+      expect(q.sceneA.extraWalls![0].absorption).toEqual(q.sceneB!.extraWalls![0].absorption);
+    }
+  });
+
+  it('both scenes share the same room (no size/loudness cue) — only the panel side differs', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('reflector', seed);
+      // Same enclosing room in A and B (a large absorbent box), so room size/
+      // loudness can't distinguish them — only the panel's side does.
+      expect(q.sceneA.roomSize).toEqual(q.sceneB!.roomSize);
+      expect(q.sceneA.materials).toEqual(q.sceneB!.materials);
+      // The room is highly absorbent (foam) so its own echo is faint, not a cue.
+      expect(q.sceneA.materials!['-x']).toBe('acoustic_foam');
     }
   });
 });

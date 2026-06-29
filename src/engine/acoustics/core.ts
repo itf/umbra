@@ -104,6 +104,12 @@ function unpackTaps(packed: Float32Array): Tap[] {
 export interface WallDef {
   verts: Array<[number, number, number]>;
   absorption: number[]; // length NUM_BANDS
+  /**
+   * Reflect from BOTH faces? Interior walls / free-standing panels are exposed on
+   * both sides (you can stand on either side), so both must echo. Perimeter walls
+   * (you're always inside) leave this false/undefined → single-sided.
+   */
+  doubleSided?: boolean;
 }
 
 /** A diffracting edge (doorway jamb / corner): two endpoints. */
@@ -128,10 +134,12 @@ export function computeRoomTaps(p: RoomParams): Tap[] {
   const verts: number[] = [];
   const wallSizes: number[] = [];
   const wallAbs: number[] = [];
+  const wallDouble: number[] = [];
   for (const w of p.walls) {
     wallSizes.push(w.verts.length);
     for (const v of w.verts) verts.push(v[0], v[1], v[2]);
     for (let b = 0; b < NUM_BANDS; b++) wallAbs.push(w.absorption[b]);
+    wallDouble.push(w.doubleSided ? 1 : 0);
   }
   const edges: number[] = [];
   for (const e of p.edges ?? []) {
@@ -142,6 +150,7 @@ export function computeRoomTaps(p: RoomParams): Tap[] {
     new Float32Array(verts),
     new Uint32Array(wallSizes),
     new Float32Array(wallAbs),
+    new Uint32Array(wallDouble),
     new Float32Array(edges),
     new Float32Array(p.listener),
     new Float32Array(p.source),

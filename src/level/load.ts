@@ -114,11 +114,23 @@ function ceilingQuads(level: Level): WallDef[] {
   return quads;
 }
 
-/** An interior wall segment, extruded to room height as a thin vertical quad. */
-function interiorWall(level: Level, ax: number, az: number, bx: number, bz: number, mat: string): WallDef {
+/**
+ * An interior wall segment, extruded to room height as a thin vertical quad,
+ * flagged DOUBLE-SIDED so it reflects from both faces. Interior walls are exposed
+ * on both sides — you can stand on either side — so a listener behind the wall must
+ * still hear it echo. (A single-sided wall reflects only its normal face; the
+ * solver honours the `doubleSided` flag and reflects images on either side.)
+ */
+function interiorWall(
+  level: Level, ax: number, az: number, bx: number, bz: number, mat: string,
+): WallDef {
   const sy = level.room.height;
   const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
-  return { verts: [v(ax, 0, az), v(bx, 0, bz), v(bx, sy, bz), v(ax, sy, az)], absorption: abs(mat) };
+  return {
+    verts: [v(ax, 0, az), v(bx, 0, bz), v(bx, sy, bz), v(ax, sy, az)],
+    absorption: abs(mat),
+    doubleSided: true,
+  };
 }
 
 /** A 2D segment on the x/z plane. */

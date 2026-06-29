@@ -37,6 +37,7 @@ function tapsFor(scene: (typeof SCENES)[number], source: [number, number, number
     new Float32Array(verts),
     new Uint32Array(sizes),
     new Float32Array(abs),
+    new Uint32Array(sizes.length), // all single-sided
     new Float32Array(edges),
     new Float32Array(scene.listener),
     new Float32Array(source),

@@ -56,7 +56,7 @@ describe('WASM general-room binding', () => {
     const stride = mod.tap_stride();
     const p = new Float32Array([0.5, 0.5, 0.5]);
     const packed = mod.compute_room_taps(
-      verts, sizes, abs, new Float32Array([]), p, p, 1, 343,
+      verts, sizes, abs, new Uint32Array(sizes.length), new Float32Array([]), p, p, 1, 343,
     );
     const n = packed.length / stride;
     // Listener=source at center of a unit cube: 6 first-order reflections, each a
@@ -74,12 +74,12 @@ describe('WASM general-room binding', () => {
     const listener = new Float32Array([0.2, 0.5, 0.5]);
     const source = new Float32Array([0.8, 0.5, 0.5]);
     const noEdge = mod.compute_room_taps(
-      verts, sizes, abs, new Float32Array([]), listener, source, 1, 343,
+      verts, sizes, abs, new Uint32Array(sizes.length), new Float32Array([]), listener, source, 1, 343,
     );
     // One vertical edge through the middle of the room.
     const edge = new Float32Array([0.5, 0, 0.5, 0.5, 1, 0.5]);
     const withEdge = mod.compute_room_taps(
-      verts, sizes, abs, edge, listener, source, 1, 343,
+      verts, sizes, abs, new Uint32Array(sizes.length), edge, listener, source, 1, 343,
     );
     expect(withEdge.length / stride).toBe(noEdge.length / stride + 1);
   });
@@ -98,10 +98,12 @@ describe('WASM general-room binding', () => {
     const verts: number[] = [];
     const sizes: number[] = [];
     const abs: number[] = [];
+    const ds: number[] = [];
     for (const w of loaded.walls) {
       sizes.push(w.verts.length);
       for (const v of w.verts) verts.push(v[0], v[1], v[2]);
       for (let b = 0; b < NB; b++) abs.push(w.absorption[b]);
+      ds.push(w.doubleSided ? 1 : 0);
     }
     const edges: number[] = [];
     for (const e of loaded.edges) edges.push(...e[0], ...e[1]);
@@ -113,7 +115,7 @@ describe('WASM general-room binding', () => {
     const run = (eg: number[]) =>
       mod.compute_room_taps(
         new Float32Array(verts), new Uint32Array(sizes), new Float32Array(abs),
-        new Float32Array(eg), listener, source, 1, 343,
+        new Uint32Array(ds), new Float32Array(eg), listener, source, 1, 343,
       );
     const withEdge = run(edges);
     const noEdge = run([]);

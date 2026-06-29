@@ -109,6 +109,15 @@ direction = bearing to the image).
   lands inside its polygon and each segment is unobstructed (visibility test). This
   is the pyroomacoustics approach. Wall normals are auto-oriented toward the room
   centroid so callers don't have to get vertex winding right.
+  - **Single- vs double-sided walls.** Perimeter walls are *single-sided* (you're
+    always on the inside, so only the inward face reflects). **Interior walls and
+    free-standing panels are `double_sided`**: you can stand on either side, so both
+    faces must echo. A double-sided wall reflects an image on *either* side of its
+    plane (and `Room::new` leaves its normal as-authored). This is one flag per wall
+    (`WallDef.doubleSided` in TS → `wall_double_sided` across the WASM boundary), so
+    it costs nothing extra in candidate count — unlike emitting two coincident quads,
+    which would double-count one side and leave the other dead. `load.ts` flags every
+    interior wall double-sided; the trainer's reflector panel uses it too.
 
 ### 4.2 Materials
 Each reflection is colored by the wall's **per-octave-band absorption** (8 bands:
