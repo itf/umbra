@@ -42,7 +42,12 @@ It runs in any modern browser, installs as an app (PWA), and works offline.
 ## What you can do today
 
 ### Play the game
-- Put on headphones, press **Begin**, and you're in a room with a **beacon** pulsing
+- Put on headphones and **choose a level** from the picker on the start screen. It
+  lists a set of **bundled demo levels** — a curated tour of the engine (small vs.
+  large rooms, dead vs. live surfaces, a sliding door you hear open, a beacon
+  garden, a monster cellar, an open street, a cathedral alcove) — plus any levels
+  you've **saved** in the editor. (You can also deep-link a demo with `?level=<id>`.)
+- Press **Begin**, and you're in the chosen space with a **beacon** pulsing
   somewhere ahead.
 - **Walk** by tapping the **left and right footprints**, alternating your feet like
   real steps. Find a steady rhythm: walk too fast and you **stumble**; only the foot
@@ -64,6 +69,17 @@ It runs in any modern browser, installs as an app (PWA), and works offline.
   As it closes in, its growl pitches up (Doppler) — your cue to freeze or change
   course. Let it reach you and you're **caught**.
 
+### Train your ear (echolocation trainer)
+A structured **drill page** (`/trainer.html`) that builds the skill of reading rooms
+by ear. It plays you two rooms — **Room A** and **Room B**, replayable freely — and
+asks a single fair question: which is **larger**, which is **wider**, which is
+**longer**, which has **carpet** vs hard walls, which is **brick** vs **concrete**.
+A separate **direction** drill plays one positioned sound and asks whether it's
+**forward, behind, left, or right**. Each pair of rooms differs in *only* the thing
+being tested, so the cue you learn is the real one. You get instant spoken
+feedback, a running score, and difficulty that ramps with your streak. It's
+eyes-free and screen-reader-first. See [`docs/trainer.md`](trainer.md).
+
 ### Explore the acoustics (debug page)
 A set of **listenable scenes** lets you hear the engine directly: a beacon to turn
 toward, a small room vs. a huge hall (same clap, very different echo), glass vs.
@@ -74,9 +90,14 @@ and without a room around it, so you can isolate what the object alone sounds li
 A **top-down map editor** where you build spaces and play them instantly:
 - Place the **start point**, **beacons**, **walls**, **floor zones** (different
   materials), **ceiling zones** (different heights — a low alcove inside a tall
-  hall), and **monsters**.
+  hall), and **monsters** (with their chase **speed** and **sound**).
+- Give each beacon its own **sound** — a tone, bell, music box, drip, or low hum
+  preset, or point it at your **own audio file** — and **preview** it in the editor.
+- Make walls **move**: a wall that ping-pongs back and forth, or a **sliding door**
+  that opens and closes — and the room acoustics track them as they move.
 - Choose materials from a real palette: concrete, brick, glass, wood, carpet, foam,
-  and outdoor surfaces like asphalt, grass, gravel, and water.
+  and outdoor surfaces like asphalt, grass, gravel, and water — for new objects and
+  for the room's default walls, floor, and ceiling.
 - Toggle **open space** — remove the room entirely and place buildings freely to
   simulate walking down a street between houses.
 - **Save** levels in your browser, **export/import** them as files to share, and hit
@@ -111,6 +132,8 @@ A complete, playable core:
 - The game loop — walk, turn, stumble, clap, reach the beacon — works end to end.
 - The acoustics engine models reflections, materials, scattering, and diffraction.
 - The level editor lets you author and play custom spaces, indoor or open-air.
+- The echolocation trainer drills room size, width, depth, materials, and sound
+  direction with fair A/B comparisons, scoring, and ramping difficulty.
 
 It is an early but solid foundation. The headline experience (navigate to a beacon
 by sound, in a room whose echoes are real) is there.
@@ -130,7 +153,7 @@ Longer-term:
   soundscape changes around you in real time.
 - **Personalized hearing** — load your own ear profile for sharper, less ambiguous
   3D sound.
-- **A guided training mode** — structured drills for room-size and object-location
-  practice, with scoring and progress.
+- **A deeper training mode** — building on the existing echolocation trainer with
+  object-location drills, longer courses, and progress tracking over time.
 
 See `docs/ROADMAP.md` for the concrete task list.

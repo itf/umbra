@@ -23,7 +23,10 @@ materials from echoes. Built as an offline-capable PWA.
 
 ## Pages
 
-- `/` — the game (`?level=current` loads the level designed in the editor)
+- `/` — the game. Opens a **level picker** (bundled demo levels + your saved
+  levels). Deep links: `?level=<id>` loads a bundled demo (see
+  [`docs/levels.md`](docs/levels.md)); `?level=current` loads the editor's level.
+- `/trainer.html` — the echolocation trainer (A/B room-discrimination drills)
 - `/editor.html` — the level editor
 - `/debug.html` — listenable acoustic scenes + a measurement explorer
 

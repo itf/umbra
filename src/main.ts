@@ -81,6 +81,9 @@ function showStartScreen() {
 function showPicker() {
   startScreen.hidden = true;
   pickerScreen.hidden = false;
+  // Move focus into the picker so an eyes-closed / screen-reader user lands on a
+  // choice instead of the top of the document.
+  (pickerScreen.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
 }
 
 /** Resolve a picker selection (builtin id or saved name) to a Level. */
@@ -111,6 +114,8 @@ async function mountPicker() {
       showStartScreen();
     },
   });
+  // Land focus on the first level so the picker is immediately operable eyes-free.
+  (host.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
 }
 
 backButton?.addEventListener('click', showPicker);

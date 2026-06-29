@@ -20,6 +20,7 @@ export default defineConfig({
         main: 'index.html',
         debug: 'debug.html',
         editor: 'editor.html',
+        trainer: 'trainer.html',
       },
     },
   },
