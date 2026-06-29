@@ -27,6 +27,17 @@ export interface LoadedLevel {
   level: Level;
   /** True if any wall has motion (the live IR loop only runs then). */
   hasMovingWalls: boolean;
+  /**
+   * Sanitized per-level speed of sound (m/s), or undefined ⇒ engine default 343.
+   * Only finite values > 1 are forwarded; 0/negative/NaN collapse to undefined so
+   * a bad authored value can never propagate as inf/NaN into the solver.
+   */
+  speedOfSound?: number;
+}
+
+/** Forward only a finite, sensible speed of sound; else undefined (⇒ 343). */
+export function sanitizeLevelSpeed(c: number | undefined): number | undefined {
+  return c != null && Number.isFinite(c) && c > 1 ? c : undefined;
 }
 
 /** The 6 axis-aligned walls of a box room, all one material — used as the default
@@ -322,6 +333,7 @@ function perimeterSegments(level: Level) {
 
 export function loadLevel(level: Level): LoadedLevel {
   const first = level.beacons[0];
+  const speedOfSound = sanitizeLevelSpeed(level.speedOfSound);
   const game: GameLevel = {
     start: { x: level.start.x, z: level.start.z, yaw: level.start.yaw },
     beacon: first
@@ -342,6 +354,7 @@ export function loadLevel(level: Level): LoadedLevel {
     // (today's behaviour), so old levels and the default room are unchanged.
     clapBudget: level.clapBudget,
     clapCooldownMs: level.clapCooldownMs,
+    speedOfSound,
   };
   // Open levels have no enclosing box — only the free-standing walls you placed.
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the
@@ -367,5 +380,6 @@ export function loadLevel(level: Level): LoadedLevel {
     scattering,
     level,
     hasMovingWalls: levelHasMovingWalls(level),
+    speedOfSound,
   };
 }

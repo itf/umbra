@@ -407,6 +407,16 @@ ceilHEl.addEventListener('input', () => {
   if (!Number.isNaN(n) && n > 0) { level.room.height = n; render(); }
 });
 
+// Speed of sound (m/s) — "alien physics". Empty ⇒ field unset (engine default
+// 343). Only a finite value > 1 is stored; anything else clears it.
+const sosEl = $('room-sos') as HTMLInputElement;
+sosEl.value = level.speedOfSound != null ? String(level.speedOfSound) : '';
+sosEl.addEventListener('input', () => {
+  const n = parseFloat(sosEl.value);
+  if (sosEl.value.trim() !== '' && Number.isFinite(n) && n > 1) level.speedOfSound = n;
+  else delete level.speedOfSound;
+});
+
 // Name.
 const nameEl = $('level-name') as HTMLInputElement;
 nameEl.value = level.name;
@@ -496,6 +506,8 @@ function syncRoomInputs() {
   ($('room-mat') as HTMLSelectElement).value = level.roomMaterial;
   ($('floor-mat') as HTMLSelectElement).value = level.floorMaterial;
   ($('ceil-mat') as HTMLSelectElement).value = level.ceilingMaterial;
+  ($('room-sos') as HTMLInputElement).value =
+    level.speedOfSound != null ? String(level.speedOfSound) : '';
 }
 let hintTimer = 0;
 function flashHint(msg: string) {

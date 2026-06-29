@@ -49,6 +49,9 @@ let SCATTER = 0.05;
 // geometry from the animation clock. Null when running the built-in default room.
 let SRC_LEVEL: Level | null = null;
 let HAS_MOVING_WALLS = false;
+// Per-level speed of sound (m/s), or undefined ⇒ engine default 343. Threaded
+// into BOTH the clap (echo timing) and the renderer (live propagation + Doppler).
+let SPEED_OF_SOUND: number | undefined;
 // rAF handle for the moving-walls live loop, so it is cancellable and can't be
 // started twice (a duplicate loop would double the rebuild rate).
 let liveRafId: number | null = null;
@@ -67,6 +70,7 @@ function applyLevel(level: Level, displayName: string) {
   SCATTER = loaded.scattering;
   SRC_LEVEL = loaded.level;
   HAS_MOVING_WALLS = loaded.hasMovingWalls;
+  SPEED_OF_SOUND = loaded.speedOfSound;
   if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
 }
 
@@ -154,6 +158,10 @@ startButton.addEventListener('click', async () => {
     const graph = await startAudio();
     const { ctx } = graph;
     const renderer = await HrtfRenderer.create(ctx, HRTF_URL);
+    // Alien physics: if the level sets a speed of sound, the live beacon/monster
+    // propagation delay + Doppler use it too (the clap gets it per-update below),
+    // so the whole space sounds coherently slow/fast.
+    if (SPEED_OF_SOUND != null) renderer.setSpeedOfSound(SPEED_OF_SOUND);
     await initAcoustics();
 
     startScreen.hidden = true;
@@ -365,6 +373,7 @@ function setupClap(
       maxOrder: 2,
       scattering: SCATTER,
       edges: EDGES,
+      speedOfSound: SPEED_OF_SOUND,
     });
     clapRoom.clap();
     // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.
@@ -402,6 +411,7 @@ function setupClap(
           scattering: SCATTER,
           edges: EDGES,
           minIntervalMs: MIN_INTERVAL_MS,
+          speedOfSound: SPEED_OF_SOUND,
         });
       }
       liveRafId = requestAnimationFrame(liveLoop);

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Slow-Sound Vault",
+  "open": false,
+  "room": { "width": 14, "depth": 20, "height": 6 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "speedOfSound": 150,
+  "start": { "x": 7, "z": 18, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 7, "z": 2, "freq": 440, "goalRadius": 0.9, "sound": "drip" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

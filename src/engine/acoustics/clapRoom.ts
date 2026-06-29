@@ -165,6 +165,11 @@ export class ClapRoom {
    * Recompute the room IR for the given shoebox + current listener pose/heading.
    * Call when the room or listener position changes; cheap enough to call on
    * each clap.
+   *
+   * NOTE: this shoebox path does not take a per-level `speedOfSound` (it has no
+   * callers in the game today — the game uses `updateGeneralRoom`). If it's ever
+   * wired up, add a speedOfSound opt here too so its clap timing matches the live
+   * sources, as `updateGeneralRoom`/`updateLive` do.
    */
   updateRoom(params: ShoeboxParams, yaw: number) {
     const taps = computeShoeboxTaps(params);
@@ -189,7 +194,7 @@ export class ClapRoom {
     walls: WallDef[],
     listener: [number, number, number],
     yaw: number,
-    opts: { edges?: EdgeDef[]; maxOrder?: number; scattering?: number } = {},
+    opts: { edges?: EdgeDef[]; maxOrder?: number; scattering?: number; speedOfSound?: number } = {},
   ) {
     const taps = computeRoomTaps({
       walls,
@@ -197,6 +202,7 @@ export class ClapRoom {
       listener,
       source: listener, // clap originates at the head
       maxOrder: opts.maxOrder ?? 2,
+      speedOfSound: opts.speedOfSound,
     });
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
@@ -226,7 +232,7 @@ export class ClapRoom {
     sig: string,
     listener: [number, number, number],
     yaw: number,
-    opts: { edges?: EdgeDef[]; maxOrder?: number; scattering?: number; minIntervalMs?: number } = {},
+    opts: { edges?: EdgeDef[]; maxOrder?: number; scattering?: number; minIntervalMs?: number; speedOfSound?: number } = {},
   ): boolean {
     const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     const minInterval = opts.minIntervalMs ?? 70;
@@ -241,6 +247,7 @@ export class ClapRoom {
       listener,
       source: listener,
       maxOrder: opts.maxOrder ?? 2,
+      speedOfSound: opts.speedOfSound,
     });
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,

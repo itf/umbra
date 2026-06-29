@@ -389,11 +389,17 @@ Decisive. Each: effort (S/M/L) + why it's the highest leverage.
    flow, minimal engine. Do it before any campaign push so new players don't
    bounce.
 
-5. **The Cathedral level + expose `speedOfSound` in the editor** — **S.** *Why:*
-   two near-free wins that activate already-built engines (FDN tail; runtime
+5. **The Cathedral level + expose `speedOfSound` in the editor** — **S.** **✅ DONE.**
+   *Why:* two near-free wins that activate already-built engines (FDN tail; runtime
    speed-of-sound). The Cathedral is the emotional "whoa, scale" moment the demo
    set lacks; the speed-of-sound toggle unlocks a whole class of alien/puzzle
    levels for the cost of one schema field + one editor input.
+   *Shipped:* `cathedral` builtin (vast marble nave, long FDN tail) and a
+   `slow-sound-vault` demo (`speedOfSound: 150`). `Level.speedOfSound?` threads
+   through load → `GameLevel`/`LoadedLevel` → the clap (`computeRoomTaps`) AND the
+   live sources (`renderer.setSpeedOfSound`, so beacon/monster delay + Doppler match).
+   Editor Room panel gains a "Speed of sound (m/s)" input. See
+   `docs/engine/speed-of-sound.md`.
 
 ---
 

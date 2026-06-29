@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "Cathedral",
+  "open": false,
+  "room": { "width": 22, "depth": 46, "height": 18 },
+  "roomMaterial": "marble",
+  "floorMaterial": "marble",
+  "hasCeiling": true,
+  "ceilingMaterial": "marble",
+  "speedOfSound": 343,
+  "start": { "x": 11, "z": 43, "yaw": 0 },
+  "beacons": [
+    { "id": "bell", "x": 11, "z": 3, "freq": 523, "goalRadius": 1.2, "sound": "bell" }
+  ],
+  "walls": [
+    { "id": "col-l1", "ax": 7, "az": 14, "bx": 7.8, "bz": 14, "material": "marble" },
+    { "id": "col-l2", "ax": 7, "az": 30, "bx": 7.8, "bz": 30, "material": "marble" },
+    { "id": "col-r1", "ax": 14.2, "az": 14, "bx": 15, "bz": 14, "material": "marble" },
+    { "id": "col-r2", "ax": 14.2, "az": 30, "bx": 15, "bz": 30, "material": "marble" }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

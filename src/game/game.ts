@@ -56,6 +56,8 @@ export interface GameLevel {
   clapBudget?: number;
   /** Minimum ms between consecutive claps (0/undefined ⇒ no cooldown). */
   clapCooldownMs?: number;
+  /** Speed of sound (m/s) for this level (undefined ⇒ engine default 343). */
+  speedOfSound?: number;
 }
 
 export interface GameCallbacks {

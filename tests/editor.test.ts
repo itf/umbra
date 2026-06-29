@@ -159,6 +159,7 @@ describe('full-feature level round-trips through export/import', () => {
     lvl.floors = [{ id: 'f1', x: 1, z: 1, w: 3, d: 2, material: 'tile' }];
     lvl.ceilings = [{ id: 'c1', x: 0, z: 0, w: 4, d: 4, height: 2, material: 'acoustic_foam' }];
     lvl.monsters = [{ id: 'm1', x: 9, z: 9, speed: 1.7, sound: 'growl' }];
+    lvl.speedOfSound = 150;
 
     const round = importLevel(exportLevel(lvl));
 
@@ -171,6 +172,14 @@ describe('full-feature level round-trips through export/import', () => {
     expect(round.beacons[0]).toMatchObject({ sound: 'bell', soundUrl: 'https://x/y.wav' });
     expect(round.monsters[0]).toMatchObject({ speed: 1.7, sound: 'growl' });
     expect(round.ceilings[0]).toMatchObject({ height: 2, material: 'acoustic_foam' });
+    expect(round.speedOfSound).toBe(150);
+  });
+
+  it('a level with no speedOfSound has no such key after round-trip', () => {
+    const lvl = emptyLevel('Default-c');
+    expect('speedOfSound' in lvl).toBe(false);
+    const round = importLevel(exportLevel(lvl));
+    expect(round.speedOfSound).toBeUndefined();
   });
 
   it('a static wall authored then cleared has no motion key after round-trip', () => {

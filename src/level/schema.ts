@@ -183,6 +183,15 @@ export interface Level {
   clapBudget?: number;
   clapCooldownMs?: number;
 
+  /**
+   * SPEED OF SOUND (m/s) for this level — "alien physics". Absent ⇒ 343 (~20C
+   * dry air; the engine default). Changing it scales echo timing (delay ∝ 1/c)
+   * AND the live beacon/monster propagation delay + Doppler, so a slow- or
+   * fast-sound level sounds coherently different for both the clap and live
+   * sources. Non-finite / non-positive values are ignored (treated as default).
+   */
+  speedOfSound?: number;
+
   start: StartPoint;
   beacons: BeaconObj[];
   walls: WallObj[];

@@ -78,6 +78,8 @@ the Begin screen.
 | `stepped-ceiling-alcove` | Cathedral Alcove | A low ceiling zone inside a tall marble nave |
 | `s-bend-maze` | S-Bend Maze | Two interior walls to weave past — map a route by echo |
 | `clap-maze` | Clap-Maze | Serpentine brick maze + a tight **clap budget** (`clapBudget`/`clapCooldownMs`) — navigate by echo, probe deliberately. See `docs/engine/clap-budget.md` |
+| `cathedral` | Cathedral | A vast 22×46×18 m marble nave with stone columns — the FDN **late-reverb tail** (auto-derived from the big, hard geometry via Eyring RT60) gives a long, grand decay. Bell beacon. |
+| `slow-sound-vault` | Slow-Sound Vault | **Alien physics**: `speedOfSound: 150` (m/s). Echoes lag, the beacon arrives late and Dopplers hard — feel the slowed speed of sound on both the clap and the live beacon. See `docs/engine/speed-of-sound.md` |
 
 The size pair has a large volume spread (52 m³ vs 3456 m³); the test-suite
 enforces a ≥4× spread.

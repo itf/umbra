@@ -56,6 +56,42 @@ computeRoomTaps({ ...params, speedOfSound?: number }): Tap[]
 // omitted => DEFAULT_SPEED_OF_SOUND (343)
 ```
 
+## Per-level setting (editor-exposed) — "alien physics"
+
+`c` is now a per-level authoring field, not just a solver argument:
+
+- **Schema** — `Level.speedOfSound?: number` (m/s). Absent ⇒ the engine default
+  343, so every pre-existing level is byte-identical and `isLevel` accepts levels
+  with or without the field (it's optional; no rejection).
+- **Load** — `loadLevel` runs it through `sanitizeLevelSpeed()` (forwards only a
+  finite value `> 1`, else `undefined`), and carries the result onto both
+  `LoadedLevel.speedOfSound` and `GameLevel.speedOfSound`. A `0`/negative/`NaN`/
+  `Infinity` authored value collapses to `undefined` here, so a bad value can never
+  reach the solver as inf/NaN (and the core re-sanitizes anyway — belt and braces).
+- **Editor** — a "Speed of sound (m/s)" number input in the Room panel
+  (`#room-sos`, range 100–700, placeholder `343`). Blank clears the field (default
+  c); a finite `> 1` value writes `level.speedOfSound`. It reflects on load / new /
+  import and round-trips through save/export JSON.
+
+### Where it flows at runtime (both clap AND live sources)
+
+`main.ts` reads `loaded.speedOfSound` into a module `SPEED_OF_SOUND` and applies it
+in two places so the space sounds coherent:
+
+1. **Clap / echo** — forwarded into `ClapRoom.updateGeneralRoom(..., { speedOfSound })`
+   and `updateLive(..., { speedOfSound })`, which pass it to `computeRoomTaps`. So the
+   clap's early-reflection timing scales with `c`.
+2. **Live beacon / monster** — `renderer.setSpeedOfSound(c)` is called once after the
+   renderer is created, so the HRTF propagation-delay `DelayNode` and the Doppler
+   pitch use the same `c`. A slow-sound level's beacon literally arrives later and
+   Dopplers harder.
+
+A level that omits the field touches neither path (renderer keeps its 343 default,
+the clap opts pass `undefined` ⇒ 343), so old levels are unchanged.
+
+Demo levels: **Cathedral** (default c, showcases the long FDN reverb tail) and
+**Slow-Sound Vault** (`speedOfSound: 150` — echoes lag, beacon late, strong Doppler).
+
 ## Physics
 
 The default is **343 m/s**, the speed of sound in dry air at ~20 °C. It scales

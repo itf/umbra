@@ -21,6 +21,8 @@ import openStreet from './open-street.json';
 import steppedCeiling from './stepped-ceiling-alcove.json';
 import sBendMaze from './s-bend-maze.json';
 import clapMaze from './clap-maze.json';
+import cathedral from './cathedral.json';
+import slowSoundVault from './slow-sound-vault.json';
 
 export interface BuiltinEntry {
   id: string;
@@ -103,5 +105,17 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     name: 'Clap-Maze',
     description: 'A serpentine brick maze navigated by echo, with a tight clap budget — probe deliberately at each junction to find where the echo isn’t.',
     json: clapMaze,
+  },
+  {
+    id: 'cathedral',
+    name: 'Cathedral',
+    description: 'A vast marble nave with stone columns and an 18 m vaulted ceiling — the FDN late-reverb tail gives a long, grand decay. Walk to the bell.',
+    json: cathedral,
+  },
+  {
+    id: 'slow-sound-vault',
+    name: 'Slow-Sound Vault',
+    description: 'Alien physics: sound travels at 150 m/s, so echoes lag, the beacon arrives late and Dopplers hard. A small concrete vault to feel the slowed speed of sound.',
+    json: slowSoundVault,
   },
 ];
