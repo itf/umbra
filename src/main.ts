@@ -66,16 +66,21 @@ function alert(msg: string) {
 // page was opened with ?level=current, load the level designed in the editor
 // (stored in localStorage) instead.
 let ROOM: [number, number, number] = [8, 3, 10];
-let LEVEL: GameLevel = {
-  start: { x: 4, z: 8.5, yaw: 0 }, // facing -z (toward the beacon end)
-  beacon: { x: 4, z: 1.5, freq: 440 },
-  goalRadius: 0.8,
-};
 // Acoustic geometry for the clap (the general solver). Defaults to the built-in
 // room's 6 walls; replaced by the editor level's geometry when loaded.
 let WALLS: WallDef[] = boxRoomWalls(ROOM, 'concrete');
 let EDGES: EdgeDef[] = [];
 let SCATTER = 0.05;
+let LEVEL: GameLevel = {
+  start: { x: 4, z: 8.5, yaw: 0 }, // facing -z (toward the beacon end)
+  beacon: { x: 4, z: 1.5, freq: 440 },
+  goalRadius: 0.8,
+  // Modeled beacon: same geometry the clap uses, so walls occlude the beacon and
+  // openings let it diffract through.
+  acousticWalls: WALLS,
+  acousticEdges: EDGES,
+  acousticScattering: SCATTER,
+};
 // The source level + a moving-walls flag, so the live IR loop can re-derive
 // geometry from the animation clock. Null when running the built-in default room.
 let SRC_LEVEL: Level | null = null;
@@ -102,6 +107,11 @@ function applyLevel(level: Level, displayName: string) {
   SRC_LEVEL = loaded.level;
   HAS_MOVING_WALLS = loaded.hasMovingWalls;
   SPEED_OF_SOUND = loaded.speedOfSound;
+  // Thread the acoustic geometry into the GameLevel so the beacon is rendered
+  // through the room (occlusion + diffraction), not on a straight line.
+  LEVEL.acousticWalls = WALLS;
+  LEVEL.acousticEdges = EDGES;
+  LEVEL.acousticScattering = SCATTER;
   if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
 }
 
@@ -484,6 +494,9 @@ function setupClap(
       // recompute read WALLS), even on frames we don't rebuild.
       WALLS = wallsAt(level, t);
       EDGES = diffractionEdgesAt(level, t);
+      // Feed the live geometry to the modeled beacon too, so a beacon behind a
+      // moving wall occludes/un-occludes as the wall slides (throttled inside).
+      game.setAcousticGeometry(WALLS, EDGES);
       // The signature is only consumed at the throttle rate, so skip the string
       // allocation on frames inside the throttle window — updateLive would no-op
       // on them anyway.

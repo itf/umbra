@@ -28,6 +28,11 @@ with tests + per-feature docs under `docs/engine/`:
   `docs/engine/late-reverb-fdn.md`. (was 🔴 below)
 - ✅ **Richer / custom beacon sounds** — synth presets + custom audio.
   `docs/engine/beacon-sounds.md`. (see Gameplay below)
+- ✅ **Modeled beacon — occlusion + diffraction (Phase 1)** — the beacon is rendered
+  through the room solver (`ModeledSource`), so walls occlude the direct path and
+  openings diffract it; material coloring + Doppler come for free. Phase 2 (full
+  reflections) is a one-line `maxOrder` bump — the perf budget holds (~3 ms/refresh vs
+  70 ms throttle). `docs/engine/modeled-beacon.md`.
 - ✅ **Audio-artifact + clipping verification** — OfflineAudioContext stress tests (fast
   rotate/walk/glide/IR-swap → no clicks) + a master limiter (no clipping).
   `docs/engine/audio-artifacts-and-clipping.md`. (covers the "Live-render tests" item below)

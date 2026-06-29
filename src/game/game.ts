@@ -6,6 +6,8 @@
  */
 import type { AudioGraph } from '../engine/audioGraph';
 import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
+import { ModeledSource } from '../engine/acoustics/modeledSource';
+import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
 import { Footsteps } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
@@ -58,6 +60,17 @@ export interface GameLevel {
   clapCooldownMs?: number;
   /** Speed of sound (m/s) for this level (undefined ⇒ engine default 343). */
   speedOfSound?: number;
+  /**
+   * Acoustic geometry for the MODELED beacon (occlusion + diffraction). When
+   * present, the beacon is rendered through the room solver (`ModeledSource`)
+   * instead of a straight-line `HrtfSource`, so walls occlude it and openings let
+   * it diffract through. Absent ⇒ the beacon falls back to the plain HrtfSource.
+   * The caller may swap `acousticWalls`/`acousticEdges` per frame (moving walls).
+   */
+  acousticWalls?: WallDef[];
+  acousticEdges?: EdgeDef[];
+  /** Representative scattering coefficient for the modeled beacon's surfaces. */
+  acousticScattering?: number;
 }
 
 export interface GameCallbacks {
@@ -85,7 +98,21 @@ export class Game {
    * not the player's actual position. See docs/engine/noise-events.md.
    */
   private noise: NoiseTracker;
-  private beacon: HrtfSource;
+  /**
+   * The plain straight-line beacon source — used as a FALLBACK when the level has
+   * no acoustic geometry (`acousticWalls`). When geometry IS present the beacon is
+   * the `modeledBeacon` below instead (occlusion + diffraction), and this is null.
+   */
+  private beacon: HrtfSource | null = null;
+  /**
+   * The MODELED beacon: the dry voice rendered through the room solver so walls
+   * occlude it and openings let it diffract through. Non-null iff the level has
+   * acoustic geometry. Driven by `refreshBeacon()` on the per-frame throttle.
+   */
+  private modeledBeacon: ModeledSource | null = null;
+  /** The dry-voice input node + the master-bound output node, whichever beacon is live. */
+  private beaconInput!: GainNode;
+  private beaconOutput!: GainNode;
   /** The synthesized beacon voice (null while a custom audio file is playing). */
   private beaconVoice: BeaconVoice | null = null;
   /** Looping custom-audio source, when `soundUrl` loaded successfully. */
@@ -146,8 +173,22 @@ export class Game {
     // Beacon at the goal — easy to localize and home in on. Its dry signal comes
     // from the chosen synth preset (or a looped custom audio file); either way it
     // feeds the HrtfSource so all spatial/Doppler/propagation work is shared.
-    this.beacon = renderer.createSource();
-    this.beacon.output.connect(graph.master);
+    // If the level carries acoustic geometry, render the beacon through the room
+    // solver (occlusion + diffraction); otherwise fall back to the plain
+    // straight-line HrtfSource. Either way `beaconInput` is where the dry voice
+    // feeds and `beaconOutput` is the master-bound output.
+    if (level.acousticWalls && level.acousticWalls.length > 0) {
+      this.modeledBeacon = new ModeledSource(graph.ctx, graph.master, renderer.set);
+      this.beaconInput = this.modeledBeacon.input;
+      this.beaconOutput = this.modeledBeacon.output;
+      // (the initial solve happens at the end of the constructor, once the start
+      // pose is set — see this.refreshBeacon() below)
+    } else {
+      this.beacon = renderer.createSource();
+      this.beacon.output.connect(graph.master);
+      this.beaconInput = this.beacon.input;
+      this.beaconOutput = this.beacon.output;
+    }
     this.startBeaconSource();
 
     // Monsters: a PURE AI state + a looping growl through its own HrtfSource so it's
@@ -182,6 +223,10 @@ export class Game {
     }
 
     this.syncListener();
+    // Solve the modeled beacon once for the start pose so the very first frame of
+    // audio is already correct (occluded/diffracted as appropriate), rather than
+    // silent until the first tick. No-op for the plain-HrtfSource fallback.
+    this.refreshBeacon();
   }
 
   /**
@@ -200,7 +245,7 @@ export class Game {
     // shouldStart vetoes a late buffer if the beacon was won (and faded) meanwhile.
     void attachCustomLoop(
       this.graph.ctx,
-      this.beacon.input,
+      this.beaconInput,
       url,
       () => { /* keep the synth fallback already running */ },
       { shouldStart: () => !this.won && this.beaconCustom == null },
@@ -217,7 +262,7 @@ export class Game {
   private startSynthBeacon() {
     const preset: BeaconPreset = resolveBeaconPreset(this.level.beacon.sound);
     this.beaconVoice?.stop();
-    this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beacon.input, preset, this.level.beacon.freq);
+    this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beaconInput, preset, this.level.beacon.freq);
     this.beaconVoice.start();
   }
 
@@ -228,7 +273,37 @@ export class Game {
    */
   private applyAudioPose(pose: AudioPose) {
     this.renderer.setListener({ x: pose.x, y: this.headHeight, z: pose.z, yaw: this.audioYaw });
-    this.beacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
+    if (this.beacon) {
+      // Plain (fallback) beacon: straight-line spatializer, repositioned per frame.
+      this.beacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
+    } else {
+      // Modeled beacon: re-solve the room for the new listener pose (throttled).
+      this.refreshBeacon(pose.x, pose.z);
+    }
+  }
+
+  /**
+   * Re-solve the MODELED beacon's room IR for the current listener pose (occlusion +
+   * diffraction). Throttled + dirty-checked inside `ModeledSource.refresh`, so this
+   * is safe to call from the per-frame audio path. No-op when the beacon isn't
+   * modeled. `lx`/`lz` are the listener world position (logical or glide pose); the
+   * beacon position comes from the level.
+   */
+  private refreshBeacon(lx = this.player.state.x, lz = this.player.state.z) {
+    const mb = this.modeledBeacon;
+    if (!mb) return;
+    mb.refresh({
+      walls: this.level.acousticWalls ?? [],
+      edges: this.level.acousticEdges,
+      listener: [lx, this.headHeight, lz],
+      yaw: this.audioYaw,
+      source: [this.level.beacon.x, this.headHeight, this.level.beacon.z],
+      speedOfSound: this.level.speedOfSound,
+      // Phase 1: direct + first-order edge diffraction only (Phase 2 raises order
+      // for full reflections).
+      maxOrder: 1,
+      scattering: this.level.acousticScattering ?? 0.1,
+    });
   }
 
   /**
@@ -256,6 +331,14 @@ export class Game {
    */
   tick(nowMs = this.graph.ctx.currentTime * 1000) {
     this.glide.tick(nowMs);
+    // Keep the modeled beacon's room IR fresh even when the glide is idle: a turning
+    // listener, or moving walls (the caller may swap `acousticWalls` per frame),
+    // must re-solve occlusion/diffraction. Throttled + dirty-checked inside refresh,
+    // so an utterly static scene rebuilds zero times here.
+    if (this.modeledBeacon) {
+      const p = this.glide.current;
+      this.refreshBeacon(p.x, p.z);
+    }
     this.tickMonsters(nowMs);
   }
 
@@ -284,11 +367,22 @@ export class Game {
         MonsterVoice.roar(this.graph.ctx, this.graph.master);
         // Then freeze + fade the looping chase audio (mirrors win).
         const t = this.graph.ctx.currentTime;
-        this.beacon.output.gain.setTargetAtTime(0, t, 0.3);
+        this.beaconOutput.gain.setTargetAtTime(0, t, 0.3);
         for (const mm of this.monsters) mm.src.output.gain.setTargetAtTime(0, t, 0.3);
         this.cb.onCaught?.();
       }
     }
+  }
+
+  /**
+   * Update the modeled beacon's acoustic geometry (for MOVING walls): the host loop
+   * passes the live wall+edge list each frame. No-op when the beacon isn't modeled.
+   * The next `refreshBeacon`/`tick` re-solves with it (the geometry is part of the
+   * dirty-check signature, so a real wall move triggers a rebuild).
+   */
+  setAcousticGeometry(walls: WallDef[], edges: EdgeDef[]) {
+    this.level.acousticWalls = walls;
+    this.level.acousticEdges = edges;
   }
 
   /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */
@@ -393,7 +487,7 @@ export class Game {
     if (d <= this.level.goalRadius && !this.won) {
       this.won = true;
       // Fade the beacon out on win.
-      this.beacon.output.gain.setTargetAtTime(0, this.graph.ctx.currentTime, 0.3);
+      this.beaconOutput.gain.setTargetAtTime(0, this.graph.ctx.currentTime, 0.3);
       this.cb.onWin?.();
     }
   }
@@ -405,7 +499,8 @@ export class Game {
       try { this.beaconCustom.stop(); } catch { /* already stopped */ }
       this.beaconCustom = null;
     }
-    this.beacon.disconnect();
+    this.beacon?.disconnect();
+    this.modeledBeacon?.disconnect();
     for (const m of this.monsters) {
       m.voice?.stop();
       if (m.custom) {

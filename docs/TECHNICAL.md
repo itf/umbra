@@ -407,6 +407,14 @@ WASM, or FFT convolution — 10–50× expected) or throttle to ~10 Hz and cross
   `docs/engine/monster-chase.md`. Single-target investigate→idle (no patrol yet).
 - **Beacon sounds**: per-beacon synth presets (tone/bell/musicbox/drip/hum) +
   optional custom audio file (`docs/engine/beacon-sounds.md`).
+- **Modeled beacon (occlusion + diffraction)**: the beacon is rendered through the
+  room solver (`ModeledSource`), not a straight line — walls **occlude** the direct
+  path (the order-0 tap is dropped when not visible) and openings let it **diffract**
+  through, with per-band material coloring; Doppler rides the per-tap delays. Live
+  per-source IR + dual-convolver crossfade + ~14 Hz throttle/dirty-check. Phase 1 is
+  direct + first-order diffraction (order 1); full reflections are Phase 2 (the perf
+  budget holds — ~3 ms/refresh vs a 70 ms throttle). See
+  `docs/engine/modeled-beacon.md`.
 - **Diffraction is first-order, geometric approximation** — no true UTD coefficient,
   no 2nd-order; cap is intentional (cost is combinatorial in edge pathfinding).
 - **Late reverb**: an FDN tail (8 mutually-prime delay lines, Householder feedback,
