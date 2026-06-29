@@ -130,6 +130,31 @@ export interface CeilingZone {
 }
 
 /**
+ * A localized ABSORBER PATCH on one of the room's perimeter walls — a rectangle of
+ * a different (typically very absorptive) material set into an otherwise reflective
+ * wall. Used by the "find the absorber" game mode: the player claps and listens for
+ * the DEAD SPOT where this patch swallows the echo.
+ *
+ * `wall` picks which perimeter face the patch lives on. The patch rectangle is then
+ * given in that face's two in-plane axes:
+ *  - on '-x'/'+x' faces the plane is (z, y): `u` = z extent, `v` = y (height) extent
+ *  - on '-z'/'+z' faces the plane is (x, y): `u` = x extent, `v` = y (height) extent
+ * `u0,v0` is the rectangle's min corner and `uSize,vSize` its size (metres). The
+ * matching world position (for the win condition + debug overlay) is derived in
+ * load.ts. The wall polygon is SPLIT so the patch becomes its own WallDef carrying
+ * `material`'s absorption while the rest of the wall keeps `roomMaterial`.
+ */
+export interface WallPatch {
+  id: string;
+  wall: '-x' | '+x' | '-z' | '+z';
+  u0: number;
+  v0: number;
+  uSize: number;
+  vSize: number;
+  material: MaterialName;
+}
+
+/**
  * A monster placement. PLACE-ONLY for now: saved in the level with its props, but
  * the game does not yet run chase AI. The fields anticipate that future feature.
  */
@@ -192,6 +217,16 @@ export interface Level {
    */
   speedOfSound?: number;
 
+  /**
+   * Win objective. Absent or 'beacon' ⇒ today's behaviour (navigate to the first
+   * beacon). 'absorber' ⇒ "find the absorber" mode: the goal is the wall region in
+   * front of the first `absorbers` patch, and the beacon is silenced (the clap
+   * reveals the room; the dead spot reveals the foam). See game.ts.
+   */
+  goal?: 'beacon' | 'absorber';
+  /** Absorptive wall patches (optional). The first is the goal in 'absorber' mode. */
+  absorbers?: WallPatch[];
+
   start: StartPoint;
   beacons: BeaconObj[];
   walls: WallObj[];
@@ -217,6 +252,7 @@ export function emptyLevel(name = 'Untitled'): Level {
     floors: [],
     ceilings: [],
     monsters: [],
+    absorbers: [],
   };
 }
 
@@ -229,6 +265,7 @@ export function isLevel(v: unknown): v is Level {
   if (typeof l.hasCeiling !== 'boolean') l.hasCeiling = !l.open;
   if (typeof l.ceilingMaterial !== 'string') l.ceilingMaterial = l.roomMaterial ?? 'concrete';
   if (!Array.isArray(l.ceilings)) l.ceilings = [];
+  if (!Array.isArray(l.absorbers)) l.absorbers = [];
   // Back-fill beacon sound preset: old beacons (no `sound`) default to 'tone'.
   if (Array.isArray(l.beacons)) {
     for (const b of l.beacons as BeaconObj[]) {

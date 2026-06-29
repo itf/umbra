@@ -23,6 +23,7 @@ import sBendMaze from './s-bend-maze.json';
 import clapMaze from './clap-maze.json';
 import cathedral from './cathedral.json';
 import slowSoundVault from './slow-sound-vault.json';
+import findTheFoam from './find-the-foam.json';
 
 export interface BuiltinEntry {
   id: string;
@@ -117,5 +118,11 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     name: 'Slow-Sound Vault',
     description: 'Alien physics: sound travels at 150 m/s, so echoes lag, the beacon arrives late and Dopplers hard. A small concrete vault to feel the slowed speed of sound.',
     json: slowSoundVault,
+  },
+  {
+    id: 'find-the-foam',
+    name: 'Find the Foam',
+    description: 'Echolocation hunt: clap in a bright concrete room and listen for the DEAD SPOT where a foam patch swallows the echo. Walk to that wall to win — no beacon.',
+    json: findTheFoam,
   },
 ];

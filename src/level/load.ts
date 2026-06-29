@@ -3,7 +3,7 @@
  * beacon + goal) and the acoustic geometry (room walls + interior walls + floor
  * material). The editor places things in 2D; we lift them to 3D here.
  */
-import type { Level, MaterialName, WallObj } from './schema';
+import type { Level, MaterialName, WallObj, WallPatch } from './schema';
 import type { GameLevel } from '../game/game';
 import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { MATERIALS, scatteringFor } from '../engine/acoustics/materials';
@@ -67,20 +67,95 @@ export function currentEditorLevel(): Level | null {
   }
 }
 
+/**
+ * The four vertical perimeter faces, identified by side, so absorber patches can be
+ * split into whichever one they sit on. Each face is parameterised by its two
+ * in-plane axes (u, v=height) and a function turning (u,v) into a world point, so a
+ * single splitter works for all four orientations.
+ */
+type PerimeterFace = {
+  wall: WallPatch['wall'];
+  uMax: number; // extent of the in-plane horizontal axis (z for ±x faces, x for ±z)
+  vMax: number; // height
+  /** Map (u, v) on the face to a world vertex. */
+  pt: (u: number, v: number) => [number, number, number];
+};
+
+function perimeterFaces(level: Level): PerimeterFace[] {
+  const { width: sx, depth: sz, height: sy } = level.room;
+  return [
+    { wall: '-x', uMax: sz, vMax: sy, pt: (u, v) => [0, v, u] },
+    { wall: '+x', uMax: sz, vMax: sy, pt: (u, v) => [sx, v, u] },
+    { wall: '-z', uMax: sx, vMax: sy, pt: (u, v) => [u, v, 0] },
+    { wall: '+z', uMax: sx, vMax: sy, pt: (u, v) => [u, v, sz] },
+  ];
+}
+
+/**
+ * Split one perimeter face into WallDefs, carving out any absorber patches on it.
+ * No patches ⇒ a single quad (byte-identical to the un-split wall). With a patch we
+ * emit a border-grid: the patch quad (absorber material) plus up to four surrounding
+ * rectangles (room material) covering the rest of the face. Axis-aligned, coarse,
+ * cheap — a handful of extra quads. Multiple patches on one face are carved one at a
+ * time by recursively splitting the remaining rectangles (rare; kept simple).
+ */
+function splitFace(face: PerimeterFace, a: number[], patches: WallPatch[]): WallDef[] {
+  // A rectangle in face (u,v) space, with the material to fill it with.
+  type Rect = { u0: number; v0: number; u1: number; v1: number; mat: number[] };
+  const quad = (r: Rect): WallDef => ({
+    verts: [face.pt(r.u0, r.v0), face.pt(r.u1, r.v0), face.pt(r.u1, r.v1), face.pt(r.u0, r.v1)],
+    absorption: r.mat,
+  });
+  let rects: Rect[] = [{ u0: 0, v0: 0, u1: face.uMax, v1: face.vMax, mat: a }];
+  for (const p of patches) {
+    const pu0 = Math.max(0, p.u0), pv0 = Math.max(0, p.v0);
+    const pu1 = Math.min(face.uMax, p.u0 + p.uSize), pv1 = Math.min(face.vMax, p.v0 + p.vSize);
+    if (!(pu1 > pu0 && pv1 > pv0)) continue; // degenerate / off-face patch
+    const pm = abs(p.material);
+    const next: Rect[] = [];
+    for (const r of rects) {
+      // Patch doesn't overlap this rect ⇒ keep as-is.
+      if (pu0 >= r.u1 || pu1 <= r.u0 || pv0 >= r.v1 || pv1 <= r.v0) { next.push(r); continue; }
+      const cu0 = Math.max(r.u0, pu0), cu1 = Math.min(r.u1, pu1);
+      const cv0 = Math.max(r.v0, pv0), cv1 = Math.min(r.v1, pv1);
+      // Border pieces (room material), then the patch piece (absorber material).
+      if (cv0 > r.v0) next.push({ u0: r.u0, v0: r.v0, u1: r.u1, v1: cv0, mat: r.mat }); // below
+      if (cv1 < r.v1) next.push({ u0: r.u0, v0: cv1, u1: r.u1, v1: r.v1, mat: r.mat }); // above
+      if (cu0 > r.u0) next.push({ u0: r.u0, v0: cv0, u1: cu0, v1: cv1, mat: r.mat }); // left
+      if (cu1 < r.u1) next.push({ u0: cu1, v0: cv0, u1: r.u1, v1: cv1, mat: r.mat }); // right
+      next.push({ u0: cu0, v0: cv0, u1: cu1, v1: cv1, mat: pm }); // the patch
+    }
+    rects = next;
+  }
+  return rects.map(quad);
+}
+
 /** Build the perimeter walls + floor (+ ceiling if present) as polygon WallDefs. */
 function perimeterWalls(level: Level): WallDef[] {
-  const { width: sx, depth: sz, height: sy } = level.room;
+  const { width: sx, depth: sz } = level.room;
   const a = abs(level.roomMaterial);
   const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
-  const walls: WallDef[] = [
-    { verts: [v(0, 0, 0), v(0, 0, sz), v(0, sy, sz), v(0, sy, 0)], absorption: a }, // -x
-    { verts: [v(sx, 0, 0), v(sx, sy, 0), v(sx, sy, sz), v(sx, 0, sz)], absorption: a }, // +x
-    { verts: [v(0, 0, 0), v(sx, 0, 0), v(sx, 0, sz), v(0, 0, sz)], absorption: abs(level.floorMaterial) }, // floor
-    { verts: [v(0, 0, 0), v(0, sy, 0), v(sx, sy, 0), v(sx, 0, 0)], absorption: a }, // -z
-    { verts: [v(0, 0, sz), v(sx, 0, sz), v(sx, sy, sz), v(0, sy, sz)], absorption: a }, // +z
-  ];
+  const patches = level.absorbers ?? [];
+  const walls: WallDef[] = [];
+  for (const face of perimeterFaces(level)) {
+    walls.push(...splitFace(face, a, patches.filter((p) => p.wall === face.wall)));
+  }
+  walls.push({ verts: [v(0, 0, 0), v(sx, 0, 0), v(sx, 0, sz), v(0, 0, sz)], absorption: abs(level.floorMaterial) }); // floor
   if (level.hasCeiling) walls.push(...ceilingQuads(level));
   return walls;
+}
+
+/**
+ * World-space centre of an absorber patch (the point the player walks to in
+ * "find the absorber" mode, and the debug overlay marker). The horizontal centre is
+ * what matters for the floor-plane win check; height is set at head-ish level.
+ */
+export function absorberWorldPos(level: Level, p: WallPatch): { x: number; y: number; z: number } {
+  const face = perimeterFaces(level).find((f) => f.wall === p.wall)!;
+  const uc = p.u0 + p.uSize / 2;
+  const vc = p.v0 + p.vSize / 2;
+  const [x, y, z] = face.pt(uc, vc);
+  return { x, y, z };
 }
 
 /**
@@ -356,6 +431,13 @@ export function loadLevel(level: Level): LoadedLevel {
     clapCooldownMs: level.clapCooldownMs,
     speedOfSound,
   };
+  // "Find the absorber" mode: target the first absorber patch's wall region.
+  const firstAbsorber = level.absorbers?.[0];
+  if (level.goal === 'absorber' && firstAbsorber) {
+    const w = absorberWorldPos(level, firstAbsorber);
+    game.goal = 'absorber';
+    game.goalTarget = { x: w.x, z: w.z };
+  }
   // Open levels have no enclosing box — only the free-standing walls you placed.
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the
   // interior geometry per frame via `wallsAt(level, t)`.

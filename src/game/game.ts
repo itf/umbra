@@ -45,6 +45,14 @@ export interface GameLevel {
   beacon: { x: number; z: number; freq: number; sound?: BeaconPreset; soundUrl?: string };
   /** Win when within this many metres of the beacon. */
   goalRadius: number;
+  /**
+   * "Find the absorber" mode. When set, the win target is `goalTarget` (the wall
+   * region in front of an absorber patch) instead of the beacon, and the beacon is
+   * silenced. Absent ⇒ normal beacon game (unchanged).
+   */
+  goal?: 'beacon' | 'absorber';
+  /** World position of the absorber goal (used when goal === 'absorber'). */
+  goalTarget?: { x: number; z: number };
   headHeight?: number;
   /** Default floor material when not standing in any zone. */
   floorMaterial?: string;
@@ -326,6 +334,9 @@ export class Game {
    * chosen synth preset (default 'tone'). Both feed `this.beacon.input`.
    */
   private startBeaconSource() {
+    // "Find the absorber" mode: no beacon voice. The room is revealed by clapping;
+    // the goal is the silent dead spot, so we never start a beacon sound.
+    if (this.level.goal === 'absorber') return;
     // Always start the synth preset immediately so the beacon is never silent.
     // If a custom `soundUrl` is set, the shared helper loads + loops it through the
     // SAME HrtfSource and we swap to it when it arrives; on failure the synth stays.
@@ -429,7 +440,8 @@ export class Game {
 
   /** Report closing distance from the LOGICAL position (never the mid-glide pose). */
   private reportProgress() {
-    const d = this.player.distanceTo(this.level.beacon.x, this.level.beacon.z);
+    const t = this.winTarget();
+    const d = this.player.distanceTo(t.x, t.z);
     this.cb.onProgress?.(d);
   }
 
@@ -600,8 +612,15 @@ export class Game {
     return { x: s.x, y: this.headHeight, z: s.z, yaw: s.yaw };
   }
 
+  /** The win target: the absorber patch in 'absorber' mode, else the beacon. */
+  private winTarget(): { x: number; z: number } {
+    if (this.level.goal === 'absorber' && this.level.goalTarget) return this.level.goalTarget;
+    return { x: this.level.beacon.x, z: this.level.beacon.z };
+  }
+
   private checkWin() {
-    const d = this.player.distanceTo(this.level.beacon.x, this.level.beacon.z);
+    const t = this.winTarget();
+    const d = this.player.distanceTo(t.x, t.z);
     if (d <= this.level.goalRadius && !this.won) {
       this.won = true;
       // Fade the beacon out on win.

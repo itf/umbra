@@ -345,7 +345,9 @@ startButton.addEventListener('click', async () => {
         ),
       onWin: () => {
         endRun('won');
-        alert('You reached the beacon. Level complete!');
+        alert(LEVEL.goal === 'absorber'
+          ? 'You found the absorber. Level complete!'
+          : 'You reached the beacon. Level complete!');
       },
       onCaught: () => {
         // The monster physically reached you — a loss, distinct from a win.

@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "Find the Foam",
+  "open": false,
+  "room": { "width": 12, "depth": 16, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "goal": "absorber",
+  "absorbers": [
+    {
+      "id": "foam-1",
+      "wall": "-z",
+      "u0": 6.5,
+      "v0": 0.8,
+      "uSize": 3.0,
+      "vSize": 1.6,
+      "material": "acoustic_foam"
+    }
+  ],
+  "start": { "x": 6, "z": 14, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 6, "z": 8, "freq": 440, "goalRadius": 1.5, "sound": "tone" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}
