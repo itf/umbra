@@ -14,12 +14,9 @@
     { "id": "b1", "x": 5, "z": 1, "freq": 587, "goalRadius": 0.8, "sound": "bell" }
   ],
   "walls": [
-    { "id": "w1", "ax": 0, "az": 12, "bx": 6.5, "bz": 12, "material": "brick" },
-    { "id": "w2", "ax": 6.5, "az": 12, "bx": 6.5, "bz": 9, "material": "brick" },
-    { "id": "w3", "ax": 3.5, "az": 9, "bx": 10, "bz": 9, "material": "brick" },
-    { "id": "w4", "ax": 3.5, "az": 9, "bx": 3.5, "bz": 5.5, "material": "brick" },
-    { "id": "w5", "ax": 0, "az": 5.5, "bx": 6.5, "bz": 5.5, "material": "brick" },
-    { "id": "w6", "ax": 6.5, "az": 5.5, "bx": 6.5, "bz": 3, "material": "brick" }
+    { "id": "w1", "ax": 0, "az": 12, "bx": 7, "bz": 12, "material": "brick" },
+    { "id": "w2", "ax": 3, "az": 8, "bx": 10, "bz": 8, "material": "brick" },
+    { "id": "w3", "ax": 0, "az": 4, "bx": 7, "bz": 4, "material": "brick" }
   ],
   "floors": [],
   "ceilings": [],
