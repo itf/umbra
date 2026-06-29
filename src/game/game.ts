@@ -10,6 +10,7 @@ import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './playe
 import { Footsteps } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
 import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
+import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -39,6 +40,8 @@ export interface GameCallbacks {
   onStumble?: (reason: string) => void;
   onWin?: () => void;
   onProgress?: (distance: number) => void;
+  /** Fired whenever the player makes noise (step/stumble/bump). Foundation for monster AI. */
+  onNoise?: (event: NoiseEvent) => void;
 }
 
 export class Game {
@@ -48,6 +51,13 @@ export class Game {
   private level: GameLevel;
   private cb: GameCallbacks;
   private footsteps: Footsteps;
+  /**
+   * Records the LAST positioned noise the player made (step/stumble/bump) with a
+   * normalized loudness. PURE model (noiseEvents.ts), parallel to footstep audio;
+   * the future monster reads `lastNoise()` to hunt the last place noise was made,
+   * not the player's actual position. See docs/engine/noise-events.md.
+   */
+  private noise: NoiseTracker;
   private beacon: HrtfSource;
   /** The synthesized beacon voice (null while a custom audio file is playing). */
   private beaconVoice: BeaconVoice | null = null;
@@ -80,6 +90,7 @@ export class Game {
     this.headHeight = level.headHeight ?? 1.6;
     this.player = new Player({ x: level.start.x, z: level.start.z, yaw: level.start.yaw }, stepCfg);
     this.footsteps = new Footsteps(graph, renderer);
+    this.noise = new NoiseTracker(cb.onNoise);
     this.audioYaw = level.start.yaw;
     // The glide sink applies an interpolated x/z (with the current audioYaw) to the
     // HRTF listener and repositions the beacon — the actual per-frame audio update.
@@ -213,13 +224,19 @@ export class Game {
         this.player.state.x = before.x;
         this.player.state.z = before.z;
         this.footsteps.bump(hitWall.material);
+        // Loud noise spike at the bump position (where the player still stands).
+        this.noise.emit(makeNoiseEvent('bump', before.x, before.z, hitWall.material, nowMs));
         this.cb.onStumble?.('wall');
         this.syncListener();
         return;
       }
       // After standing still, the feet came together — soft reset cue.
       if (result.outcome.settled) this.footsteps.feetTogether();
-      this.footsteps.step(result.outcome.foot, this.floorMaterialAt(s.x, s.z));
+      const floorMat = this.floorMaterialAt(s.x, s.z);
+      this.footsteps.step(result.outcome.foot, floorMat);
+      // Positioned noise at the step's landing point; loudness from the floor
+      // material (loud on gravel, near-silent on carpet/foam).
+      this.noise.emit(makeNoiseEvent('step', s.x, s.z, floorMat, nowMs));
       this.cb.onStep?.(result.outcome.foot, result.outcome.stride);
       // AUDIO-ONLY glide: sweep the audio listener from where it currently IS
       // (the glide's current pose — so a step landing mid-glide retargets without
@@ -231,6 +248,8 @@ export class Game {
       this.checkWin();
     } else {
       this.footsteps.stumble();
+      // Loud noise spike at the player's position (stumbling is loud on any floor).
+      this.noise.emit(makeNoiseEvent('stumble', s.x, s.z, this.floorMaterialAt(s.x, s.z), nowMs));
       this.cb.onStumble?.(result.outcome.reason);
     }
   }
@@ -261,6 +280,14 @@ export class Game {
   /** Whether either foot may currently lead (settled / pre-first-step). */
   isSettled(): boolean {
     return this.player.isSettled(this.graph.ctx.currentTime * 1000);
+  }
+
+  /**
+   * The last positioned noise the player made (step/stumble/bump), or null if
+   * none yet. The future monster hunts THIS, not the player's actual position.
+   */
+  lastNoise(): NoiseEvent | null {
+    return this.noise.lastNoise();
   }
 
   /** Current listener world pose (for the clap/echo feature). */
