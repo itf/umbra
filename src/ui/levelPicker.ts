@@ -64,9 +64,12 @@ export interface RenderOptions {
 }
 
 /**
- * Render the picker into `container`. Returns the model used (for tests/debug).
- * Each item is a focusable button; selecting it calls `onSelect`. Headings group
- * the two sources. Empty sources are simply omitted.
+ * Render the picker into `container` as a scrollable LIST of level cards. Returns
+ * the model used (for tests/debug). The picker is its OWN screen (not sharing the
+ * viewport with the game controls), so it can list every level as a card; if the
+ * list is taller than the viewport, the screen scrolls (see `#app` overflow-y in
+ * styles.css). Each card is a focusable `<button>` with a screen-reader label,
+ * grouped under headings. Empty groups are omitted.
  */
 export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): PickerItem[] {
   const model = buildPickerModel(opts.builtins, opts.savedNames);

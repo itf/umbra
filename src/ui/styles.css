@@ -51,9 +51,11 @@ html, body {
   text-align: center;
 }
 
-/* Each top-level screen centres itself with auto margins (safe centering: when it
-   overflows, the top margin can't push content out of the scroll area). */
-#app > section {
+/* Each VISIBLE top-level screen centres itself with auto margins (safe centering:
+   when it overflows, the top margin can't push content out of the scroll area).
+   `:not([hidden])` is essential — without it this `display:flex` would override the
+   `hidden` attribute's `display:none` and all three screens would render at once. */
+#app > section:not([hidden]) {
   margin-block: auto;
   width: 100%;
   display: flex;

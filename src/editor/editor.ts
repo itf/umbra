@@ -10,6 +10,7 @@ import {
 import {
   saveLevel, loadLevel, deleteLevel, listLevels, exportLevel, importLevel,
 } from '../level/storage';
+import { builtinLevels, getBuiltin } from '../level/builtins';
 import {
   fitView, draw, screenToWorld, worldToScreen, type ViewState, MATERIAL_NAMES,
 } from './view';
@@ -384,8 +385,17 @@ nameEl.addEventListener('input', () => (level.name = nameEl.value || 'Untitled')
 async function refreshLevelList() {
   const names = await listLevels();
   const sel = $('level-list') as HTMLSelectElement;
-  sel.innerHTML = '<option value="">— load saved —</option>' +
-    names.map((n) => `<option>${n}</option>`).join('');
+  // Demo (built-in) levels are read-only; selecting one loads an editable COPY.
+  // Saved levels (IndexedDB) load in place. Option values are namespaced so the
+  // change handler can tell them apart.
+  const demos = builtinLevels()
+    .map((b) => `<option value="builtin:${b.id}">${b.name}</option>`)
+    .join('');
+  const saved = names.map((n) => `<option value="saved:${n}">${n}</option>`).join('');
+  sel.innerHTML =
+    '<option value="">— load —</option>' +
+    `<optgroup label="Demo levels (loads a copy)">${demos}</optgroup>` +
+    (saved ? `<optgroup label="Your saved levels">${saved}</optgroup>` : '');
 }
 
 $('btn-new').addEventListener('click', () => {
@@ -401,10 +411,20 @@ $('btn-save').addEventListener('click', async () => {
   flashHint(`Saved "${level.name}".`);
 });
 ($('level-list') as HTMLSelectElement).addEventListener('change', async (e) => {
-  const name = (e.target as HTMLSelectElement).value;
-  if (!name) return;
-  const l = await loadLevel(name);
+  const sel = e.target as HTMLSelectElement;
+  const value = sel.value;
+  if (!value) return;
+  let l: typeof level | undefined;
+  if (value.startsWith('builtin:')) {
+    // Built-in demos are read-only — load an editable COPY (deep-cloned by
+    // getBuiltin) with a distinct name so saving won't clobber anything.
+    const base = getBuiltin(value.slice('builtin:'.length));
+    if (base) { l = base; l.name = `${base.name} (copy)`; }
+  } else if (value.startsWith('saved:')) {
+    l = await loadLevel(value.slice('saved:'.length));
+  }
   if (l) { level = l; selectedId = null; nameEl.value = l.name; syncRoomInputs(); renderProps(); render(); }
+  sel.value = ''; // reset so re-selecting the same entry fires change again
 });
 $('btn-delete').addEventListener('click', async () => {
   const name = nameEl.value;
