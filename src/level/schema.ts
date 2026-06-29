@@ -39,8 +39,42 @@ export interface BeaconObj {
 }
 
 /**
+ * Wall motion spec (OPTIONAL — old levels have none and stay static).
+ *
+ * Two serializable kinds, both periodic and self-contained (no runtime state):
+ *
+ *  - `translate`: the whole segment slides back and forth (PING-PONG) along the
+ *    vector (dx,dz). Phase 0 = rest (no offset); it travels to +(dx,dz) and back
+ *    over `period` seconds. A shifting maze wall.
+ *  - `slide`: a SLIDING DOOR. Endpoint b retracts toward endpoint a, opening a gap
+ *    of up to `openFraction` of the segment's length, then closes again, over
+ *    `period` seconds. The door's `a` end is the fixed jamb.
+ *
+ * Both are pure functions of time, so geometry at any `t` is reproducible and the
+ * acoustics simulation can be re-driven deterministically (see load.ts `wallAt`).
+ */
+export type WallMotion =
+  | {
+      kind: 'translate';
+      /** Travel vector (metres) at the far end of the ping-pong. */
+      dx: number;
+      dz: number;
+      /** Seconds for a full out-and-back cycle. */
+      period: number;
+    }
+  | {
+      kind: 'slide';
+      /** Max fraction of the segment length the door opens (0..1). */
+      openFraction: number;
+      /** Seconds for a full open-and-close cycle. */
+      period: number;
+    };
+
+/**
  * An interior wall segment (a low, full-height barrier) on the x/z plane, given
  * as a line from a→b with a material. The game extrudes it to room height.
+ * An optional `motion` makes the wall move continuously (sliding door / shifting
+ * wall); the acoustics track it in real time.
  */
 export interface WallObj {
   id: string;
@@ -49,6 +83,8 @@ export interface WallObj {
   bx: number;
   bz: number;
   material: MaterialName;
+  /** Optional continuous motion. Absent ⇒ a static wall (back-compat). */
+  motion?: WallMotion;
 }
 
 /**

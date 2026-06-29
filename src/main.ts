@@ -6,7 +6,8 @@ import { ClapRoom } from './engine/acoustics/clapRoom';
 import type { WallDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
 import { Heading } from './game/heading';
-import { currentEditorLevel, loadLevel, boxRoomWalls } from './level/load';
+import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, liveRebuildSignature } from './level/load';
+import type { Level } from './level/schema';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -36,6 +37,13 @@ let LEVEL: GameLevel = {
 // room's 6 walls; replaced by the editor level's geometry when loaded.
 let WALLS: WallDef[] = boxRoomWalls(ROOM, 'concrete');
 let SCATTER = 0.05;
+// The source level + a moving-walls flag, so the live IR loop can re-derive
+// geometry from the animation clock. Null when running the built-in default room.
+let SRC_LEVEL: Level | null = null;
+let HAS_MOVING_WALLS = false;
+// rAF handle for the moving-walls live loop, so it is cancellable and can't be
+// started twice (a duplicate loop would double the rebuild rate).
+let liveRafId: number | null = null;
 
 if (new URLSearchParams(location.search).get('level') === 'current') {
   const edited = currentEditorLevel();
@@ -45,6 +53,8 @@ if (new URLSearchParams(location.search).get('level') === 'current') {
     ROOM = loaded.roomSize;
     WALLS = loaded.walls;
     SCATTER = loaded.scattering;
+    SRC_LEVEL = loaded.level;
+    HAS_MOVING_WALLS = loaded.hasMovingWalls;
   }
 }
 
@@ -199,8 +209,8 @@ function setupClap(
   const listenBtn = document.getElementById('listen');
   listenBtn?.addEventListener('click', () => {
     // Clap from the player's current position, through the ACTUAL room geometry
-    // (general solver). WALLS is the live wall list — when walls move in future,
-    // this recompute picks up their new positions automatically.
+    // (general solver). WALLS is the live wall list — already updated each frame
+    // by the moving-walls loop below, so this picks up wall positions for free.
     const p = game.listenerPos;
     clapRoom.updateGeneralRoom(WALLS, [p.x, p.y, p.z], p.yaw, {
       maxOrder: 2,
@@ -209,4 +219,41 @@ function setupClap(
     clapRoom.clap();
     say('Clap! Listen to the room around you.');
   });
+
+  // --- Moving walls: advance an animation clock, re-derive WALLS, and drive the
+  // AMBIENT room IR continuously so you HEAR the space change. The throttle +
+  // dirty-check + crossfade all live in ClapRoom.updateLive. Only runs when the
+  // level actually has moving walls (the dirty check would no-op anyway, but the
+  // gate avoids the per-frame signature/geometry work). ---
+  if (HAS_MOVING_WALLS && SRC_LEVEL) {
+    const level = SRC_LEVEL;
+    const t0 = performance.now();
+    const MIN_INTERVAL_MS = 70; // mirrors ClapRoom.updateLive's throttle (~14 Hz)
+    let lastSigMs = -Infinity; // when we last bothered to build the signature
+    const liveLoop = () => {
+      const nowMs = performance.now();
+      const t = (nowMs - t0) / 1000;
+      // Live geometry must update EVERY frame (the clap button + collision-free
+      // recompute read WALLS), even on frames we don't rebuild.
+      WALLS = wallsAt(level, t);
+      // The signature is only consumed at the throttle rate, so skip the string
+      // allocation on frames inside the throttle window — updateLive would no-op
+      // on them anyway.
+      if (nowMs - lastSigMs >= MIN_INTERVAL_MS) {
+        lastSigMs = nowMs;
+        const p = game.listenerPos;
+        const sig = liveRebuildSignature(level, t, { x: p.x, z: p.z, yaw: p.yaw });
+        clapRoom.updateLive(WALLS, sig, [p.x, p.y, p.z], p.yaw, {
+          maxOrder: 2,
+          scattering: SCATTER,
+          minIntervalMs: MIN_INTERVAL_MS,
+        });
+      }
+      liveRafId = requestAnimationFrame(liveLoop);
+    };
+    // Guard against setupClap / the loop starting twice (duplicate loops would
+    // double the rebuild rate). Cancel any prior loop before starting.
+    if (liveRafId != null) cancelAnimationFrame(liveRafId);
+    liveRafId = requestAnimationFrame(liveLoop);
+  }
 }

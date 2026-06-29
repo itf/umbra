@@ -4,7 +4,7 @@
  * (JSON). Produces a Level (src/level/schema.ts) the game can load.
  */
 import {
-  emptyLevel, type Level, type MaterialName,
+  emptyLevel, type Level, type MaterialName, type WallMotion,
   type WallObj, type BeaconObj, type FloorZone, type MonsterObj, type CeilingZone,
 } from '../level/schema';
 import {
@@ -213,6 +213,27 @@ function renderProps() {
   } else if (o.kind === 'wall') {
     rows.push(numRow('ax', 'ax', o.ref.ax), numRow('az', 'az', o.ref.az),
       numRow('bx', 'bx', o.ref.bx), numRow('bz', 'bz', o.ref.bz), matRow(o.ref.material));
+    // --- Motion: none / translate (ping-pong) / slide (door) ---
+    const mk = o.ref.motion?.kind ?? 'none';
+    rows.push(
+      `<label>motion<select data-k="motionKind">${
+        ['none', 'translate', 'slide'].map(
+          (k) => `<option ${k === mk ? 'selected' : ''}>${k}</option>`,
+        ).join('')
+      }</select></label>`,
+    );
+    if (o.ref.motion?.kind === 'translate') {
+      rows.push(
+        numRow('move dx', 'motionDx', o.ref.motion.dx, 0.5),
+        numRow('move dz', 'motionDz', o.ref.motion.dz, 0.5),
+        numRow('period s', 'motionPeriod', o.ref.motion.period, 0.5),
+      );
+    } else if (o.ref.motion?.kind === 'slide') {
+      rows.push(
+        numRow('open frac', 'motionOpen', o.ref.motion.openFraction, 0.1),
+        numRow('period s', 'motionPeriod', o.ref.motion.period, 0.5),
+      );
+    }
   } else if (o.kind === 'floor') {
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('w', 'w', o.ref.w), numRow('d', 'd', o.ref.d), matRow(o.ref.material));
@@ -240,8 +261,30 @@ function applyProp(o: StartLike, key: string, raw: string) {
   const r = o.ref as unknown as Record<string, unknown>;
   if (key === 'yawDeg') { (level.start.yaw as number) = (num * Math.PI) / 180; }
   else if (key === 'material' || key === 'sound') { r[key] = raw; }
+  else if (o.kind === 'wall' && key.startsWith('motion')) {
+    applyWallMotion(o.ref, key, raw, num);
+    renderProps(); // motion-kind change toggles which param fields show
+    render();
+    return;
+  }
   else if (!Number.isNaN(num)) { r[key] = num; }
   render();
+}
+
+/** Edit a wall's optional motion spec from a properties-panel field. */
+function applyWallMotion(w: WallObj, key: string, raw: string, num: number) {
+  if (key === 'motionKind') {
+    if (raw === 'none') { delete w.motion; return; }
+    if (raw === 'translate') { w.motion = { kind: 'translate', dx: 2, dz: 0, period: 4 }; return; }
+    if (raw === 'slide') { w.motion = { kind: 'slide', openFraction: 1, period: 4 }; return; }
+    return;
+  }
+  if (!w.motion || Number.isNaN(num)) return;
+  const m: WallMotion = w.motion;
+  if (key === 'motionPeriod' && num > 0) m.period = num;
+  else if (m.kind === 'translate' && key === 'motionDx') m.dx = num;
+  else if (m.kind === 'translate' && key === 'motionDz') m.dz = num;
+  else if (m.kind === 'slide' && key === 'motionOpen') m.openFraction = Math.max(0, Math.min(1, num));
 }
 
 function deleteSelected() {

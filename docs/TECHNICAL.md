@@ -301,7 +301,10 @@ scattering), and loads it into a `ConvolverNode`. `main.ts` holds `WALLS` (the
 current geometry) and recomputes per clap.
 
 **This is the moving-walls foundation**: when geometry changes, update `WALLS` and
-the next recompute reflects it. No special-casing needed.
+the next recompute reflects it. No special-casing needed. Now built out — walls can
+carry an optional `motion` (sliding door / ping-pong translate); `ClapRoom.updateLive`
+drives the ambient room IR continuously on a ~14 Hz throttle + dual-convolver
+crossfade, with a dirty check. See `docs/engine/moving-walls.md`.
 
 ### Measured performance (see §11)
 - Image-source solve: **0.03–1.4 ms** (cheap).

@@ -124,6 +124,28 @@ is fully tested above.
 — move a source past the listener and confirm the audible approach-high/recede-low
 sweep, and that changing the speed of sound shifts arrival lag and Doppler strength.
 
+## Listener motion
+
+Doppler depends only on the **relative** radial velocity between source and listener,
+so a *listener* walking toward a static beacon must Doppler exactly as a beacon moving
+toward a static listener would. This falls out of the design for free: the delay is
+`source-to-listener distance / c`, and `HrtfSource.setPosition` measures that distance
+against the *current* listener pose. So when `setListener()` updates the pose and the
+source is repositioned, the delay changes and the delay line resamples — listener-motion
+Doppler with no extra velocity term. (This is a concrete advantage of the delay-line
+approach over a computed-detune one, which would have needed an explicit listener-velocity
+term.)
+
+**Caveat — it is quantized to the step cadence.** The game refreshes the listener pose
+and beacon position in `Game.syncListener()`, which runs on each **footstep and turn**,
+not every animation frame. So the listener's position advances in discrete jumps between
+footfalls; each jump becomes a ~50 ms delay glide (the `setTargetAtTime` smoothing), i.e.
+a short Doppler *chirp per step* rather than the sustained shift a continuously gliding
+listener would produce. This is intended — it matches the game's step-based movement
+mechanic. If smooth listener Doppler is ever wanted (e.g. a glide control, or monsters
+chasing), refresh source positions every frame from the audio/render loop instead of only
+on step/turn; that is a deliberate gameplay-feel change, left as a future lever.
+
 ## Limitations
 
 - **Teleporting a source** (large instantaneous position jump) makes `delayTime`
