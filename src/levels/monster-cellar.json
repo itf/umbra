@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Monster Cellar",
+  "open": false,
+  "room": { "width": 12, "depth": 20, "height": 3 },
+  "roomMaterial": "rough_stone",
+  "floorMaterial": "gravel",
+  "hasCeiling": true,
+  "ceilingMaterial": "rough_stone",
+  "start": { "x": 6, "z": 18.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 6, "z": 1.5, "freq": 440, "goalRadius": 0.9, "sound": "musicbox" }
+  ],
+  "walls": [],
+  "floors": [
+    { "id": "f-quiet-1", "x": 0.5, "z": 13, "w": 4, "d": 5, "material": "carpet" },
+    { "id": "f-quiet-2", "x": 7.5, "z": 6, "w": 4, "d": 5, "material": "carpet" }
+  ],
+  "ceilings": [],
+  "monsters": [
+    { "id": "m1", "x": 6, "z": 8, "speed": 0.7, "sound": "growl" }
+  ]
+}

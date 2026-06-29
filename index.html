@@ -20,8 +20,18 @@
       <div id="status" class="sr-region" aria-live="polite" aria-atomic="true"></div>
       <div id="alerts" class="sr-region" role="alert" aria-live="assertive"></div>
 
-      <section id="start-screen" aria-label="Start">
+      <!-- Level picker: shown first (unless ?level=… preselects one). Pick a
+           level, then the Begin screen appears. Eyes-free: real buttons with
+           descriptive labels under headings. -->
+      <section id="picker-screen" aria-label="Choose a level">
         <h1>Audio Navigator</h1>
+        <p>Choose a level to play. Put on headphones first.</p>
+        <div id="level-picker" aria-label="Level list"></div>
+      </section>
+
+      <section id="start-screen" aria-label="Start" hidden>
+        <h1>Audio Navigator</h1>
+        <p id="start-level-name" class="start-level"></p>
         <p>
           Put on headphones. Close your eyes. Walk to the beacon by sound alone.
           Tap <strong>left</strong> and <strong>right</strong> to step — alternate
@@ -31,6 +41,7 @@
         </p>
         <p class="hint">Keyboard: A = left step, L = right step, ← → = turn.</p>
         <button id="start-button" class="primary">Begin (enable sound)</button>
+        <button id="back-to-picker" class="secondary">Choose a different level</button>
       </section>
 
       <section id="game-screen" hidden aria-label="Game">

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "Carpeted Lounge (Dead)",
+  "open": false,
+  "room": { "width": 8, "depth": 10, "height": 3 },
+  "roomMaterial": "curtain",
+  "floorMaterial": "carpet",
+  "hasCeiling": true,
+  "ceilingMaterial": "acoustic_foam",
+  "start": { "x": 4, "z": 8.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 4, "z": 1.5, "freq": 392, "goalRadius": 0.8, "sound": "hum" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

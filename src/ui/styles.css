@@ -59,6 +59,22 @@ button {
 button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 .primary { background: var(--accent); color: #000; padding: 16px 24px; font-weight: 700; }
+.secondary { background: transparent; border: 1px solid #555; color: #ccc; padding: 12px 20px; margin-top: 12px; }
+
+/* --- Level picker --- */
+#level-picker { width: 100%; max-width: 560px; text-align: left; }
+.picker-group { margin: 8px 0 20px; }
+.picker-group h2 { font-size: 1rem; color: #aaa; margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.05em; }
+.picker-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.picker-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  width: 100%; text-align: left; padding: 14px 16px; background: #1a1a1a;
+  border: 1px solid #333; border-radius: 12px; min-height: var(--touch);
+}
+.picker-item:hover { background: #242424; }
+.picker-title { font-weight: 700; font-size: 1.05rem; color: #fff; }
+.picker-desc { font-size: 0.85rem; color: #999; }
+.start-level { color: var(--accent); font-weight: 700; }
 
 /* When the game is active, let it own the whole viewport (override #app centering). */
 #app:has(#game-screen:not([hidden])) { justify-content: stretch; align-items: stretch; }

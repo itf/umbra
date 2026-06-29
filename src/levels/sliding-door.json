@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "The Sliding Door",
+  "open": false,
+  "room": { "width": 10, "depth": 14, "height": 3 },
+  "roomMaterial": "brick",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 5, "z": 12.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 5, "z": 1.5, "freq": 523, "goalRadius": 0.8, "sound": "bell" }
+  ],
+  "walls": [
+    {
+      "id": "wall-mid",
+      "ax": 0, "az": 7, "bx": 10, "bz": 7,
+      "material": "wood",
+      "motion": { "kind": "slide", "openFraction": 0.6, "period": 6 }
+    }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

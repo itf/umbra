@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "Cathedral Alcove",
+  "open": false,
+  "room": { "width": 12, "depth": 18, "height": 9 },
+  "roomMaterial": "marble",
+  "floorMaterial": "marble",
+  "hasCeiling": true,
+  "ceilingMaterial": "marble",
+  "start": { "x": 6, "z": 16, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 6, "z": 2.5, "freq": 466, "goalRadius": 0.8, "sound": "bell" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [
+    { "id": "c-alcove", "x": 3, "z": 0.5, "w": 6, "d": 5, "height": 2.4, "material": "wood" }
+  ],
+  "monsters": []
+}

@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "name": "Open Street",
+  "open": true,
+  "room": {
+    "width": 30,
+    "depth": 36,
+    "height": 6
+  },
+  "roomMaterial": "brick",
+  "floorMaterial": "asphalt",
+  "hasCeiling": false,
+  "ceilingMaterial": "brick",
+  "start": {
+    "x": 15,
+    "z": 33,
+    "yaw": 0
+  },
+  "beacons": [
+    {
+      "id": "b1",
+      "x": 15,
+      "z": 3,
+      "freq": 440,
+      "goalRadius": 1.0,
+      "sound": "bell"
+    }
+  ],
+  "walls": [
+    {
+      "id": "bldg-1a",
+      "ax": 6,
+      "az": 12,
+      "bx": 12,
+      "bz": 12,
+      "material": "brick"
+    },
+    {
+      "id": "bldg-1b",
+      "ax": 12,
+      "az": 12,
+      "bx": 12,
+      "bz": 20,
+      "material": "brick"
+    },
+    {
+      "id": "bldg-1c",
+      "ax": 12,
+      "az": 20,
+      "bx": 6,
+      "bz": 20,
+      "material": "brick"
+    },
+    {
+      "id": "bldg-1d",
+      "ax": 6,
+      "az": 20,
+      "bx": 6,
+      "bz": 12,
+      "material": "brick"
+    },
+    {
+      "id": "bldg-2a",
+      "ax": 18,
+      "az": 16,
+      "bx": 24,
+      "bz": 16,
+      "material": "concrete"
+    },
+    {
+      "id": "bldg-2b",
+      "ax": 24,
+      "az": 16,
+      "bx": 24,
+      "bz": 24,
+      "material": "concrete"
+    },
+    {
+      "id": "bldg-2c",
+      "ax": 24,
+      "az": 24,
+      "bx": 18,
+      "bz": 24,
+      "material": "concrete"
+    },
+    {
+      "id": "bldg-2d",
+      "ax": 18,
+      "az": 24,
+      "bx": 18,
+      "bz": 16,
+      "material": "concrete"
+    },
+    {
+      "id": "barrier-1",
+      "ax": 10,
+      "az": 18,
+      "bx": 18,
+      "bz": 18,
+      "material": "concrete"
+    }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

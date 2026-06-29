@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "name": "Small Concrete Cell",
+  "open": false,
+  "room": { "width": 4, "depth": 5, "height": 2.6 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 2, "z": 4.2, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 2, "z": 0.8, "freq": 440, "goalRadius": 0.7, "sound": "tone" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

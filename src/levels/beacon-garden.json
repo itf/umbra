@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "Beacon Garden",
+  "open": false,
+  "room": { "width": 14, "depth": 16, "height": 4 },
+  "roomMaterial": "plaster",
+  "floorMaterial": "parquet",
+  "hasCeiling": true,
+  "ceilingMaterial": "plaster",
+  "start": { "x": 7, "z": 14, "yaw": 0 },
+  "beacons": [
+    { "id": "b-musicbox", "x": 7, "z": 2, "freq": 523, "goalRadius": 0.8, "sound": "musicbox" },
+    { "id": "b-bell", "x": 2, "z": 8, "freq": 392, "goalRadius": 0.8, "sound": "bell" },
+    { "id": "b-drip", "x": 12, "z": 8, "freq": 660, "goalRadius": 0.8, "sound": "drip" },
+    { "id": "b-hum", "x": 7, "z": 11, "freq": 196, "goalRadius": 0.8, "sound": "hum" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

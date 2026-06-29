@@ -7,15 +7,21 @@ import type { WallDef, EdgeDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
 import { Heading } from './game/heading';
 import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
+import { getBuiltin, builtinLevels } from './level/builtins';
+import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
+import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
 const statusEl = document.getElementById('status')!;
 const alertsEl = document.getElementById('alerts')!;
+const pickerScreen = document.getElementById('picker-screen')!;
 const startScreen = document.getElementById('start-screen')!;
 const gameScreen = document.getElementById('game-screen')!;
 const startButton = document.getElementById('start-button') as HTMLButtonElement;
+const backButton = document.getElementById('back-to-picker') as HTMLButtonElement | null;
+const startLevelName = document.getElementById('start-level-name');
 
 function say(msg: string) {
   statusEl.textContent = msg;
@@ -46,17 +52,92 @@ let HAS_MOVING_WALLS = false;
 // started twice (a duplicate loop would double the rebuild rate).
 let liveRafId: number | null = null;
 
-if (new URLSearchParams(location.search).get('level') === 'current') {
-  const edited = currentEditorLevel();
-  if (edited) {
-    const loaded = loadLevel(edited);
-    LEVEL = loaded.game;
-    ROOM = loaded.roomSize;
-    WALLS = loaded.walls;
-    EDGES = loaded.edges;
-    SCATTER = loaded.scattering;
-    SRC_LEVEL = loaded.level;
-    HAS_MOVING_WALLS = loaded.hasMovingWalls;
+/**
+ * Apply a chosen Level to the module-level game state. Called when a level is
+ * picked (or preselected via ?level=…), BEFORE the Begin gesture — Begin still
+ * owns the user-gesture-to-start-audio step.
+ */
+function applyLevel(level: Level, displayName: string) {
+  const loaded = loadLevel(level);
+  LEVEL = loaded.game;
+  ROOM = loaded.roomSize;
+  WALLS = loaded.walls;
+  EDGES = loaded.edges;
+  SCATTER = loaded.scattering;
+  SRC_LEVEL = loaded.level;
+  HAS_MOVING_WALLS = loaded.hasMovingWalls;
+  if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
+}
+
+/** Reveal the Begin screen for a chosen level (hides the picker). */
+function showStartScreen() {
+  pickerScreen.hidden = true;
+  startScreen.hidden = false;
+  startButton.disabled = false;
+  startButton.focus();
+}
+
+/** Show the picker (the default entry point), hiding the Begin screen. */
+function showPicker() {
+  startScreen.hidden = true;
+  pickerScreen.hidden = false;
+}
+
+/** Resolve a picker selection (builtin id or saved name) to a Level. */
+async function resolveSelection(sel: PickerSelection): Promise<Level | undefined> {
+  if (sel.source === 'builtin') return getBuiltin(sel.ref);
+  return loadSavedLevel(sel.ref);
+}
+
+async function mountPicker() {
+  const host = document.getElementById('level-picker');
+  if (!host) return;
+  let saved: string[] = [];
+  try {
+    saved = await listLevels();
+  } catch {
+    saved = []; // IndexedDB unavailable (e.g. private mode) — just show builtins.
+  }
+  renderLevelPicker(host, {
+    builtins: builtinLevels(),
+    savedNames: saved,
+    onSelect: async (sel) => {
+      const level = await resolveSelection(sel);
+      if (!level) {
+        alert(`Could not load "${sel.label}".`);
+        return;
+      }
+      applyLevel(level, sel.label);
+      showStartScreen();
+    },
+  });
+}
+
+backButton?.addEventListener('click', showPicker);
+
+// Entry point. `?level=current` loads the editor's working level; `?level=<id>`
+// loads a bundled demo; otherwise show the picker. A preselected level jumps
+// straight to the Begin screen (the audio still waits for the Begin gesture).
+{
+  const param = new URLSearchParams(location.search).get('level');
+  if (param === 'current') {
+    const edited = currentEditorLevel();
+    if (edited) {
+      applyLevel(edited, edited.name || 'Editor level');
+      showStartScreen();
+    } else {
+      void mountPicker();
+    }
+  } else if (param) {
+    const builtin = getBuiltin(param);
+    if (builtin) {
+      applyLevel(builtin, builtin.name);
+      showStartScreen();
+    } else {
+      void mountPicker(); // unknown id → fall back to the picker
+    }
+  } else {
+    void mountPicker();
   }
 }
 
