@@ -49,13 +49,14 @@ the loop and tear down oscillators / the interval.
 
 ## Custom audio file
 
-If `BeaconObj.soundUrl` is set, the game fetches → `decodeAudioData` → caches the
-buffer (a static `Map` keyed by URL, mirroring the recorded-sample path in
-`footsteps.ts`), then loops it through the *same* `HrtfSource`. While the file is
+If `BeaconObj.soundUrl` is set, the game loops that recording through the *same*
+`HrtfSource` instead of the synth preset, via the shared
+[custom-audio helper](./custom-audio.md) (`attachCustomLoop`). While the file is
 loading the chosen synth preset plays as an immediate fallback; when the buffer
-arrives it swaps to the looped audio. If the fetch/decode fails, the URL is cached
-as failed and the synth preset simply remains. So a custom URL never leaves the
-beacon silent.
+arrives it swaps to the looped audio. If the fetch/decode fails, the synth preset
+simply remains. So a custom URL never leaves the beacon silent. The helper is the
+generic, reusable fetch + decode + cache + loop + fallback path (also used by
+monsters and any future object) — see that doc for the full semantics.
 
 ## Schema + back-compat
 

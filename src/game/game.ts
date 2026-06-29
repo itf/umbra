@@ -19,6 +19,7 @@ import {
   type MonsterState,
 } from './monster';
 import { MonsterVoice, resolveMonsterPreset } from './monsterSounds';
+import { attachCustomLoop } from './customAudio';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -31,6 +32,8 @@ export interface FloorRegion {
 /** A monster placement for the chase AI (position + speed + sound label). */
 export interface MonsterSpawn {
   x: number; z: number; speed: number; sound: string;
+  /** Optional custom audio file looped through the monster's HRTF source. */
+  soundUrl?: string;
 }
 
 export interface GameLevel {
@@ -81,8 +84,6 @@ export class Game {
   private beaconVoice: BeaconVoice | null = null;
   /** Looping custom-audio source, when `soundUrl` loaded successfully. */
   private beaconCustom: AudioBufferSourceNode | null = null;
-  /** Cache of decoded custom-audio buffers, keyed by url. */
-  private static customCache = new Map<string, AudioBuffer | null>();
   private headHeight: number;
   private won = false;
   private caught = false;
@@ -92,7 +93,16 @@ export class Game {
    * chasing monster Dopplers/glides as it nears. Empty (and zero per-frame cost)
    * when the level has no monsters. See docs/engine/monster-chase.md.
    */
-  private monsters: { state: MonsterState; src: HrtfSource; voice: MonsterVoice }[] = [];
+  private monsters: {
+    state: MonsterState;
+    src: HrtfSource;
+    /** The synth growl/hum voice. Stopped + nulled once a custom loop takes over. */
+    voice: MonsterVoice | null;
+    /** Looping custom-audio source, when this monster's `soundUrl` loaded. */
+    custom: AudioBufferSourceNode | null;
+  }[] = [];
+  /** True once the game has ended, to veto late-arriving custom-audio loops. */
+  private get ended() { return this.won || this.caught; }
   /** ms timestamp of the previous tick, for per-frame dt. */
   private lastTickMs: number | null = null;
   /**
@@ -139,10 +149,30 @@ export class Game {
     for (const m of level.monsters ?? []) {
       const src = renderer.createSource();
       src.output.connect(graph.master);
+      // Start the synth voice immediately so the monster is never silent. If a
+      // `soundUrl` is set, the shared helper loops that recording through the SAME
+      // HrtfSource (so it spatializes / Dopplers as the monster chases) and we swap
+      // to it when it arrives; on failure/no-url the synth growl/hum stays.
       const voice = new MonsterVoice(this.graph.ctx, src.input, resolveMonsterPreset(m.sound));
       voice.start();
       src.setPosition(m.x, this.headHeight, m.z);
-      this.monsters.push({ state: makeMonster(m.x, m.z, m.speed), src, voice });
+      const entry: (typeof this.monsters)[number] =
+        { state: makeMonster(m.x, m.z, m.speed), src, voice, custom: null };
+      this.monsters.push(entry);
+      if (m.soundUrl) {
+        void attachCustomLoop(
+          this.graph.ctx,
+          src.input,
+          m.soundUrl,
+          () => { /* keep the synth growl/hum already running */ },
+          { shouldStart: () => !this.ended && entry.custom == null },
+        ).then((handle) => {
+          if (!handle.source) return;
+          entry.voice?.stop();
+          entry.voice = null;
+          entry.custom = handle.source;
+        });
+      }
     }
 
     this.syncListener();
@@ -154,13 +184,27 @@ export class Game {
    * chosen synth preset (default 'tone'). Both feed `this.beacon.input`.
    */
   private startBeaconSource() {
-    const url = this.level.beacon.soundUrl;
-    if (url) {
-      this.playCustomBeacon(url);
-      // While the custom file loads, run the synth preset as an immediate
-      // fallback; if/when the buffer arrives, we swap to it.
-    }
+    // Always start the synth preset immediately so the beacon is never silent.
+    // If a custom `soundUrl` is set, the shared helper loads + loops it through the
+    // SAME HrtfSource and we swap to it when it arrives; on failure the synth stays.
     this.startSynthBeacon();
+    const url = this.level.beacon.soundUrl;
+    if (!url) return;
+    // onFallback is a no-op here: the synth is already playing as the fallback.
+    // shouldStart vetoes a late buffer if the beacon was won (and faded) meanwhile.
+    void attachCustomLoop(
+      this.graph.ctx,
+      this.beacon.input,
+      url,
+      () => { /* keep the synth fallback already running */ },
+      { shouldStart: () => !this.won && this.beaconCustom == null },
+    ).then((handle) => {
+      if (!handle.source) return;
+      // Swap: the custom loop is now playing, stop the synth preset.
+      this.beaconVoice?.stop();
+      this.beaconVoice = null;
+      this.beaconCustom = handle.source;
+    });
   }
 
   /** Start (or restart) the synthesized preset voice. */
@@ -169,36 +213,6 @@ export class Game {
     this.beaconVoice?.stop();
     this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beacon.input, preset, this.level.beacon.freq);
     this.beaconVoice.start();
-  }
-
-  /** Fetch + decode (cached) the custom audio and loop it through the beacon. */
-  private playCustomBeacon(url: string) {
-    const cached = Game.customCache.get(url);
-    if (cached) { this.swapToCustom(cached); return; }
-    if (cached === null) return; // known-failed; stick with synth
-    if (Game.customCache.has(url)) return; // in flight
-    Game.customCache.set(url, null); // mark in-flight / failed-until-resolved
-    fetch(url)
-      .then((r) => r.arrayBuffer())
-      .then((b) => this.graph.ctx.decodeAudioData(b))
-      .then((buf) => {
-        Game.customCache.set(url, buf);
-        if (!this.won) this.swapToCustom(buf);
-      })
-      .catch(() => { Game.customCache.set(url, null); /* keep the synth fallback */ });
-  }
-
-  /** Replace the synth voice with a looped custom buffer. */
-  private swapToCustom(buf: AudioBuffer) {
-    if (this.beaconCustom) return; // already swapped
-    this.beaconVoice?.stop();
-    this.beaconVoice = null;
-    const src = this.graph.ctx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    src.connect(this.beacon.input);
-    src.start();
-    this.beaconCustom = src;
   }
 
   /**
@@ -387,7 +401,11 @@ export class Game {
     }
     this.beacon.disconnect();
     for (const m of this.monsters) {
-      m.voice.stop();
+      m.voice?.stop();
+      if (m.custom) {
+        try { m.custom.stop(); } catch { /* already stopped */ }
+        m.custom = null;
+      }
       m.src.disconnect();
     }
     this.monsters = [];

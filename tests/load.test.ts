@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { emptyLevel } from '../src/level/schema';
+import { emptyLevel, isLevel, type Level } from '../src/level/schema';
 import { loadLevel } from '../src/level/load';
 
 describe('level → game geometry', () => {
@@ -94,12 +94,34 @@ describe('level → game geometry', () => {
     const lvl = emptyLevel();
     lvl.monsters = [{ id: 'm1', x: 3, z: 4, speed: 1.5, sound: 'growl' }];
     const { game } = loadLevel(lvl);
-    expect(game.monsters).toEqual([{ x: 3, z: 4, speed: 1.5, sound: 'growl' }]);
+    expect(game.monsters).toEqual([{ x: 3, z: 4, speed: 1.5, sound: 'growl', soundUrl: undefined }]);
+  });
+
+  it('plumbs a monster soundUrl through to GameLevel', () => {
+    const lvl = emptyLevel();
+    lvl.monsters = [{ id: 'm1', x: 3, z: 4, speed: 1.5, sound: 'hum', soundUrl: 'sounds/beast.mp3' }];
+    const { game } = loadLevel(lvl);
+    expect(game.monsters?.[0].soundUrl).toBe('sounds/beast.mp3');
   });
 
   it('a no-monster level yields an empty monster list (inert)', () => {
     const { game } = loadLevel(emptyLevel());
     expect(game.monsters).toEqual([]);
+  });
+
+  it('a monster with soundUrl round-trips through JSON + isLevel', () => {
+    const lvl = emptyLevel();
+    lvl.monsters = [{ id: 'm1', x: 1, z: 2, speed: 1, sound: 'growl', soundUrl: 'sounds/beast.mp3' }];
+    const round = JSON.parse(JSON.stringify(lvl)) as Level;
+    expect(isLevel(round)).toBe(true);
+    expect(round.monsters[0].soundUrl).toBe('sounds/beast.mp3');
+  });
+
+  it('an old monster without soundUrl still passes isLevel (synth voice)', () => {
+    const lvl = emptyLevel();
+    lvl.monsters = [{ id: 'm1', x: 1, z: 2, speed: 1, sound: 'growl' }];
+    expect(isLevel(lvl)).toBe(true);
+    expect(lvl.monsters[0].soundUrl).toBeUndefined();
   });
 
   it('reports a representative scattering coefficient', () => {

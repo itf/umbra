@@ -100,12 +100,23 @@ shrinks the source-to-listener distance every frame and the growl **pitches up**
 a free, physically-correct "it's gaining on you" cue. A monster that gives up and
 recedes pitches down.
 
+## Custom audio file
+
+A monster may set an optional `MonsterObj.soundUrl`: a recorded file looped through
+the monster's `HrtfSource` instead of the synth `MonsterVoice`, so it spatializes
+and **Dopplers as it chases** just like the synth. It uses the shared
+[custom-audio helper](./custom-audio.md) (`attachCustomLoop`): the synth voice
+(`growl`/`hum`) starts immediately as the fallback, and the loop swaps in if/when it
+loads; on failure or no URL the synth stays. The one-shot **catch roar stays the
+synth roar** (`MonsterVoice.roar`) regardless.
+
 ## Wiring
 
-- **`schema.ts`** — `MonsterObj { id, x, z, speed, sound }` (unchanged) on
-  `Level.monsters`.
+- **`schema.ts`** — `MonsterObj { id, x, z, speed, sound, soundUrl? }` on
+  `Level.monsters` (the optional `soundUrl` is the only addition; old monsters
+  without it stay valid and use the synth voice).
 - **`load.ts`** — `loadLevel` now maps `level.monsters` into
-  `GameLevel.monsters: MonsterSpawn[]` (`{ x, z, speed, sound }`). A no-monster
+  `GameLevel.monsters: MonsterSpawn[]` (`{ x, z, speed, sound, soundUrl? }`). A no-monster
   level yields `[]` — inert.
 - **`game.ts`** — constructor builds one `Monster` state + `HrtfSource` + started
   `MonsterVoice` per spawn (none ⇒ no work). `tick(nowMs)` computes per-frame `dt`,

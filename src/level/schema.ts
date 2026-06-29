@@ -141,6 +141,12 @@ export interface MonsterObj {
   speed: number;
   /** A short label / sound id for the monster's noise. */
   sound: string;
+  /**
+   * Optional custom audio file. If set and it loads, it's looped through the
+   * monster's HRTF source instead of the synth voice (falling back to the synth
+   * `sound` if the fetch fails). Mirrors BeaconObj.soundUrl.
+   */
+  soundUrl?: string;
 }
 
 export interface Level {
