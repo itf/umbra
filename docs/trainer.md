@@ -69,9 +69,22 @@ and lateral localization.
 - **Difficulty** is a 0..1 knob: 0 = big, obvious contrast; 1 = subtle. It scales
   the size factor (≈1.8× easy → ≈1.15–1.2× hard) and, for direction, how close to
   a quadrant boundary the source may sit.
-- A simple **streak progression** raises difficulty as you answer correctly
-  (`difficulty = min(1, streak·0.12)`) and resets on a miss — contrast shrinks as
-  you improve.
+- **Adaptive staircase (default).** The old streak ramp (`min(1, streak·0.12)`,
+  reset on any miss) was punitive and crude. It is replaced by a transformed
+  **2-down/1-up adaptive staircase** (`src/trainer/adaptive.ts`) that parks the
+  learner at their discrimination **threshold**: difficulty steps UP after two
+  correct in a row, DOWN after a single miss, with the step **halving at each
+  reversal** so it converges. After each answer the controller calls
+  `staircase.record(correct)` and uses `staircase.current()` for the NEXT question.
+  See `docs/engine/adaptive-trainer.md` for the rule, convergence, and the mastery
+  readout.
+- **Fixed mode (override).** The page's *Difficulty* picker offers
+  *Adaptive* (default) or a fixed level (easy…expert). In fixed mode the staircase
+  is not driven, so you can practice at one contrast.
+- **Eyes-free progress.** The aria-live region announces the current level **band**
+  (easy/moderate/firm/hard/expert) after each answer, and at reversals (or once the
+  estimate has settled) a mastery readout: *"you're discriminating at about 70% of
+  full difficulty."*
 
 ## Determinism
 
@@ -106,6 +119,9 @@ testable without Web Audio.
 ## Files
 
 - `src/trainer/exercises.ts` — pure generator (the correctness heart).
+- `src/trainer/adaptive.ts` — pure adaptive staircase (threshold tracking).
 - `src/trainer/trainer.ts` — page controller (reuses `ScenePlayer`).
 - `trainer.html` — eyes-free UI.
 - `tests/exercises.test.ts` — fairness/correctness/determinism tests.
+- `tests/adaptive.test.ts` — staircase rule/convergence/determinism tests.
+- `docs/engine/adaptive-trainer.md` — the staircase design in depth.

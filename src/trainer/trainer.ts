@@ -21,6 +21,7 @@ import {
   type Question,
   type ExerciseType,
 } from './exercises';
+import { Staircase, difficultyBand } from './adaptive';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 const $ = (id: string) => document.getElementById(id)!;
@@ -30,18 +31,31 @@ let current: Question | null = null;
 let answered = false;
 let score = 0;
 let asked = 0;
-let streak = 0;
 let seedCounter = (Math.random() * 1e9) | 0;
 /** Which room is currently loaded into the shared player, for A/B replay. */
 let loadedRoom: 'A' | 'B' | null = null;
+
+/**
+ * Adaptive staircase (default mode). 2-down/1-up: harder after 2 in a row right,
+ * easier after one miss, step halving at reversals → parks the learner at their
+ * discrimination threshold. The manual "Fixed — …" picker overrides it.
+ */
+const staircase = new Staircase();
 
 function announce(msg: string) {
   ($('live') as HTMLElement).textContent = msg;
 }
 
-/** Difficulty grows with the streak (contrast shrinks): easy -> subtle. */
+/** Read the difficulty-mode picker: 'adaptive' or a fixed numeric string. */
+function fixedDifficulty(): number | null {
+  const v = ($('difficulty-mode') as HTMLSelectElement).value;
+  return v === 'adaptive' ? null : Number(v);
+}
+
+/** Difficulty for the NEXT question: the staircase's, unless fixed-mode overrides. */
 function difficulty(): number {
-  return Math.min(1, streak * 0.12);
+  const fixed = fixedDifficulty();
+  return fixed === null ? staircase.current() : fixed;
 }
 
 /** A user-picked File decoded once and reused as a probe buffer. */
@@ -147,12 +161,14 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   if (!current || answered) return;
   answered = true;
   const correct = choice === current.correctAnswer;
-  if (correct) {
-    score++;
-    streak++;
-  } else {
-    streak = 0;
-  }
+  if (correct) score++;
+
+  // Drive the adaptive staircase only in adaptive mode (so fixed practice at a
+  // level doesn't perturb the threshold tracker).
+  const adaptive = fixedDifficulty() === null;
+  const reversalsBefore = staircase.reversals;
+  if (adaptive) staircase.record(correct);
+  const reversal = adaptive && staircase.reversals > reversalsBefore;
 
   for (const el of Array.from($('answers').children) as HTMLButtonElement[]) {
     el.disabled = true;
@@ -163,10 +179,24 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   const verdict = correct
     ? 'Correct.'
     : `Incorrect. The answer was ${current.correctAnswer}.`;
+
+  // Eyes-free progress cue: the level band, and at reversals / settled, a mastery
+  // readout ("discriminating at ~70% of full difficulty").
+  let progress = '';
+  if (adaptive) {
+    progress = ` Level ${difficultyBand(staircase.current())}.`;
+    if (reversal || staircase.settled) {
+      const pct = Math.round(staircase.threshold() * 100);
+      progress += ` You're discriminating at about ${pct}% of full difficulty.`;
+    }
+  } else {
+    progress = ` Fixed level ${difficultyBand(difficulty())}.`;
+  }
+
   ($('feedback') as HTMLElement).textContent = verdict;
   ($('score') as HTMLElement).textContent = `Score ${score} / ${asked}`;
   ($('next') as HTMLButtonElement).disabled = false;
-  announce(`${verdict} Score ${score} of ${asked}. Press Next to continue.`);
+  announce(`${verdict} Score ${score} of ${asked}.${progress} Press Next to continue.`);
   ($('next') as HTMLButtonElement).focus();
 }
 
