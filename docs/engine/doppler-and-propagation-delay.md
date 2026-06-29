@@ -136,15 +136,16 @@ Doppler with no extra velocity term. (This is a concrete advantage of the delay-
 approach over a computed-detune one, which would have needed an explicit listener-velocity
 term.)
 
-**Caveat — it is quantized to the step cadence.** The game refreshes the listener pose
-and beacon position in `Game.syncListener()`, which runs on each **footstep and turn**,
-not every animation frame. So the listener's position advances in discrete jumps between
-footfalls; each jump becomes a ~50 ms delay glide (the `setTargetAtTime` smoothing), i.e.
-a short Doppler *chirp per step* rather than the sustained shift a continuously gliding
-listener would produce. This is intended — it matches the game's step-based movement
-mechanic. If smooth listener Doppler is ever wanted (e.g. a glide control, or monsters
-chasing), refresh source positions every frame from the audio/render loop instead of only
-on step/turn; that is a deliberate gameplay-feel change, left as a future lever.
+**Now smoothed by the audio-only listener glide.** The *logical* player position
+still advances in discrete steps (the step mechanic is unchanged), but the **audio
+listener** is interpolated from the old position to the new over a short window
+(`STEP_GLIDE_MS`, eased), driven every animation frame. So the source-to-listener
+distance changes smoothly between footfalls and the delay line resamples it into a
+smooth Doppler **chirp** rather than an instant per-step jump — exactly the
+"continuously gliding listener" this section previously left as a future lever.
+This is audio-only: win/collision/clap still use the logical position. See
+[listener-glide.md](./listener-glide.md) for the duration/easing choice, the
+mid-glide retarget handling, and the logical-vs-audio-pose split.
 
 ## Limitations
 

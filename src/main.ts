@@ -118,6 +118,9 @@ startButton.addEventListener('click', async () => {
     // player settles (idle ~1.4s) BOTH feet appear so either can lead. Polled so
     // the time-based settle transition happens on its own.
     const footLoop = () => {
+      // Advance the audio-only listener glide each frame (no-op when idle), so the
+      // HRTF listener + beacon sweep smoothly between footfalls instead of teleporting.
+      game.tick();
       updateFeet(game);
       requestAnimationFrame(footLoop);
     };

@@ -8,6 +8,7 @@ import type { AudioGraph } from '../engine/audioGraph';
 import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
 import { Footsteps } from './footsteps';
+import { ListenerGlide, type AudioPose } from './listenerGlide';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -51,6 +52,14 @@ export class Game {
   private beaconLfo: OscillatorNode;
   private headHeight: number;
   private won = false;
+  /**
+   * Audio-only listener glide. The HRTF listener + beacon follow this smoothly
+   * interpolated pose across a step window; the LOGICAL player position (used for
+   * win/collision/clap) is untouched. See docs/engine/listener-glide.md.
+   */
+  private glide: ListenerGlide;
+  /** Current yaw used for the audio pose (kept separate so the glide carries x/z only). */
+  private audioYaw: number;
 
   constructor(
     graph: AudioGraph,
@@ -66,6 +75,13 @@ export class Game {
     this.headHeight = level.headHeight ?? 1.6;
     this.player = new Player({ x: level.start.x, z: level.start.z, yaw: level.start.yaw }, stepCfg);
     this.footsteps = new Footsteps(graph, renderer);
+    this.audioYaw = level.start.yaw;
+    // The glide sink applies an interpolated x/z (with the current audioYaw) to the
+    // HRTF listener and repositions the beacon — the actual per-frame audio update.
+    this.glide = new ListenerGlide(
+      { x: level.start.x, z: level.start.z },
+      (pose) => this.applyAudioPose(pose),
+    );
 
     // Beacon: a pulsed tone at the goal, so it's easy to localize and home in on.
     const ctx = graph.ctx;
@@ -88,19 +104,51 @@ export class Game {
     this.syncListener();
   }
 
-  /** Update the listener pose from player position + heading, reposition beacon. */
+  /**
+   * Apply an audio pose (interpolated x/z + the current audioYaw) to the HRTF
+   * listener and reposition the beacon. This is the per-frame audio update driven
+   * by the glide sink; it does NOT touch progress/win (those use the logical pose).
+   */
+  private applyAudioPose(pose: AudioPose) {
+    this.renderer.setListener({ x: pose.x, y: this.headHeight, z: pose.z, yaw: this.audioYaw });
+    this.beacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
+  }
+
+  /**
+   * Snap the audio listener immediately to the LOGICAL player position (no glide).
+   * For callers that change the pose without a step (yaw turn, wall bump) so the
+   * audio reflects it at once.
+   */
   private syncListener() {
     const s = this.player.state;
-    this.renderer.setListener({ x: s.x, y: this.headHeight, z: s.z, yaw: s.yaw });
-    this.beacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
+    this.audioYaw = s.yaw;
+    this.glide.snap({ x: s.x, z: s.z });
+    this.reportProgress();
+  }
+
+  /** Report closing distance from the LOGICAL position (never the mid-glide pose). */
+  private reportProgress() {
     const d = this.player.distanceTo(this.level.beacon.x, this.level.beacon.z);
     this.cb.onProgress?.(d);
   }
 
-  /** Turn the player's head (radians). */
+  /**
+   * Advance the active audio glide. Driven once per animation frame from the host
+   * loop (main.ts). A no-op when no glide is running, so it never thrashes
+   * AudioParams while idle.
+   */
+  tick(nowMs = this.graph.ctx.currentTime * 1000) {
+    this.glide.tick(nowMs);
+  }
+
+  /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */
   setYaw(yaw: number) {
     this.player.setYaw(yaw);
-    this.syncListener();
+    this.audioYaw = yaw;
+    // Re-apply at the current audio pose so the new yaw takes effect at once,
+    // whether or not a position glide is in flight.
+    this.applyAudioPose(this.glide.current);
+    this.reportProgress();
   }
 
   /** Take a step with the given foot at time nowMs (default: audio clock). */
@@ -126,7 +174,13 @@ export class Game {
       if (result.outcome.settled) this.footsteps.feetTogether();
       this.footsteps.step(result.outcome.foot, this.floorMaterialAt(s.x, s.z));
       this.cb.onStep?.(result.outcome.foot, result.outcome.stride);
-      this.syncListener();
+      // AUDIO-ONLY glide: sweep the audio listener from where it currently IS
+      // (the glide's current pose — so a step landing mid-glide retargets without
+      // snapping back to `before`) toward the new logical position over the step
+      // window. Win/progress still use the logical (final) position.
+      this.audioYaw = s.yaw;
+      this.glide.start(this.glide.current, { x: s.x, z: s.z }, nowMs);
+      this.reportProgress();
       this.checkWin();
     } else {
       this.footsteps.stumble();
