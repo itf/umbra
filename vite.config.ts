@@ -51,6 +51,15 @@ export default defineConfig({
   worker: {
     format: 'es',
   },
+  // Steam Audio (three-steam-audio) ships a worklet + worker + WASM that reference
+  // sibling files via `new URL(..., import.meta.url)`. Vite's dep pre-bundler rewrites
+  // those paths and breaks them (the worklet's transitive `import` and the WASM URL
+  // resolve to index.html → "Unable to load a worklet's module" / bad WASM magic).
+  // Excluding it from optimization keeps the package's own relative dist layout intact
+  // so the worklet/worker/WASM load correctly. Only fetched on the ?engine=steam path.
+  optimizeDeps: {
+    exclude: ['three-steam-audio'],
+  },
   build: {
     rollupOptions: {
       // Multi-page: the app shell + the audio debug view.
