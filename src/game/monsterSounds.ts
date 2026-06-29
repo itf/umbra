@@ -56,17 +56,79 @@ export class MonsterVoice {
       this.oscillators.push(osc);
     }
 
-    // Slow "breathing" amplitude pulse (~0.7 Hz) so the drone heaves like something
-    // alive — and makes onset/offset obvious as it moves.
+    // GRITTY GROWL: a fast amplitude flutter (~22 Hz) gives the drone a rough,
+    // throaty "rrrr" rasp instead of a smooth hum — this is what reads as a growl
+    // by ear. Layered under a slow ~0.7 Hz "breath" heave so it also sounds alive
+    // and its onset/offset are obvious as it moves.
+    this.out.gain.value = 0.9; // louder so it's clearly audible while chasing
+
+    const growl = ctx.createOscillator();
+    growl.type = 'sawtooth';
+    growl.frequency.value = 22; // rasp rate
+    const growlDepth = ctx.createGain();
+    growlDepth.gain.value = 0.4; // deep modulation = audible grit
+    growl.connect(growlDepth).connect(this.out.gain);
+    growl.start();
+    this.oscillators.push(growl);
+
     const breath = ctx.createOscillator();
     breath.type = 'sine';
     breath.frequency.value = 0.7;
     const breathGain = ctx.createGain();
-    breathGain.gain.value = 0.35; // modulation depth around the 0.65 floor below
-    this.out.gain.value = 0.65;
+    breathGain.gain.value = 0.25;
     breath.connect(breathGain).connect(this.out.gain);
     breath.start();
     this.oscillators.push(breath);
+  }
+
+  /**
+   * A short, loud CATCH roar — a rising snarl with a noise burst, played once when
+   * the monster reaches the player. Route the provided `dest` to the master bus
+   * (not the spatialized monster source) so the lunge is heard front-and-centre
+   * regardless of where the monster was. Self-contained: builds + tears down its
+   * own nodes, so it survives the chase audio fading out around it.
+   */
+  static roar(ctx: BaseAudioContext, dest: AudioNode) {
+    const t = ctx.currentTime;
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(1.0, t + 0.04); // fast attack
+    out.gain.exponentialRampToValueAtTime(0.0001, t + 0.9); // decay
+    out.connect(dest);
+
+    // Rising snarl: a sweep up then down for a lunge.
+    const snarl = ctx.createOscillator();
+    snarl.type = 'sawtooth';
+    snarl.frequency.setValueAtTime(70, t);
+    snarl.frequency.exponentialRampToValueAtTime(260, t + 0.18);
+    snarl.frequency.exponentialRampToValueAtTime(90, t + 0.7);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(1800, t);
+    lp.frequency.exponentialRampToValueAtTime(500, t + 0.7);
+    lp.Q.value = 3;
+    snarl.connect(lp).connect(out);
+    snarl.start(t);
+    snarl.stop(t + 0.95);
+
+    // Gnashing noise burst layered on top for teeth/impact.
+    const dur = 0.5;
+    const n = Math.ceil(dur * ctx.sampleRate);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const ng = ctx.createGain();
+    ng.gain.value = 0.5;
+    const nf = ctx.createBiquadFilter();
+    nf.type = 'bandpass';
+    nf.frequency.value = 900;
+    noise.connect(nf).connect(ng).connect(out);
+    noise.start(t);
+
+    // Auto-cleanup after the roar.
+    snarl.onended = () => { try { out.disconnect(); } catch { /* noop */ } };
   }
 
   stop() {

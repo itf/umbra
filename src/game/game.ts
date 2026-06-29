@@ -259,7 +259,10 @@ export class Game {
       m.src.setPosition(m.state.x, this.headHeight, m.state.z);
       if (!this.caught && monsterCaught(m.state, p.x, p.z, radius)) {
         this.caught = true;
-        // Freeze + fade all audio (mirrors win).
+        // A loud CATCH roar, front-and-centre on the master bus (not spatialized)
+        // so the lunge is unmistakable — played BEFORE fading the chase audio.
+        MonsterVoice.roar(this.graph.ctx, this.graph.master);
+        // Then freeze + fade the looping chase audio (mirrors win).
         const t = this.graph.ctx.currentTime;
         this.beacon.output.gain.setTargetAtTime(0, t, 0.3);
         for (const mm of this.monsters) mm.src.output.gain.setTargetAtTime(0, t, 0.3);
