@@ -83,3 +83,38 @@ describe('reflector exercise is acoustically real', () => {
     }
   });
 });
+
+describe('distance exercise is acoustically real (echo DELAY)', () => {
+  const SEEDS = [7, 99, 12345, 271828, 1000003];
+
+  /** Earliest order-1 reflection delay (the wall echo arrival). */
+  const firstReflectDelay = (scene: Scene): number => {
+    const r = taps(scene).filter((t) => t.order >= 1);
+    expect(r.length).toBeGreaterThan(0);
+    return Math.min(...r.map((t) => t.delay));
+  };
+
+  it('the closer-wall room reflects SOONER than the farther one', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('distance', seed);
+      const closeScene = q.correctAnswer === 'Room A' ? q.sceneA : q.sceneB!;
+      const farScene = q.correctAnswer === 'Room A' ? q.sceneB! : q.sceneA;
+      expect(firstReflectDelay(closeScene)).toBeLessThan(firstReflectDelay(farScene));
+    }
+  });
+});
+
+describe('gap exercise is acoustically real (reflection on the WALL side)', () => {
+  const SEEDS = [7, 99, 12345, 271828, 1000003];
+
+  it('the net echo bias points to the wall side (away from the gap), audibly', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('gap', seed);
+      const bias = reflectionBiasX(q.sceneA);
+      // Gap on LEFT → wall on RIGHT → bias toward +x. Gap on RIGHT → bias -x.
+      if (q.correctAnswer === 'Left') expect(bias).toBeGreaterThan(0);
+      else expect(bias).toBeLessThan(0);
+      expect(Math.abs(bias)).toBeGreaterThan(0.1);
+    }
+  });
+});

@@ -215,6 +215,96 @@ describe('reflector: panel side is correct + fair mirror', () => {
   });
 });
 
+describe('distance: fairness (only wall distance differs) + correctness', () => {
+  const panelCenter = (s: Scene): { x: number; z: number } => {
+    let x = 0, z = 0, n = 0;
+    for (const w of s.extraWalls!) for (const v of w.verts) { x += v[0]; z += v[2]; n++; }
+    return { x: x / n, z: z / n };
+  };
+
+  it('identical room/material/size; only the wall distance differs; closer wall is the answer', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('distance', seed);
+      // Same enclosing room + materials → no size/loudness room cue.
+      expect(q.sceneA.roomSize).toEqual(q.sceneB!.roomSize);
+      expect(q.sceneA.materials).toEqual(q.sceneB!.materials);
+      // Same panel material and same panel size in both.
+      expect(q.sceneA.extraWalls![0].absorption).toEqual(q.sceneB!.extraWalls![0].absorption);
+      const a = panelCenter(q.sceneA), b = panelCenter(q.sceneB!);
+      const L = q.sceneA.listener;
+      const dA = Math.hypot(a.x - L[0], a.z - L[2]);
+      const dB = Math.hypot(b.x - L[0], b.z - L[2]);
+      expect(approx(dA, dB)).toBe(false); // distances differ
+      // Both straight ahead: engine front is -z, so panel is at -z of listener,
+      // and laterally centred (same x as listener).
+      expect(approx(a.x, L[0])).toBe(true);
+      expect(approx(b.x, L[0])).toBe(true);
+      expect(a.z).toBeLessThan(L[2]);
+      expect(b.z).toBeLessThan(L[2]);
+      // The labeled "closer" room genuinely has the nearer wall.
+      const closeScene = q.correctAnswer === 'Room A' ? q.sceneA : q.sceneB!;
+      const farScene = q.correctAnswer === 'Room A' ? q.sceneB! : q.sceneA;
+      const cc = panelCenter(closeScene), fc = panelCenter(farScene);
+      const dClose = Math.hypot(cc.x - L[0], cc.z - L[2]);
+      const dFar = Math.hypot(fc.x - L[0], fc.z - L[2]);
+      expect(dClose).toBeLessThan(dFar);
+    }
+  });
+
+  it('harder = smaller distance ratio', () => {
+    const ratioOf = (q: Question) => {
+      const pc = (s: Scene) => { let z = 0, n = 0; for (const w of s.extraWalls!) for (const v of w.verts) { z += v[2]; n++; } return z / n; };
+      const L = q.sceneA.listener[2];
+      const dA = Math.abs(pc(q.sceneA) - L), dB = Math.abs(pc(q.sceneB!) - L);
+      return Math.max(dA, dB) / Math.min(dA, dB);
+    };
+    const easy = makeQuestion('distance', 42, { difficulty: 0 });
+    const hard = makeQuestion('distance', 42, { difficulty: 1 });
+    expect(ratioOf(hard)).toBeLessThan(ratioOf(easy));
+  });
+});
+
+describe('gap: single-scene mirror; gap is opposite the wall side', () => {
+  const panelCenter = (s: Scene): { x: number; z: number } => {
+    let x = 0, z = 0, n = 0;
+    for (const w of s.extraWalls!) for (const v of w.verts) { x += v[0]; z += v[2]; n++; }
+    return { x: x / n, z: z / n };
+  };
+
+  it('the labeled gap side is OPPOSITE the reflecting wall, which is in front', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('gap', seed);
+      expect(q.sceneB).toBeUndefined(); // single-scene
+      expect(q.choices).toEqual(['Left', 'Right']);
+      const pc = panelCenter(q.sceneA);
+      const L = q.sceneA.listener;
+      // Engine right = +x. Gap on LEFT → wall on the RIGHT (x > listener.x).
+      if (q.correctAnswer === 'Left') expect(pc.x).toBeGreaterThan(L[0]);
+      else expect(pc.x).toBeLessThan(L[0]);
+      // The wall is in FRONT (-z of the listener).
+      expect(pc.z).toBeLessThan(L[2]);
+    }
+  });
+
+  it('left and right gaps are fair mirrors (same |x offset|, distance, material)', () => {
+    // Compare two seeds that produce opposite gap sides by scanning.
+    let left: Question | null = null, right: Question | null = null;
+    for (const seed of SEEDS) {
+      const q = makeQuestion('gap', seed);
+      if (q.correctAnswer === 'Left' && !left) left = q;
+      if (q.correctAnswer === 'Right' && !right) right = q;
+    }
+    expect(left).not.toBeNull();
+    expect(right).not.toBeNull();
+    const lc = panelCenter(left!.sceneA), rc = panelCenter(right!.sceneA);
+    const L = left!.sceneA.listener;
+    // Same material on the wall.
+    expect(left!.sceneA.extraWalls![0].absorption).toEqual(right!.sceneA.extraWalls![0].absorption);
+    // Both at the same forward distance from the (identical) listener.
+    expect(Math.hypot(lc.x - L[0], lc.z - L[2])).toBeCloseTo(Math.hypot(rc.x - L[0], rc.z - L[2]), 6);
+  });
+});
+
 describe('determinism', () => {
   it('same seed -> identical question for every type', () => {
     for (const type of ALL_TYPES) {

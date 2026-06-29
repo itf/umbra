@@ -39,10 +39,11 @@ export function makeRng(seed: number): Rng {
 // --- Public types ------------------------------------------------------------
 
 export type ExerciseType =
-  | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector';
+  | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector'
+  | 'distance' | 'gap';
 
-export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector'];
-export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction'];
+export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector', 'distance'];
+export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction', 'gap'];
 
 export type Direction = 'forward' | 'behind' | 'left' | 'right';
 
@@ -378,6 +379,124 @@ function genReflector(rng: Rng, difficulty: number): Question {
   };
 }
 
+// --- Distance-to-wall (echo DELAY → distance) --------------------------------
+
+/**
+ * DISTANCE-TO-WALL: two large, highly-absorbent rooms, each with one hard
+ * reflecting panel DIRECTLY AHEAD (engine front = -z) of the listener, at
+ * different distances. The clap's reflection returns SOONER from the closer
+ * wall — the trained cue is echo DELAY, the most fundamental echolocation skill.
+ *
+ * FAIRNESS: identical room, identical panel size + material, panel straight
+ * ahead in both — only the distance differs. A closer wall is also slightly
+ * louder, so to keep this a DELAY task (not loudness) we keep distances modest
+ * (≈1.5–3 m) and rely on timing; loudness is a minor, deliberately-minimized
+ * confound. The distance RATIO shrinks toward 1 as difficulty rises.
+ *
+ * Reuses genReflector's pattern: a big foam room so its own reflections are
+ * faint and far-off, and the discriminating hard concrete panel (double-sided)
+ * stands out. Both panels straight ahead so direction is held constant.
+ */
+function genDistance(rng: Rng, difficulty: number): Question {
+  const roomSize: [number, number, number] = [16, 4, 16];
+  const center: [number, number, number] = [8, 1.6, 8];
+  const faint = allMat('acoustic_foam');
+
+  // Near wall close-ish; far wall = near * ratio. Ratio big when easy → ~1 hard.
+  const near = 1.5;
+  const ratio = contrast(difficulty, 2.0, 1.3); // far/near distance ratio
+  const far = near * ratio;
+
+  const aIsClose = rng() < 0.5;
+  const distA = aIsClose ? near : far;
+  const distB = aIsClose ? far : near;
+
+  // Straight ahead = engine front = -z (bearing 0).
+  const aheadPanel = (dist: number) => {
+    const [cx, cz] = bearingToPos(center, 0, dist);
+    return makePanel(center, cx, cz, 'concrete');
+  };
+
+  const scene = (id: string, dist: number): Scene => ({
+    id,
+    title: id,
+    description: 'Clap and hear how soon the wall ahead echoes back.',
+    listener: center,
+    roomSize,
+    materials: faint,
+    extraWalls: aheadPanel(dist),
+    sources: [{ pos: center, kind: 'clap', label: 'clap' }],
+    maxOrder: 1,
+  });
+
+  return {
+    type: 'distance',
+    id: '',
+    prompt: 'Which room has the wall CLOSER ahead? (Clap and listen to how soon the echo returns.)',
+    choices: ['Room A', 'Room B'],
+    correctAnswer: aIsClose ? 'Room A' : 'Room B',
+    sceneA: scene('distance-a', distA),
+    sceneB: scene('distance-b', distB),
+  };
+}
+
+// --- Find-the-gap (aperture: reflection on the wall side, silence at the gap) -
+
+/**
+ * FIND-THE-GAP: a wall spanning most of the front of the room, with a GAP
+ * (opening) on the LEFT vs the RIGHT. The solid side reflects the clap; the gap
+ * side is silent. The trained cue is the DIRECTION of the reflection / which
+ * side is silent — NOT loudness.
+ *
+ * Implemented as the simpler brainstorm option: a hard panel on ONE side only
+ * (the solid half), so the reflection comes from the side WITH the wall and the
+ * gap is the silent side. FAIRNESS: a left/right mirror — same panel size,
+ * material and distance, only the side differs (like genReflector's mirror).
+ * The gap is on the OPPOSITE side from the panel.
+ */
+function genGap(rng: Rng, difficulty: number): Question {
+  const roomSize: [number, number, number] = [16, 4, 16];
+  const center: [number, number, number] = [8, 1.6, 8];
+  const faint = allMat('acoustic_foam');
+
+  // The solid half sits front-and-to-a-side: a forward distance with a lateral
+  // offset. Wider lateral offset = easier (clearer side); narrower = harder.
+  const dist = 2;
+  const offset = contrast(difficulty, 45, 25); // bearing off straight-ahead, deg
+  // Bigger half-panel so it reads as "a wall", not a small reflector.
+  const panelSize = 1.6;
+
+  const gapOnLeft = rng() < 0.5;
+  // Gap on LEFT → solid wall on the RIGHT (+offset). Gap on RIGHT → wall LEFT (-offset).
+  const wallBearing = gapOnLeft ? +offset : -offset;
+
+  const scene = (id: string, bearing: number): Scene => {
+    const [cx, cz] = bearingToPos(center, bearing, dist);
+    return {
+      id,
+      title: id,
+      description: 'Clap and hear which side the wall echoes from — the other side is the gap.',
+      listener: center,
+      roomSize,
+      materials: faint,
+      extraWalls: makePanel(center, cx, cz, 'concrete', panelSize),
+      sources: [{ pos: center, kind: 'clap', label: 'clap' }],
+      maxOrder: 1,
+    };
+  };
+
+  return {
+    type: 'gap',
+    id: '',
+    prompt: 'Which side is the GAP (opening) on? The wall echoes; the gap is silent.',
+    choices: ['Left', 'Right'],
+    correctAnswer: gapOnLeft ? 'Left' : 'Right',
+    sceneA: scene('gap-a', wallBearing),
+    // bearingDeg: the WALL's bearing (for tests). Gap is the opposite side.
+    bearingDeg: wallBearing,
+  };
+}
+
 // --- Entry point -------------------------------------------------------------
 
 const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Question> = {
@@ -388,7 +507,12 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Questio
   brick: genBrick,
   direction: genDirection,
   reflector: genReflector,
+  distance: genDistance,
+  gap: genGap,
 };
+
+/** Single-scene exercises (one room, play once) rather than A/B. */
+export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap'];
 
 /**
  * Build a question of the given type, deterministic in `seed`. Same (type, seed,

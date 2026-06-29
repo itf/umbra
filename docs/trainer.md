@@ -40,6 +40,34 @@ dimension being tested. This is a property the generator (`src/trainer/exercises
 | **longer** | z-extent only | width, height, materials | Front/back echo delay → depth |
 | **carpet** | wall material (carpet vs concrete) | geometry | Soft/dead vs live decay |
 | **brick** | wall material (brick vs concrete) | geometry | Scattered/diffuse vs sharp specular echo |
+| **reflector** | which side (left/right) the panel is on | room, panel distance/material | Direction of a single early echo |
+| **distance** | distance to a wall straight ahead (e.g. 1.5 m vs 3 m) | room, panel size/material, direction (both dead ahead) | **Echo DELAY → distance** — the closer wall echoes back sooner |
+
+### Anti-loudness drills (resist the "just judge loudness" shortcut)
+
+Both the **reflector**, **distance** and **gap** drills follow the same pattern as
+`genReflector`: the listener is enclosed in a large, **highly-absorbent foam room**
+(its own reflections are faint and far-off, so room size/loudness is *not* a usable
+cue) and the only crisp early echo comes from a **double-sided hard concrete panel**.
+The image-source solver only reflects well for a listener *inside* geometry, so this
+enclosing room is what makes a lone discriminating panel acoustically valid.
+
+- **distance** — "is the wall CLOSER in A or B?" Two such rooms, each with a panel
+  **directly ahead** (engine front, −z) at different distances. The cue is the
+  **arrival delay** of the order-1 reflection: the closer wall echoes back sooner.
+  *Loudness confound:* a closer wall is also slightly louder, so distances are kept
+  modest (≈1.5–3 m) to make **timing** the decisive cue, not level. The distance
+  **ratio** shrinks toward 1 as difficulty rises. The acoustic test asserts the
+  closer-wall scene's first order-1 tap arrives at a strictly **shorter delay**.
+- **gap** — "which side is the DOORWAY/opening on?" A **single-scene** drill (one
+  room, answer **Left/Right**). A hard wall sits front-and-to-one-side; the *other*
+  side is the silent **gap**. The cue is the **direction** of the reflection — the
+  solid side echoes, the gap side does not. Implemented as the simpler brainstorm
+  option (a panel on one side only) rather than diffraction edges. A left-gap and a
+  right-gap are exact left/right mirrors (same panel size, material, distance — only
+  the side differs), so loudness can't distinguish them. The acoustic test asserts
+  the gain-weighted mean lateral echo direction points to the **wall side** (away
+  from the labeled gap) with audible magnitude.
 
 For width vs length the tests check that the *non-tested* axes are equal to
 floating-point tolerance and the tested axis differs, and that the labeled

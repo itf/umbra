@@ -18,6 +18,7 @@ import { ScenePlayer, type ProbeSpec } from '../debug/scenePlayer';
 import { PROBE_PRESETS, isProbeName } from '../debug/probes';
 import {
   makeRandomQuestion,
+  SINGLE_TYPES,
   type Question,
   type ExerciseType,
 } from './exercises';
@@ -105,7 +106,7 @@ function nextQuestion() {
 
 function renderQuestion(q: Question) {
   ($('prompt') as HTMLElement).textContent = q.prompt;
-  const isAB = q.type !== 'direction';
+  const isAB = !SINGLE_TYPES.includes(q.type);
 
   // Play controls.
   ($('play-ab') as HTMLElement).hidden = !isAB;
