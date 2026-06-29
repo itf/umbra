@@ -5,6 +5,7 @@ import { initAcoustics } from './engine/acoustics/core';
 import { ClapRoom } from './engine/acoustics/clapRoom';
 import type { WallDef, EdgeDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
+import { ClapBudget } from './game/clapBudget';
 import { Heading } from './game/heading';
 import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
 import { getBuiltin, builtinLevels } from './level/builtins';
@@ -313,8 +314,49 @@ function setupClap(
   game: Game,
 ) {
   const clapRoom = new ClapRoom(graph, renderer);
-  const listenBtn = document.getElementById('listen');
+  const listenBtn = document.getElementById('listen') as HTMLButtonElement | null;
+
+  // The sonar budget for THIS run. Absent config ⇒ unlimited (today's free clap):
+  // isManaged() is false, so no counter is shown or announced.
+  const budget = new ClapBudget({ max: LEVEL.clapBudget, cooldownMs: LEVEL.clapCooldownMs });
+  const BASE_CLAP_LABEL = 'Listen — clap to hear the room';
+
+  /** Format remaining claps for an eyes-free cue ("3 claps left"). */
+  const remainingPhrase = () => {
+    const n = budget.remaining();
+    if (n === Infinity) return '';
+    return n === 1 ? '1 clap left' : `${n} claps left`;
+  };
+
+  /** Refresh the echo button's label + disabled state for the current budget. */
+  const refreshClapUi = () => {
+    if (!listenBtn) return;
+    if (!budget.isManaged()) return; // unlimited: leave the default label/enabled state
+    const rem = budget.remaining();
+    const exhausted = budget.hasBudget() && rem <= 0;
+    listenBtn.disabled = exhausted;
+    const suffix = budget.hasBudget() ? ` (${remainingPhrase()})` : '';
+    listenBtn.setAttribute('aria-label', exhausted ? 'Echo — no claps left' : BASE_CLAP_LABEL + suffix);
+  };
+  // Announce the starting budget so an eyes-free player knows it's limited. Use the
+  // assertive `alert` region, not `say` — the status region is overwritten by the
+  // "Walk to the beacon…" intro right after setupClap returns, so a `say` here would
+  // never be heard.
+  if (budget.isManaged() && budget.hasBudget()) {
+    alert(`Sonar budget: ${remainingPhrase()}. Clap deliberately.`);
+    refreshClapUi();
+  }
+
   listenBtn?.addEventListener('click', () => {
+    const nowMs = performance.now();
+    const res = budget.consume(nowMs);
+    if (!res.ok) {
+      // Refused — give a clear spoken cue, no clap fired.
+      if (res.reason === 'exhausted') alert('No claps left.');
+      else alert(`Echo ready in ${Math.ceil(res.waitMs / 1000)}s.`);
+      refreshClapUi();
+      return;
+    }
     // Clap from the player's current position, through the ACTUAL room geometry
     // (general solver). WALLS is the live wall list — already updated each frame
     // by the moving-walls loop below, so this picks up wall positions for free.
@@ -325,7 +367,10 @@ function setupClap(
       edges: EDGES,
     });
     clapRoom.clap();
-    say('Clap! Listen to the room around you.');
+    // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.
+    const phrase = budget.hasBudget() ? ` ${remainingPhrase()}.` : '';
+    say(`Clap! Listen to the room around you.${phrase}`);
+    refreshClapUi();
   });
 
   // --- Moving walls: advance an animation clock, re-derive WALLS, and drive the

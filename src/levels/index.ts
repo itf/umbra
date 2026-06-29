@@ -20,6 +20,7 @@ import monsterCellar from './monster-cellar.json';
 import openStreet from './open-street.json';
 import steppedCeiling from './stepped-ceiling-alcove.json';
 import sBendMaze from './s-bend-maze.json';
+import clapMaze from './clap-maze.json';
 
 export interface BuiltinEntry {
   id: string;
@@ -96,5 +97,11 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     name: 'S-Bend Maze',
     description: 'Two walls to weave past: go right around the first, then left around the second, to reach the bell.',
     json: sBendMaze,
+  },
+  {
+    id: 'clap-maze',
+    name: 'Clap-Maze',
+    description: 'A serpentine brick maze navigated by echo, with a tight clap budget — probe deliberately at each junction to find where the echo isn’t.',
+    json: clapMaze,
   },
 ];

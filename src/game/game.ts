@@ -52,6 +52,10 @@ export interface GameLevel {
   monsters?: MonsterSpawn[];
   /** Real-proximity radius (m) at which a monster catches the player. */
   catchRadius?: number;
+  /** Max clap/echo probes for the level (0/undefined ⇒ unlimited). */
+  clapBudget?: number;
+  /** Minimum ms between consecutive claps (0/undefined ⇒ no cooldown). */
+  clapCooldownMs?: number;
 }
 
 export interface GameCallbacks {

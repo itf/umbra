@@ -338,6 +338,10 @@ export function loadLevel(level: Level): LoadedLevel {
       ...(level.open ? [] : perimeterSegments(level)),
     ],
     monsters: level.monsters.map((m) => ({ x: m.x, z: m.z, speed: m.speed, sound: m.sound, soundUrl: m.soundUrl })),
+    // Sonar budget: thread through verbatim. Absent ⇒ undefined ⇒ unlimited clap
+    // (today's behaviour), so old levels and the default room are unchanged.
+    clapBudget: level.clapBudget,
+    clapCooldownMs: level.clapCooldownMs,
   };
   // Open levels have no enclosing box — only the free-standing walls you placed.
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the

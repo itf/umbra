@@ -76,6 +76,8 @@ the Begin screen.
 | `monster-cellar` | Monster Cellar | A monster chasing your noise; loud gravel vs quiet carpet zones |
 | `open-street` | Open Street | `open: true` outdoor space + diffraction at building corners |
 | `stepped-ceiling-alcove` | Cathedral Alcove | A low ceiling zone inside a tall marble nave |
+| `s-bend-maze` | S-Bend Maze | Two interior walls to weave past — map a route by echo |
+| `clap-maze` | Clap-Maze | Serpentine brick maze + a tight **clap budget** (`clapBudget`/`clapCooldownMs`) — navigate by echo, probe deliberately. See `docs/engine/clap-budget.md` |
 
 The size pair has a large volume spread (52 m³ vs 3456 m³); the test-suite
 enforces a ≥4× spread.

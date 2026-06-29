@@ -173,6 +173,16 @@ export interface Level {
   /** Default ceiling material (when there IS a ceiling). */
   ceilingMaterial: MaterialName;
 
+  /**
+   * SONAR BUDGET — make the clap/echo probe a managed resource ("flash sonar").
+   * Both OPTIONAL and independent; absent ⇒ today's free, unlimited clap:
+   *  - `clapBudget`: max claps for the whole level (0/undefined ⇒ unlimited).
+   *  - `clapCooldownMs`: minimum ms between consecutive claps (0/undefined ⇒ none).
+   * The pure model lives in src/game/clapBudget.ts.
+   */
+  clapBudget?: number;
+  clapCooldownMs?: number;
+
   start: StartPoint;
   beacons: BeaconObj[];
   walls: WallObj[];
