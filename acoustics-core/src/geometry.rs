@@ -92,6 +92,40 @@ impl Wall {
     }
 }
 
+/// Energy-pruning audibility floor for the image-source candidate search.
+///
+/// As we descend wall-chains, we accumulate each chain's broadband reflection
+/// gain (product of per-wall reflection coefficients, see `wall_reflectivity`).
+/// Once a chain's accumulated gain falls below this threshold it is INAUDIBLE —
+/// no descendant can be louder (each further bounce only multiplies by ≤1) — so
+/// we prune the entire subtree: we neither validate its tap nor push it onto the
+/// search stack. This is what makes high reflection order affordable: absorbent
+/// materials kill deep chains quickly, collapsing the `walls^order` explosion,
+/// while low-absorption surfaces (concrete/marble) keep deep chains alive exactly
+/// as long as they remain audible.
+///
+/// 1e-3 ≈ -60 dB of reflection gain. The threshold is deliberately conservative:
+/// it gates ONLY the material reflection product (not the 1/r distance term), and
+/// it uses the MAX over bands of the per-wall reflection coefficient (see
+/// `wall_reflectivity`), so a wall that is reflective in ANY band is treated as
+/// fully reflective for pruning purposes. Both choices ensure we never prune a
+/// path that is still audible in some band. At order 1–2 with typical materials
+/// nothing audible is pruned, so low-order results are byte-identical to before.
+const ENERGY_THRESHOLD: f32 = 1e-3;
+
+/// A wall's representative broadband reflection coefficient for energy pruning:
+/// the MAX over bands of `(1 - absorption[b])`. Using the max (rather than the
+/// mean) is the conservative choice — a wall that reflects strongly in any single
+/// band counts as fully reflective, so pruning never culls a path that is still
+/// audible in some band. Result is clamped to [0, 1].
+fn wall_reflectivity(wall: &Wall) -> f32 {
+    let mut r = 0.0f32;
+    for b in 0..NUM_BANDS {
+        r = r.max((1.0 - wall.absorption[b]).max(0.0));
+    }
+    r.min(1.0)
+}
+
 pub struct Room {
     pub walls: Vec<Wall>,
 }
@@ -192,6 +226,62 @@ mod tests {
         assert!((d[0] - 4.0 / SPEED_OF_SOUND).abs() < 1e-4, "4m round trip");
     }
 
+    /// Build a box room with uniform per-band absorption on every wall.
+    fn box_room_absorptive(sx: f32, sy: f32, sz: f32, alpha: f32) -> Room {
+        let mut room = box_room(sx, sy, sz);
+        for w in &mut room.walls {
+            w.absorption = [alpha; NUM_BANDS];
+        }
+        room
+    }
+
+    #[test]
+    fn energy_pruning_culls_absorptive_high_order_chains() {
+        // Same geometry, high max_order. A highly ABSORPTIVE room (acoustic-foam-
+        // like, alpha=0.9 → reflectivity 0.1 per bounce) drops below the -60 dB
+        // audibility floor within ~3 bounces, so deep chains are pruned and it
+        // returns FEWER taps than the RIGID (alpha=0) version, whose loud chains
+        // survive to full order.
+        let p = Vec3::new(4.0, 1.5, 5.0);
+        let rigid = box_room_absorptive(8.0, 3.0, 10.0, 0.0);
+        let foam = box_room_absorptive(8.0, 3.0, 10.0, 0.9);
+        let order = 6;
+        let rigid_taps = rigid.compute_taps(p, p, order, SPEED_OF_SOUND);
+        let foam_taps = foam.compute_taps(p, p, order, SPEED_OF_SOUND);
+        assert!(
+            foam_taps.len() < rigid_taps.len(),
+            "absorptive room must prune deep chains: foam={} rigid={}",
+            foam_taps.len(),
+            rigid_taps.len()
+        );
+    }
+
+    #[test]
+    fn energy_pruning_leaves_low_order_unchanged() {
+        // The audibility floor must never cull a LOUD path. A rigid box's direct +
+        // first-order counts are exactly as before pruning (1 direct, 6 first-order).
+        let room = box_room(8.0, 3.0, 10.0);
+        let l = Vec3::new(4.0, 1.5, 5.0);
+        let s = Vec3::new(4.0, 1.5, 2.0);
+        let direct = room.compute_taps(l, s, 0, SPEED_OF_SOUND);
+        assert_eq!(direct.len(), 1, "direct path unchanged");
+
+        let p = Vec3::new(4.0, 1.5, 5.0);
+        let first = room.compute_taps(p, p, 1, SPEED_OF_SOUND);
+        let first_order = first.iter().filter(|t| t.order == 1).count();
+        assert_eq!(first_order, 6, "all 6 first-order reflections survive pruning");
+
+        // Even a moderately absorptive room keeps every first-order reflection
+        // (one bounce at alpha=0.5 → 0.5 gain, well above 1e-3).
+        let absorptive = box_room_absorptive(8.0, 3.0, 10.0, 0.5);
+        let af = absorptive.compute_taps(p, p, 1, SPEED_OF_SOUND);
+        assert_eq!(
+            af.iter().filter(|t| t.order == 1).count(),
+            6,
+            "first-order paths are audible and must not be pruned"
+        );
+    }
+
     #[test]
     fn direct_path_present_and_correct() {
         let room = box_room(8.0, 3.0, 10.0);
@@ -249,9 +339,11 @@ impl Room {
         }
 
         // Reflections: recursively reflect the source across walls.
-        // State carries the current image position and the chain of wall indices.
-        let mut stack: Vec<(Vec3, Vec<usize>)> = vec![(source, Vec::new())];
-        while let Some((img, chain)) = stack.pop() {
+        // State carries the current image position, the chain of wall indices, and
+        // the chain's accumulated broadband reflection gain (product of per-wall
+        // reflectivities) used for ENERGY PRUNING — see `ENERGY_THRESHOLD`.
+        let mut stack: Vec<(Vec3, Vec<usize>, f32)> = vec![(source, Vec::new(), 1.0)];
+        while let Some((img, chain, gain)) = stack.pop() {
             if chain.len() as u32 >= max_order {
                 continue;
             }
@@ -271,6 +363,15 @@ impl Room {
                 } else if sd <= 1e-4 {
                     continue; // behind the (single) face
                 }
+                // ENERGY PRUNING: accumulate this child chain's reflection gain. If
+                // it has fallen below the audibility floor, prune the whole subtree —
+                // skip validating its tap AND don't descend (no descendant can be
+                // louder, since each further bounce multiplies by a coefficient ≤1).
+                let child_gain = gain * wall_reflectivity(wall);
+                if child_gain < ENERGY_THRESHOLD {
+                    continue;
+                }
+
                 let new_img = wall.mirror(img);
                 let mut new_chain = chain.clone();
                 new_chain.push(i);
@@ -278,7 +379,7 @@ impl Room {
                 if let Some(tap) = self.validate_path(listener, source, &new_chain, speed_of_sound) {
                     taps.push(tap);
                 }
-                stack.push((new_img, new_chain));
+                stack.push((new_img, new_chain, child_gain));
             }
         }
 

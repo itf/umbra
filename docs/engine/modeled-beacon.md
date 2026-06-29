@@ -109,9 +109,13 @@ then consider order 3 or a tighter throttle.
 
 - **Phase 1 (this):** direct tap (occlusion) + first-order edge diffraction + material
   coloring + Doppler-via-delays, live-refreshed with crossfade + throttle.
-- **Phase 2 (deferred):** full reflections (higher `maxOrder`) so the beacon's *early
-  reflections* also reach you around corners — just raise `maxOrder` in
-  `refreshBeacon`; the perf table says the budget holds.
+- **Phase 2 (SHIPPED — order 3):** full reflections. `refreshBeacon` now solves at
+  `maxOrder: 3` with an `orderTapCap: 24` safety guard, so the beacon's *early
+  reflections* reach you around corners. **Energy pruning** in the image-source solver
+  (`docs/engine/energy-pruning.md`) makes the high-order candidate search affordable, and
+  the tap-cap guard auto-drops to a lower order on large low-absorption enclosures
+  (cathedral: order-3 stays 57 taps / ~25 ms, so it falls back to order 1 / ~7 ms).
+  open-street and clap-maze render at full order 3 (~3–4 ms).
 - **Monsters (deferred):** the same `ModeledSource` could render monster growls through
   the room so they too occlude/diffract; today monsters stay on the plain `HrtfSource`.
 

@@ -1,5 +1,13 @@
 # Reverb & image-source order — performance + acoustics analysis
 
+> **UPDATE (shipped):** Energy pruning is now implemented in `Room::compute_taps`
+> (`docs/engine/energy-pruning.md`) and the beacon runs at **order 3** with an
+> `orderTapCap: 24` guard. Pruning makes the high-order candidate search affordable on
+> absorbent/mixed rooms; cathedral (very low absorption) keeps all 57 order-3 taps and
+> so auto-drops to order 1 via the guard. The recommendation below ("order 2 default")
+> is superseded by "order 3 default + tap-cap fallback".
+
+
 Decision doc for **Phase 2** of the modeled beacon (`src/engine/acoustics/modeledSource.ts`).
 Two questions, answered with measured numbers:
 
