@@ -81,6 +81,10 @@ export function scatteringFor(name: string): BandArray {
   return (MATERIALS_FULL[name] ?? MATERIALS_FULL.concrete).scattering;
 }
 
+export function absorptionFor(name: string): BandArray {
+  return (MATERIALS_FULL[name] ?? MATERIALS_FULL.concrete).absorption;
+}
+
 export type WallName = '-x' | '+x' | '-y' | '+y' | '-z' | '+z';
 export const WALL_ORDER: WallName[] = ['-x', '+x', '-y', '+y', '-z', '+z'];
 

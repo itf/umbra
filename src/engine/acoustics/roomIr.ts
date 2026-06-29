@@ -37,6 +37,68 @@ export interface RoomIrOptions {
    * than a single sharp echo. A scalar is sufficient at this altitude.
    */
   scattering?: number;
+  /**
+   * LATE REVERB (FDN tail). When enabled (default), an offline-rendered Feedback Delay
+   * Network tail is overlap-added onto the early IR so rooms decay smoothly instead of
+   * stopping abruptly. The tail's reverberation time is derived from the room (see
+   * `room` below) or set explicitly via `rt60`. Set `tail: false` to omit it (e.g. for
+   * tests that assert purely on the early field).
+   */
+  tail?: boolean;
+  /**
+   * Room geometry+materials used to derive RT60 via an Eyring estimate (preferred over
+   * passing `rt60` directly): { volume m³, surfaceArea m², meanAbsorption 0..1 }. When
+   * absent, no tail is generated unless `rt60` is given explicitly.
+   */
+  room?: { volume: number; surfaceArea: number; meanAbsorption: number };
+  /** Explicit broadband RT60 (seconds), overrides `room`-derived RT60. */
+  rt60?: number;
+  /** Multiply the room-derived RT60 by this (a single tuning knob). Default 1. */
+  rt60Scale?: number;
+  /** HF RT60 ratio (highs decay faster): rt60_hf/rt60 in (0,1). Default 0.5. */
+  rt60HfRatio?: number;
+  /** Wet-level multiplier for the late tail (1 = continuity-matched). Default 1. */
+  wet?: number;
+}
+
+/** Speed of sound used for the Sabine/Eyring RT60 estimate (m/s). */
+const SPEED_OF_SOUND = 343;
+
+/**
+ * Estimate broadband RT60 (seconds) from room geometry + mean absorption.
+ *
+ * We use the **Eyring** form (better than Sabine for absorbent rooms, and it stays
+ * finite as ᾱ→1):
+ *
+ *     RT60 = 0.161 · V / ( −S · ln(1 − ᾱ) )
+ *
+ * where V = volume (m³), S = total surface area (m²), ᾱ = mean absorption coefficient.
+ * Sabine is the ᾱ→0 limit (−S·ln(1−ᾱ) → S·ᾱ). The constant 0.161 = 24·ln(10)/c with
+ * c≈343 m/s. A large hard room (big V, small ᾱ) → long RT60; a small absorbent room →
+ * short RT60 — exactly the audible contrast we want.
+ */
+export function eyringRt60(volume: number, surfaceArea: number, meanAbsorption: number): number {
+  if (volume <= 0 || surfaceArea <= 0) return 0;
+  const a = Math.max(1e-3, Math.min(0.999, meanAbsorption));
+  const k = (24 * Math.LN10) / SPEED_OF_SOUND; // ≈ 0.161
+  const eyringAbs = -surfaceArea * Math.log(1 - a);
+  if (eyringAbs <= 0) return 0;
+  return (k * volume) / eyringAbs;
+}
+
+/** Resolve the FDN tail params (rt60, hfRatio, wet) for a build; rt60=0 disables it. */
+function resolveTail(opts: RoomIrOptions): { rt60: number; hfRatio: number; wet: number } {
+  if (opts.tail === false) return { rt60: 0, hfRatio: 0.5, wet: 1 };
+  let rt60 = 0;
+  if (opts.rt60 != null && opts.rt60 > 0) {
+    rt60 = opts.rt60;
+  } else if (opts.room) {
+    rt60 = eyringRt60(opts.room.volume, opts.room.surfaceArea, opts.room.meanAbsorption);
+  }
+  rt60 *= opts.rt60Scale ?? 1;
+  // Clamp so a degenerate room can't generate a multi-minute IR.
+  rt60 = Math.max(0, Math.min(8, rt60));
+  return { rt60, hfRatio: opts.rt60HfRatio ?? 0.5, wet: opts.wet ?? 1 };
 }
 
 /** Rotate a world direction into head-local space (inverse listener yaw). */
@@ -183,7 +245,8 @@ export function buildRoomIrWasm(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions 
   const hL = hrirL.subarray(0, n * hlen);
   const hR = hrirR.subarray(0, n * hlen);
 
-  const out = build_room_ir(td, hL, hR, hlen, sr, scatter, tailPad);
+  const { rt60, hfRatio, wet } = resolveTail(opts);
+  const out = build_room_ir(td, hL, hR, hlen, sr, scatter, tailPad, rt60, hfRatio, wet);
   const length = out[0] | 0; // out[0] is a float; floor to an int index.
   const left = out.slice(1, 1 + length);
   const right = out.slice(1 + length, 1 + 2 * length);
@@ -204,7 +267,12 @@ export function buildRoomIrJs(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = 
   let maxDelay = 0;
   for (const t of taps) if (t.delay > maxDelay) maxDelay = t.delay;
   const extra = hrtf.taps + hrtf.taps + smearN + Math.ceil(tailPad * sr);
-  const length = Math.ceil(maxDelay * sr) + extra;
+  const earlyLen = Math.ceil(maxDelay * sr) + extra;
+
+  // Late FDN tail params + total length (mirrors ir_build.rs).
+  const { rt60, hfRatio, wet } = resolveTail(opts);
+  const tailSamples = rt60 > 0 ? Math.ceil((rt60 * 1.05 + 0.05) * sr) : 0;
+  const length = earlyLen + tailSamples;
 
   const left = new Float32Array(length);
   const right = new Float32Array(length);
@@ -248,7 +316,101 @@ export function buildRoomIrJs(taps: Tap[], hrtf: HrtfSet, opts: RoomIrOptions = 
     }
   }
 
+  // LATE REVERB: render the FDN tail offline and overlap-add it (see fdnTail / the
+  // Rust mirror in ir_build.rs for the structure + continuity handling).
+  if (tailSamples > 0) {
+    const handover = Math.min(Math.round(maxDelay * sr), earlyLen - 1);
+    const win = Math.ceil(0.01 * sr);
+    const w0 = Math.max(0, handover - win);
+    let el = 0, er = 0, wn = 0;
+    for (let i = w0; i < Math.min(handover, left.length); i++) {
+      el += left[i] * left[i];
+      er += right[i] * right[i];
+      wn++;
+    }
+    const rmsL = wn > 0 ? Math.sqrt(el / wn) : 0;
+    const rmsR = wn > 0 ? Math.sqrt(er / wn) : 0;
+    let peak = 0;
+    for (let i = 0; i < Math.min(earlyLen, left.length); i++) {
+      peak = Math.max(peak, Math.abs(left[i]), Math.abs(right[i]));
+    }
+    const seedL = rmsL > 1e-6 ? rmsL : peak * 0.1;
+    const seedR = rmsR > 1e-6 ? rmsR : peak * 0.1;
+    const { tl, tr } = fdnTail(tailSamples, sr, rt60, hfRatio, seedL, seedR);
+    const xfade = Math.ceil(0.005 * sr);
+    for (let i = 0; i < tl.length; i++) {
+      const o = handover + i;
+      if (o >= length) break;
+      const ramp = i < xfade ? Math.max(0, Math.min(1, 0.5 - 0.5 * Math.cos((Math.PI * i) / xfade))) : 1;
+      left[o] += tl[i] * wet * ramp;
+      right[o] += tr[i] * wet * ramp;
+    }
+  }
+
   return { left, right, sampleRate: sr, length };
+}
+
+/**
+ * Stereo FDN late-reverb tail (JS mirror of `fdn_tail` in ir_build.rs). 8 mutually-
+ * prime delay lines, lossless Householder feedback matrix, per-line one-pole HF
+ * damping, decorrelated L/R output taps. Excited by a single seed impulse so the tail
+ * starts at the early-field handover level and decays per RT60. See docs/engine/
+ * late-reverb-fdn.md for the design rationale.
+ */
+function fdnTail(
+  nOut: number, sr: number, rt60: number, hfRatio: number, seedL: number, seedR: number,
+): { tl: Float32Array; tr: Float32Array } {
+  const tl = new Float32Array(nOut);
+  const tr = new Float32Array(nOut);
+  if (nOut === 0 || rt60 <= 0) return { tl, tr };
+  const N = 8;
+  const basePrimes = [809, 877, 937, 1049, 1151, 1249, 1373, 1499];
+  const scale = sr / 48000;
+  const lens = basePrimes.map((p) => Math.max(1, Math.round(p * scale)));
+  const g = new Float32Array(N);
+  const damp = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const d = lens[i] / sr;
+    g[i] = Math.pow(10, (-3 * d) / rt60);
+    const gHf = Math.pow(10, (-3 * d) / (rt60 * hfRatio));
+    damp[i] = Math.max(0.05, Math.min(1, gHf / g[i]));
+  }
+  const lpA = 2 / N; // Householder M = I − (2/N)·J
+  const lines = lens.map((l) => new Float32Array(l));
+  const widx = new Int32Array(N);
+  const lpState = new Float32Array(N);
+  const inGain = 1 / Math.sqrt(N);
+  const s = new Float32Array(N);
+  for (let t = 0; t < nOut; t++) {
+    let sum = 0;
+    for (let i = 0; i < N; i++) {
+      const v = lines[i][widx[i]];
+      const a = 1 - damp[i];
+      const y = (1 - a) * v + a * lpState[i];
+      lpState[i] = y;
+      s[i] = y;
+      sum += y;
+    }
+    let ol = 0, or = 0;
+    for (let i = 0; i < N; i++) {
+      if (i % 2 === 0) { ol += s[i]; or += 0.4 * s[i]; }
+      else { or += s[i]; ol += 0.4 * s[i]; }
+    }
+    tl[t] = ol * inGain;
+    tr[t] = or * inGain;
+    for (let i = 0; i < N; i++) {
+      const mixed = s[i] - lpA * sum;
+      let fb = g[i] * mixed;
+      if (t === 0) {
+        const sgn = i % 2 === 0 ? 1 : -1;
+        const seed = i % 2 === 0 ? seedL : seedR;
+        fb += sgn * seed * inGain;
+      }
+      lines[i][widx[i]] = fb;
+      widx[i] = (widx[i] + 1) % lines[i].length;
+    }
+  }
+  return { tl, tr };
 }
 
 /** Add a convolved L/R tap into the output buffers at a sample offset. */

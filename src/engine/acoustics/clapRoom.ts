@@ -8,7 +8,7 @@ import type { AudioGraph } from '../audioGraph';
 import type { HrtfRenderer } from '../hrtf/renderer';
 import { computeShoeboxTaps, computeRoomTaps, type ShoeboxParams, type WallDef, type EdgeDef } from './core';
 import { buildRoomIr } from './roomIr';
-import { scatteringFor } from './materials';
+import { scatteringFor, absorptionFor } from './materials';
 
 /** Average mid-band scattering across a room's assigned wall materials. */
 function representativeScattering(params: ShoeboxParams): number {
@@ -17,6 +17,66 @@ function representativeScattering(params: ShoeboxParams): number {
   let sum = 0;
   for (const m of mats) sum += scatteringFor(m as string)[4]; // ~1kHz band
   return sum / mats.length;
+}
+
+/** Room descriptor for the late-reverb RT60 (Eyring) estimate. */
+type RoomGeom = { volume: number; surfaceArea: number; meanAbsorption: number };
+
+/** Exact shoebox volume / surface area / area-weighted mid-band absorption. */
+function shoeboxRoom(params: ShoeboxParams): RoomGeom {
+  const [x, y, z] = params.size;
+  const faces: Array<[number, number]> = [
+    [y * z, 1], [y * z, 1], // -x,+x
+    [x * z, 1], [x * z, 1], // -y,+y
+    [x * y, 1], [x * y, 1], // -z,+z
+  ];
+  const walls: Array<'-x' | '+x' | '-y' | '+y' | '-z' | '+z'> = ['-x', '+x', '-y', '+y', '-z', '+z'];
+  let area = 0, weighted = 0;
+  walls.forEach((w, i) => {
+    const a = faces[i][0];
+    const mat = params.materials[w] ?? 'concrete';
+    area += a;
+    weighted += a * absorptionFor(mat as string)[4]; // ~1 kHz
+  });
+  return { volume: x * y * z, surfaceArea: area, meanAbsorption: area > 0 ? weighted / area : 0.1 };
+}
+
+/** Polygon area of a planar convex wall (Newell's method). */
+function polyArea(verts: Array<[number, number, number]>): number {
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 0; i < verts.length; i++) {
+    const a = verts[i];
+    const b = verts[(i + 1) % verts.length];
+    nx += (a[1] - b[1]) * (a[2] + b[2]);
+    ny += (a[2] - b[2]) * (a[0] + b[0]);
+    nz += (a[0] - b[0]) * (a[1] + b[1]);
+  }
+  return 0.5 * Math.hypot(nx, ny, nz);
+}
+
+/**
+ * Derive a RoomGeom from a general wall list: surface area = sum of polygon areas,
+ * absorption = area-weighted mid-band absorption (walls carry per-band absorption),
+ * volume = bounding-box volume (a robust approximation for the RT60 estimate).
+ */
+function wallsRoom(walls: WallDef[]): RoomGeom {
+  let area = 0, weighted = 0;
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  for (const w of walls) {
+    const a = polyArea(w.verts);
+    area += a;
+    weighted += a * (w.absorption[4] ?? 0.1);
+    for (const v of w.verts) {
+      minX = Math.min(minX, v[0]); maxX = Math.max(maxX, v[0]);
+      minY = Math.min(minY, v[1]); maxY = Math.max(maxY, v[1]);
+      minZ = Math.min(minZ, v[2]); maxZ = Math.max(maxZ, v[2]);
+    }
+  }
+  const volume = Number.isFinite(minX)
+    ? Math.max(0, maxX - minX) * Math.max(0, maxY - minY) * Math.max(0, maxZ - minZ)
+    : 0;
+  return { volume, surfaceArea: area, meanAbsorption: area > 0 ? weighted / area : 0.1 };
 }
 
 export interface ClapRoomConfig {
@@ -111,6 +171,7 @@ export class ClapRoom {
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
       scattering: representativeScattering(params),
+      room: shoeboxRoom(params),
     });
     this.swapIr(ir);
   }
@@ -140,6 +201,7 @@ export class ClapRoom {
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
       scattering: opts.scattering ?? 0.1,
+      room: wallsRoom(walls),
     });
     this.swapIr(ir);
   }
@@ -183,6 +245,7 @@ export class ClapRoom {
     const ir = buildRoomIr(taps, this.renderer.set, {
       yaw,
       scattering: opts.scattering ?? 0.1,
+      room: wallsRoom(walls),
     });
     this.swapIr(ir);
     return true;
