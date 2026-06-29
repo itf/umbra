@@ -411,7 +411,19 @@ blocked; transmission identical at `[0.05, 0.03, 0.02]` in all cases). Audible R
 - Conclusion: **our UTD edge diffraction is a niche asset (dead rooms, trainer cue-isolation),
   not a general-realism necessity.** Steam Audio's diffusion is a genuine upgrade over our smear.
 
-## 8. The toggle (our engine ↔ Steam Audio) — feasible and recommended
+## 8. The toggle (our engine ↔ Steam Audio) — IMPLEMENTED
+
+> **Status update:** this toggle is now built. A Begin-screen checkbox (or
+> `?engine=steam`) selects a `SteamAudioBackend`; the default keeps our tuned engine
+> untouched. BOTH the beacon and monsters route through the selected engine. The
+> `WallDef[]`→Steam Audio scene conversion (8→3-band absorption, scattering scalar,
+> thin-box double-sided walls), the per-frame listener/source/`world.step` drive, and
+> the reflection/reverb buses → master are all wired and browser-verified on
+> `clap-maze` + `monster-cellar`. Steam Audio (`three` + 6 MB WASM) loads via a
+> **dynamic import**, so the default bundle is unchanged. COOP/COEP is now also set on
+> `vite preview` (production host must send them too). Full design:
+> `docs/engine/steam-audio-backend.md`.
+
 
 A runtime toggle is clean because both engines are the same shape: *dry positioned source →
 spatializer → master bus*. The toggle swaps only the **source spatializer**:

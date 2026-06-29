@@ -22,6 +22,7 @@ import {
 } from './monster';
 import { MonsterVoice, resolveMonsterPreset } from './monsterSounds';
 import { attachCustomLoop } from './customAudio';
+import type { SteamSourceHandle } from '../engine/steamaudio/backend';
 
 /** A wall segment for collision + material-keyed bump sounds. */
 export interface CollisionWall {
@@ -73,6 +74,35 @@ export interface GameLevel {
   acousticScattering?: number;
 }
 
+/**
+ * Optional alternate spatial backend. When provided (via `?engine=steam`), the
+ * beacon is rendered through Steam Audio instead of our ModeledSource/HrtfSource:
+ * the dry beacon voice feeds a Steam Audio source, whose listener + source positions
+ * + per-frame `step` are driven from the existing game loop. The default build never
+ * provides this, so our engine stays the untouched default (no bundle/runtime cost).
+ * BEACON-FIRST: monsters still use our HrtfSource (documented follow-up).
+ */
+export interface SpatialBackend {
+  createSource(): SteamSourceHandle;
+  setGeometry(walls: WallDef[]): void;
+  setListener(x: number, y: number, z: number, yaw: number): void;
+  step(deltaSeconds: number): void;
+}
+
+/**
+ * The common shape of a positioned voice the game drives: a dry `input`, a
+ * master-bound `output` gain, position updates, and teardown. Both our `HrtfSource`
+ * and a Steam Audio `SteamSourceHandle` satisfy it, so the beacon AND monsters route
+ * through whichever engine is selected. `output` is a `GainNode` either way (the
+ * catch-fade ramps `output.gain`).
+ */
+export interface PositionedVoice {
+  input: AudioNode;
+  output: GainNode;
+  setPosition(x: number, y: number, z: number): void;
+  teardown(): void;
+}
+
 export interface GameCallbacks {
   onStep?: (foot: Foot, stride: number) => void;
   onStumble?: (reason: string) => void;
@@ -110,6 +140,14 @@ export class Game {
    * acoustic geometry. Driven by `refreshBeacon()` on the per-frame throttle.
    */
   private modeledBeacon: ModeledSource | null = null;
+  /**
+   * Optional Steam Audio backend (when `?engine=steam`). When set, the beacon is a
+   * `steamBeacon` source driven through it, and both `beacon`/`modeledBeacon` above
+   * are null. Its listener + `step` are driven each frame from `tick`. Null on the
+   * default (our-engine) path.
+   */
+  private steam: SpatialBackend | null = null;
+  private steamBeacon: SteamSourceHandle | null = null;
   /** The dry-voice input node + the master-bound output node, whichever beacon is live. */
   private beaconInput!: GainNode;
   private beaconOutput!: GainNode;
@@ -128,7 +166,7 @@ export class Game {
    */
   private monsters: {
     state: MonsterState;
-    src: HrtfSource;
+    src: PositionedVoice;
     /** The synth growl/hum voice. Stopped + nulled once a custom loop takes over. */
     voice: MonsterVoice | null;
     /** Looping custom-audio source, when this monster's `soundUrl` loaded. */
@@ -153,11 +191,13 @@ export class Game {
     level: GameLevel,
     cb: GameCallbacks = {},
     stepCfg: StepConfig = DEFAULT_STEP_CONFIG,
+    steam: SpatialBackend | null = null,
   ) {
     this.graph = graph;
     this.renderer = renderer;
     this.level = level;
     this.cb = cb;
+    this.steam = steam;
     this.headHeight = level.headHeight ?? 1.6;
     this.player = new Player({ x: level.start.x, z: level.start.z, yaw: level.start.yaw }, stepCfg);
     this.footsteps = new Footsteps(graph, renderer);
@@ -177,7 +217,15 @@ export class Game {
     // solver (occlusion + diffraction); otherwise fall back to the plain
     // straight-line HrtfSource. Either way `beaconInput` is where the dry voice
     // feeds and `beaconOutput` is the master-bound output.
-    if (level.acousticWalls && level.acousticWalls.length > 0) {
+    if (this.steam) {
+      // Steam Audio path: the beacon's dry voice feeds a Steam Audio source. The
+      // level geometry is pushed into the Steam Audio scene; the listener + source
+      // positions + world.step are driven from the game loop (applyAudioPose/tick).
+      this.steam.setGeometry(level.acousticWalls ?? []);
+      this.steamBeacon = this.steam.createSource();
+      this.beaconInput = this.steamBeacon.input as GainNode;
+      this.beaconOutput = this.steamBeacon.output as GainNode;
+    } else if (level.acousticWalls && level.acousticWalls.length > 0) {
       this.modeledBeacon = new ModeledSource(graph.ctx, graph.master, renderer.set);
       this.beaconInput = this.modeledBeacon.input;
       this.beaconOutput = this.modeledBeacon.output;
@@ -194,11 +242,12 @@ export class Game {
     // Monsters: a PURE AI state + a looping growl through its own HrtfSource so it's
     // locatable by ear and Dopplers as it chases. No-op when the level has none.
     for (const m of level.monsters ?? []) {
-      const src = renderer.createSource();
-      src.output.connect(graph.master);
+      // Route the monster through the SELECTED engine (Steam Audio when active, else
+      // our HrtfSource), so the whole scene is spatialized by one engine.
+      const src = this.makePositionedSource();
       // Start the synth voice immediately so the monster is never silent. If a
       // `soundUrl` is set, the shared helper loops that recording through the SAME
-      // HrtfSource (so it spatializes / Dopplers as the monster chases) and we swap
+      // source (so it spatializes / Dopplers as the monster chases) and we swap
       // to it when it arrives; on failure/no-url the synth growl/hum stays.
       const voice = new MonsterVoice(this.graph.ctx, src.input, resolveMonsterPreset(m.sound));
       voice.start();
@@ -227,6 +276,28 @@ export class Game {
     // audio is already correct (occluded/diffracted as appropriate), rather than
     // silent until the first tick. No-op for the plain-HrtfSource fallback.
     this.refreshBeacon();
+  }
+
+  /**
+   * Create a positioned voice through the ACTIVE engine: a Steam Audio source when
+   * `?engine=steam` is selected, otherwise our straight-line `HrtfSource`. Both
+   * expose `{ input, output, setPosition, teardown }`, so callers (monsters today;
+   * the beacon could share this once the modeled fallback is folded in) don't care
+   * which engine is live. The output is wired to the master bus.
+   */
+  private makePositionedSource(): PositionedVoice {
+    if (this.steam) {
+      const h = this.steam.createSource();
+      return { input: h.input, output: h.output, setPosition: h.setPosition, teardown: h.dispose };
+    }
+    const src = this.renderer.createSource();
+    src.output.connect(this.graph.master);
+    return {
+      input: src.input,
+      output: src.output,
+      setPosition: (x, y, z) => src.setPosition(x, y, z),
+      teardown: () => src.disconnect(),
+    };
   }
 
   /**
@@ -273,6 +344,14 @@ export class Game {
    */
   private applyAudioPose(pose: AudioPose) {
     this.renderer.setListener({ x: pose.x, y: this.headHeight, z: pose.z, yaw: this.audioYaw });
+    if (this.steam && this.steamBeacon) {
+      // Steam Audio path: drive its listener + beacon source position. world.step
+      // (the actual sim) is pumped from tick(). The HRTF renderer listener above is
+      // still updated for footsteps/monsters (our engine), which keep using it.
+      this.steam.setListener(pose.x, this.headHeight, pose.z, this.audioYaw);
+      this.steamBeacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
+      return;
+    }
     if (this.beacon) {
       // Plain (fallback) beacon: straight-line spatializer, repositioned per frame.
       this.beacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
@@ -334,6 +413,12 @@ export class Game {
    */
   tick(nowMs = this.graph.ctx.currentTime * 1000) {
     this.glide.tick(nowMs);
+    // Steam Audio path: pump the sim (occlusion raycast + reflection trace) by the
+    // per-frame dt so moving listener/source occlusion + reflections track motion.
+    if (this.steam) {
+      const dtMs = this.lastTickMs == null ? 16 : Math.max(0, nowMs - this.lastTickMs);
+      this.steam.step(dtMs / 1000);
+    }
     // Keep the modeled beacon's room IR fresh even when the glide is idle: a turning
     // listener, or moving walls (the caller may swap `acousticWalls` per frame),
     // must re-solve occlusion/diffraction. Throttled + dirty-checked inside refresh,
@@ -386,6 +471,9 @@ export class Game {
   setAcousticGeometry(walls: WallDef[], edges: EdgeDef[]) {
     this.level.acousticWalls = walls;
     this.level.acousticEdges = edges;
+    // Steam Audio: rebuild its static scene from the live walls (moving-wall levels).
+    // commit() rebuilds the BVH; cheap enough at the moving-walls throttle.
+    this.steam?.setGeometry(walls);
   }
 
   /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */
@@ -504,13 +592,14 @@ export class Game {
     }
     this.beacon?.disconnect();
     this.modeledBeacon?.disconnect();
+    this.steamBeacon?.dispose();
     for (const m of this.monsters) {
       m.voice?.stop();
       if (m.custom) {
         try { m.custom.stop(); } catch { /* already stopped */ }
         m.custom = null;
       }
-      m.src.disconnect();
+      m.src.teardown();
     }
     this.monsters = [];
   }

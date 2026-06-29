@@ -133,6 +133,23 @@ The solver handles convex polygons. For curved walls (a rounded plaza) or concav
 rooms, add tessellation in `load.ts` (approximate curves as polygon strips) or a
 ray-tracing path for diffuse reflections.
 
+### 🟢 Steam Audio backend (selectable, A/B) — IMPLEMENTED
+WASM Steam Audio (`three-steam-audio`) is wired as a **selectable** spatial backend
+alongside our own engine, chosen via a **Begin-screen checkbox** ("High-fidelity
+audio (Steam Audio, experimental)"; `?engine=steam` pre-checks it; default = our
+engine). The **beacon AND monsters** route through the selected engine (ray-traced
+occlusion + reflections + per-source reverb buses → our master/limiter); our
+`WallDef[]` is converted to a Steam Audio scene (8→3-band absorption, scattering
+scalar, thin-box for double-sided walls). Loaded via a **dynamic import** so `three`
++ the 6 MB WASM stay out of the default bundle. Browser-verified on `clap-maze` +
+`monster-cellar` (both engines, zero console errors). See
+`docs/engine/steam-audio-backend.md`.
+- **Follow-up:** A/B by ear to decide whether Steam Audio becomes the default or stays
+  a high-fidelity mode (keeping our diffraction-rich engine for the trainer).
+- **Prod requirement:** the deployed host must send COOP/COEP (cross-origin isolation)
+  for the threaded reflection sim — `vite preview` now does; production host/`_headers`
+  must too.
+
 ---
 
 ## HRTF / spatial audio

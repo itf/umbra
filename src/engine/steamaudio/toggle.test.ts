@@ -1,0 +1,24 @@
+import { describe, it, expect } from 'vitest';
+import { selectBackend, selectBackendFromSearch } from './toggle';
+
+describe('backend selection', () => {
+  it('picks steam only for engine=steam', () => {
+    expect(selectBackend('steam')).toBe('steam');
+  });
+
+  it('defaults to ours for absent / unknown / explicit ours', () => {
+    expect(selectBackend(null)).toBe('ours');
+    expect(selectBackend(undefined)).toBe('ours');
+    expect(selectBackend('ours')).toBe('ours');
+    expect(selectBackend('')).toBe('ours');
+    expect(selectBackend('STEAM')).toBe('ours'); // case-sensitive, exact match
+    expect(selectBackend('something')).toBe('ours');
+  });
+
+  it('reads the engine param from a query string', () => {
+    expect(selectBackendFromSearch('?engine=steam')).toBe('steam');
+    expect(selectBackendFromSearch('?engine=steam&level=clap-maze')).toBe('steam');
+    expect(selectBackendFromSearch('?level=clap-maze')).toBe('ours');
+    expect(selectBackendFromSearch('')).toBe('ours');
+  });
+});

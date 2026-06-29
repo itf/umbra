@@ -15,6 +15,8 @@ import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { OnboardingStore } from './ui/onboardingStore';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
+import { selectBackendFromSearch } from './engine/steamaudio/toggle';
+import type { SpatialBackend } from './game/game';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -28,6 +30,13 @@ const backButton = document.getElementById('back-to-picker') as HTMLButtonElemen
 const startLevelName = document.getElementById('start-level-name');
 const calibrationScreen = document.getElementById('calibration-screen')!;
 const tutorialScreen = document.getElementById('tutorial-screen')!;
+const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
+
+// Initialise the engine toggle from the URL param so ?engine=steam pre-checks it;
+// the checkbox is then the source of truth at Begin (it can override the param).
+if (engineToggle) {
+  engineToggle.checked = selectBackendFromSearch(location.search) === 'steam';
+}
 
 const onboarding = new OnboardingStore();
 
@@ -259,6 +268,31 @@ startButton.addEventListener('click', async () => {
     if (SPEED_OF_SOUND != null) renderer.setSpeedOfSound(SPEED_OF_SOUND);
     await initAcoustics();
 
+    // Backend selection (?engine=steam vs default ours). Steam Audio is loaded ONLY
+    // on opt-in via a dynamic import (keeps three + the 6 MB WASM out of the default
+    // bundle). On ANY init failure we fall back to our engine — never leave the game
+    // silent. See docs/engine/steam-audio-backend.md.
+    let steam: SpatialBackend | null = null;
+    // The checkbox is the source of truth (pre-seeded from ?engine=steam); if it's
+    // absent for any reason, fall back to the URL param.
+    const wantSteam = engineToggle
+      ? engineToggle.checked
+      : selectBackendFromSearch(location.search) === 'steam';
+    if (wantSteam) {
+      say('Loading Steam Audio backend…');
+      try {
+        const { SteamAudioBackend } = await import('./engine/steamaudio/backend');
+        steam = await SteamAudioBackend.create(ctx, graph.master, {
+          hrtf: true,
+          scattering: SCATTER,
+        });
+        console.info('[papasangre] Steam Audio backend active (?engine=steam).');
+      } catch (e) {
+        console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
+        steam = null;
+      }
+    }
+
     startScreen.hidden = true;
     gameScreen.hidden = false;
 
@@ -297,7 +331,7 @@ startButton.addEventListener('click', async () => {
         alert('A monster caught you. Press start to try again.');
       },
       onProgress: (d) => updateFootHints(d),
-    });
+    }, undefined, steam);
 
     // --- Turn control: the compass dial (only turn control) ---
     setupTurning(game);

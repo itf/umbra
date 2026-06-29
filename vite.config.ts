@@ -35,6 +35,19 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
+  // `vite preview` (and any production host) MUST send the same cross-origin
+  // isolation headers: Steam Audio's threaded reflection sim needs SharedArrayBuffer,
+  // which is gated behind COOP/COEP (`crossOriginIsolated === true`). Without these,
+  // `?engine=steam` fails to init and falls back to our engine. Our own engine does
+  // NOT need this, so default builds are unaffected. NOTE: the DEPLOYED app must also
+  // send these headers from its host (e.g. a `_headers` file on Cloudflare Pages /
+  // Netlify, or the PWA service worker) — the preview server only covers local checks.
+  preview: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
   worker: {
     format: 'es',
   },
