@@ -5,7 +5,7 @@
  */
 import type { Level, MaterialName, WallObj } from './schema';
 import type { GameLevel } from '../game/game';
-import type { WallDef } from '../engine/acoustics/core';
+import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { MATERIALS, scatteringFor } from '../engine/acoustics/materials';
 
 const abs = (m: string): number[] => [...(MATERIALS[m] ?? MATERIALS.concrete)];
@@ -14,6 +14,12 @@ export interface LoadedLevel {
   game: GameLevel;
   /** Acoustic geometry (perimeter + interior walls) for the clap/room IR. */
   walls: WallDef[];
+  /**
+   * Diffracting edges (doorway jambs / partial-wall ends) auto-derived from the
+   * interior walls' free ends. Passed to the room solver so diffraction "just
+   * works" in authored levels. See `diffractionEdgesAt`.
+   */
+  edges: EdgeDef[];
   roomSize: [number, number, number];
   /** Representative scattering coefficient across the level's materials. */
   scattering: number;
@@ -166,6 +172,70 @@ function interiorWallsAt(level: Level, t: number): WallDef[] {
   });
 }
 
+/**
+ * Auto-derive first-order diffracting edges from the level's interior walls.
+ *
+ * Each interior wall is a thin vertical quad extruded from floor (y=0) to room
+ * height. Its two FREE ENDS — the vertical edges at the segment endpoints that
+ * are not joined to another wall or the perimeter — are exactly the surfaces
+ * sound bends around: doorway jambs and the ends of partial walls. We emit one
+ * vertical `EdgeDef` (floor → wall-top) per free end.
+ *
+ * HEURISTIC ("free" detection) and its LIMITS:
+ *  - An endpoint is "free" when it is NOT coincident (within `EDGE_EPS`) with any
+ *    OTHER wall endpoint and NOT lying on the room perimeter (x≈0/width or
+ *    z≈0/depth). Endpoints shared by two walls (an L/T junction) or buried in the
+ *    perimeter are skipped — those are solid corners, not diffracting free ends.
+ *  - This is a pragmatic test, not full geometric free-end detection: an endpoint
+ *    that touches the MIDDLE of another wall (a true T-junction not sharing a
+ *    vertex) is treated as free and over-emits an edge. That is acoustically
+ *    near-harmless — the UTD coefficient is ~unity when the listener isn't in that
+ *    edge's shadow — so we accept it rather than do full segment-incidence tests.
+ *  - First-order only (one bend); no second-order edge chaining.
+ *  - Open / perimeter-only levels with no interior walls yield NO edges.
+ *
+ * Time-parameterised (`t` seconds) so moving walls' free ends track their motion,
+ * mirroring `interiorWallsAt`.
+ */
+const EDGE_EPS = 0.05; // 5 cm: endpoints closer than this are "the same point"
+
+function onPerimeter(level: Level, x: number, z: number): boolean {
+  const { width: w, depth: d } = level.room;
+  if (level.open) return false; // no perimeter to be buried in
+  return (
+    Math.abs(x) < EDGE_EPS || Math.abs(x - w) < EDGE_EPS ||
+    Math.abs(z) < EDGE_EPS || Math.abs(z - d) < EDGE_EPS
+  );
+}
+
+export function diffractionEdgesAt(level: Level, t: number): EdgeDef[] {
+  const sy = level.room.height;
+  // All interior-wall endpoints at time t, as (x,z) pairs tagged by wall index.
+  const segs = level.walls.map((w) => wallSegmentAt(w, t));
+  const ends: Array<{ wi: number; x: number; z: number }> = [];
+  for (let i = 0; i < segs.length; i++) {
+    ends.push({ wi: i, x: segs[i].ax, z: segs[i].az });
+    ends.push({ wi: i, x: segs[i].bx, z: segs[i].bz });
+  }
+
+  const coincidesWithOther = (wi: number, x: number, z: number): boolean =>
+    ends.some(
+      (e) => e.wi !== wi && Math.hypot(e.x - x, e.z - z) < EDGE_EPS,
+    );
+
+  const edges: EdgeDef[] = [];
+  for (const e of ends) {
+    if (onPerimeter(level, e.x, e.z)) continue; // buried in a perimeter wall
+    if (coincidesWithOther(e.wi, e.x, e.z)) continue; // joined to another wall
+    // A free end: emit a vertical diffracting edge (floor → wall top).
+    edges.push([
+      [e.x, 0, e.z],
+      [e.x, sy, e.z],
+    ]);
+  }
+  return edges;
+}
+
 /** Does this level contain any wall that moves? (cheap gate for the live loop) */
 export function levelHasMovingWalls(level: Level): boolean {
   return level.walls.some((w) => w.motion != null);
@@ -260,6 +330,7 @@ export function loadLevel(level: Level): LoadedLevel {
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the
   // interior geometry per frame via `wallsAt(level, t)`.
   const walls = wallsAt(level, 0);
+  const edges = diffractionEdgesAt(level, 0);
 
   // Representative mid-band scattering across all the materials in play.
   const usedMats = new Set<string>([
@@ -274,6 +345,7 @@ export function loadLevel(level: Level): LoadedLevel {
   return {
     game,
     walls,
+    edges,
     roomSize: [level.room.width, level.room.height, level.room.depth],
     scattering,
     level,

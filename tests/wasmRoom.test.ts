@@ -7,6 +7,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { emptyLevel } from '../src/level/schema';
+import { loadLevel } from '../src/level/load';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const wasmDir = resolve(here, '../src/engine/acoustics/wasm');
@@ -80,5 +82,61 @@ describe('WASM general-room binding', () => {
       verts, sizes, abs, edge, listener, source, 1, 343,
     );
     expect(withEdge.length / stride).toBe(noEdge.length / stride + 1);
+  });
+
+  it('a doorway level (auto-derived edges) yields a diffracted tap in the shadow', () => {
+    // A wall spanning x∈[0,7] at z=8 leaves a doorway opening at x>7. Its free end
+    // at (7,8) is auto-derived as a diffracting edge by loadLevel.
+    const lvl = emptyLevel(); // 12 x 16 x 3
+    lvl.walls.push({ id: 'door', ax: 0, az: 8, bx: 7, bz: 8, material: 'brick' });
+    const loaded = loadLevel(lvl);
+    // One interior end is free (x=7); the x=0 end is buried in the perimeter.
+    expect(loaded.edges.length).toBe(1);
+    expect(loaded.edges[0][0][0]).toBe(7);
+
+    const stride = mod.tap_stride();
+    const verts: number[] = [];
+    const sizes: number[] = [];
+    const abs: number[] = [];
+    for (const w of loaded.walls) {
+      sizes.push(w.verts.length);
+      for (const v of w.verts) verts.push(v[0], v[1], v[2]);
+      for (let b = 0; b < NB; b++) abs.push(w.absorption[b]);
+    }
+    const edges: number[] = [];
+    for (const e of loaded.edges) edges.push(...e[0], ...e[1]);
+
+    // Source on one side of the wall, listener on the other and toward x=2 so the
+    // direct line is occluded by the wall (the free end is at x=7) — i.e. shadow.
+    const source = new Float32Array([2, 1.6, 5]);
+    const listener = new Float32Array([2, 1.6, 11]);
+    const run = (eg: number[]) =>
+      mod.compute_room_taps(
+        new Float32Array(verts), new Uint32Array(sizes), new Float32Array(abs),
+        new Float32Array(eg), listener, source, 1, 343,
+      );
+    const withEdge = run(edges);
+    const noEdge = run([]);
+    // The derived edge adds exactly one diffraction tap.
+    expect(withEdge.length / stride).toBe(noEdge.length / stride + 1);
+
+    // That extra tap is a first-order diffraction (order==1), longer than the
+    // direct line, and duller (HF band attenuated below the low band).
+    const n = withEdge.length / stride;
+    let found = false;
+    const directLen = Math.hypot(2 - 2, 0, 11 - 5);
+    for (let i = 0; i < n; i++) {
+      const o = i * stride;
+      if (withEdge[o + 5] === 1) {
+        found = true;
+        const pathLen = withEdge[o] * 343;
+        expect(pathLen).toBeGreaterThan(directLen);
+        const lowBand = withEdge[o + 6];
+        const highBand = withEdge[o + 6 + (NB - 1)];
+        expect(highBand).toBeLessThan(lowBand); // duller
+        expect(lowBand).toBeLessThan(1); // quieter
+      }
+    }
+    expect(found).toBe(true);
   });
 });

@@ -117,12 +117,22 @@ distance-dependent **air absorption** (high-frequency rolloff). See §6 for the 
 
 ### 4.3 Diffraction (`diffraction.rs`)
 Sound bending around an edge (doorway jamb, corner) so a source is heard even when
-the direct path is blocked. We use the **geometric games approximation** (Wwise /
-Steam-Audio style), not full UTD integrals: golden-section search finds the
-shortest detour source→edge→listener; attenuation grows with how far past the
-shadow boundary the listener sits, with a frequency-dependent high-frequency
-rolloff baked into the band gains. First-order only. A true UTD coefficient can
-replace the attenuation term later without changing callers.
+the direct path is blocked. **Geometry** is the games approximation
+(golden-section search finds the shortest detour source→edge→listener, setting the
+delay and 1/r gain). **Attenuation** is a true **UTD coefficient** — the
+half-plane / knife-edge Kouyoumjian–Pathak asymptotic with the Fresnel-integral
+transition function `|H(v)| = (1/√2)·sqrt((½−C(v))² + (½−S(v))²)`, where the
+Fresnel parameter `v = sign·sqrt(2δ/λ)` depends on the excess path length `δ` and
+frequency. This is **continuous across the shadow boundary** (`|H(0)| = 0.5`, no
+jump — the key improvement over the old heuristic), gives the correct shadow-zone
+attenuation, and rolls off HF more deeply in shadow for free (since `v ∝ sqrt(f)`).
+Wedge assumption: knife-edge (half-plane); first-order only.
+
+Diffracting **edges are auto-derived from level geometry** (`load.ts`,
+`diffractionEdgesAt`): each interior wall's free ends (endpoints not on the
+perimeter and not shared with another wall — i.e. doorway jambs and partial-wall
+ends) emit a vertical `EdgeDef`. `loadLevel` returns them in `LoadedLevel.edges`;
+the clap/room path passes them through. See `docs/engine/diffraction-utd.md`.
 
 ### 4.4 WASM API (`lib.rs`)
 A **flat Float32 interface** — no object marshalling across the boundary.

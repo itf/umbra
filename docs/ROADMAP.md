@@ -32,8 +32,9 @@ with tests + per-feature docs under `docs/engine/`:
   rotate/walk/glide/IR-swap → no clicks) + a master limiter (no clipping).
   `docs/engine/audio-artifacts-and-clipping.md`. (covers the "Live-render tests" item below)
 
-In progress / next: auto-derived diffraction edges + UTD coefficient, a player
-**noise-event model**, then **monster chase AI** (hunts your last noise).
+Done recently: auto-derived diffraction edges + UTD diffraction coefficient.
+In progress / next: a player **noise-event model**, then **monster chase AI**
+(hunts your last noise).
 
 ---
 
@@ -91,18 +92,24 @@ so a large hard room rings longer than a small absorbent one; the diffuse smear 
 the tail for energy continuity. ~1 ms added to the IR build. `docs/engine/late-reverb-fdn.md`.
 
 ### 🟡 Better diffraction
-First-order **geometric approximation** only (`diffraction.rs`).
-- Replace the attenuation term with a true **UTD coefficient** (Tsingos/Steam
-  Audio) for physical accuracy.
+First-order, with a true **UTD coefficient** (`diffraction.rs`).
+- ✅ **UTD coefficient** — half-plane / knife-edge Kouyoumjian–Pathak asymptotic
+  with the Fresnel-integral transition function; continuous across the shadow
+  boundary, correct frequency dependence. See `docs/engine/diffraction-utd.md`.
+- ✅ **Auto-derived edges** from level geometry (doorway jambs / partial-wall ends),
+  wired through `loadLevel` (see below).
 - Add **2nd-order** edge pathfinding (cap low — cost is combinatorial in finding
   which edges, not the coefficient math).
-- Wire diffraction edges from the editor geometry (doorway jambs) automatically
-  rather than only when explicitly provided.
+- Carry the real **wedge exterior angle** into the UTD term (currently knife-edge
+  only); add slope diffraction for smoother near-boundary HF.
 
-### 🔴 Wire diffraction edges from level geometry
-The general solver accepts diffraction `edges`, but `load.ts` doesn't yet derive
-them from walls/openings. Auto-generate edges at wall ends and doorway jambs so
-diffraction "just works" in authored levels.
+### ✅ Wire diffraction edges from level geometry
+`load.ts` (`diffractionEdgesAt`) now auto-derives diffracting edges at interior
+walls' free ends (doorway jambs / partial-wall ends): endpoints not on the
+perimeter and not shared with another wall. `loadLevel` returns them in
+`LoadedLevel.edges` and the clap/room path passes them to the solver, so
+diffraction "just works" in authored levels. Pragmatic free-end detection
+(first-order only; over-emits at non-vertex T-junctions, which is harmless).
 
 ### 🟡 Improve material data
 - Replace the **estimated** outdoor surfaces (asphalt/grass/gravel/water) and all
@@ -196,7 +203,8 @@ limiter). `docs/engine/audio-artifacts-and-clipping.md`.
 
 - IR build is JS (~32 ms) — see "Real-time IR build."
 - Monsters place-only; beacon is a bare sine.
-- Diffraction first-order, geometric approximation; no late reverb.
+- Diffraction first-order (geometric detour + UTD coefficient); knife-edge wedge
+  assumption; no 2nd-order edge chaining.
 - Open-space levels: the clap uses the general solver (correct), but verify edge
   cases with no enclosing surfaces.
 - One fixed HRTF subject; `nearestDir` snaps (no interpolation).

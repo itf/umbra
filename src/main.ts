@@ -3,10 +3,10 @@ import { HrtfRenderer } from './engine/hrtf/renderer';
 import { Compass } from './game/compass';
 import { initAcoustics } from './engine/acoustics/core';
 import { ClapRoom } from './engine/acoustics/clapRoom';
-import type { WallDef } from './engine/acoustics/core';
+import type { WallDef, EdgeDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
 import { Heading } from './game/heading';
-import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, liveRebuildSignature } from './level/load';
+import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
 import type { Level } from './level/schema';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
@@ -36,6 +36,7 @@ let LEVEL: GameLevel = {
 // Acoustic geometry for the clap (the general solver). Defaults to the built-in
 // room's 6 walls; replaced by the editor level's geometry when loaded.
 let WALLS: WallDef[] = boxRoomWalls(ROOM, 'concrete');
+let EDGES: EdgeDef[] = [];
 let SCATTER = 0.05;
 // The source level + a moving-walls flag, so the live IR loop can re-derive
 // geometry from the animation clock. Null when running the built-in default room.
@@ -52,6 +53,7 @@ if (new URLSearchParams(location.search).get('level') === 'current') {
     LEVEL = loaded.game;
     ROOM = loaded.roomSize;
     WALLS = loaded.walls;
+    EDGES = loaded.edges;
     SCATTER = loaded.scattering;
     SRC_LEVEL = loaded.level;
     HAS_MOVING_WALLS = loaded.hasMovingWalls;
@@ -218,6 +220,7 @@ function setupClap(
     clapRoom.updateGeneralRoom(WALLS, [p.x, p.y, p.z], p.yaw, {
       maxOrder: 2,
       scattering: SCATTER,
+      edges: EDGES,
     });
     clapRoom.clap();
     say('Clap! Listen to the room around you.');
@@ -239,6 +242,7 @@ function setupClap(
       // Live geometry must update EVERY frame (the clap button + collision-free
       // recompute read WALLS), even on frames we don't rebuild.
       WALLS = wallsAt(level, t);
+      EDGES = diffractionEdgesAt(level, t);
       // The signature is only consumed at the throttle rate, so skip the string
       // allocation on frames inside the throttle window — updateLive would no-op
       // on them anyway.
@@ -249,6 +253,7 @@ function setupClap(
         clapRoom.updateLive(WALLS, sig, [p.x, p.y, p.z], p.yaw, {
           maxOrder: 2,
           scattering: SCATTER,
+          edges: EDGES,
           minIntervalMs: MIN_INTERVAL_MS,
         });
       }
