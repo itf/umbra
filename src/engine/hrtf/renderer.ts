@@ -14,6 +14,7 @@
 import { getIrPair, loadHrtf, nearestDir, type HrtfSet } from './sofa';
 import { DEFAULT_SPEED_OF_SOUND } from '../acoustics/core';
 import { DEFAULT_MAX_DELAY_SEC, propagationDelaySec, clampDelaySec } from './propagation';
+import { linearCrossfade } from '../crossfade';
 
 export interface ListenerPose {
   x: number;
@@ -153,9 +154,11 @@ interface ConvChain {
  *
  * Swapping a ConvolverNode's buffer mid-signal produces an audible CLICK, which
  * was very noticeable while turning (the direction index changes constantly).
- * To avoid it we keep TWO convolver chains and equal-power crossfade between them
- * on each direction change: load the new HRIR into the idle chain, then ramp one
- * gain up and the other down over a few milliseconds. The result is smooth.
+ * To avoid it we keep TWO convolver chains and crossfade between them on each
+ * direction change: load the new HRIR into the idle chain, then ramp one gain up and
+ * the other down over a few milliseconds (a LINEAR sum-to-1 fade — see crossfade.ts
+ * for why linear, not equal-power, is correct for these correlated chains). The
+ * result is smooth and never overshoots full-scale on fast turns.
  */
 export class HrtfSource {
   readonly input: GainNode; // connect your audio here
@@ -261,18 +264,17 @@ export class HrtfSource {
     // no swap. Only commit a real crossfade once the prior one has settled.
     const FADE = 0.04; // 40 ms
     const idle = this.active ^ 1;
-    if (t - this.lastSwapTime < FADE) {
-      // Update the incoming chain's buffer in place; its gain ramp continues.
-      this.chains[idle].convolver.buffer = buf;
-      return;
-    }
+    // Mid-fade: drop this update rather than swapping the audible chain's buffer
+    // (which resets the convolver → click) or stacking fades (which makes the two
+    // decorrelated HRIR chains sum above full-scale → the clipping/"fart" on fast
+    // spins). The next direction change after the fade settles picks up the latest.
+    if (t - this.lastSwapTime < FADE) return;
 
     this.chains[idle].convolver.buffer = buf;
-    // Equal-power-ish crossfade via setTargetAtTime time-constants.
-    this.chains[idle].gain.gain.cancelScheduledValues(t);
-    this.chains[this.active].gain.gain.cancelScheduledValues(t);
-    this.chains[idle].gain.gain.setTargetAtTime(1, t, FADE / 3);
-    this.chains[this.active].gain.gain.setTargetAtTime(0, t, FADE / 3);
+    // LINEAR sum-to-1 crossfade: the two HRIR chains carry the SAME source at
+    // adjacent directions (highly correlated), so amplitudes add — a linear pair
+    // (g_in + g_out = 1) keeps the level flat where equal-power would overshoot √2.
+    linearCrossfade(this.chains[idle].gain.gain, this.chains[this.active].gain.gain, t, FADE);
     this.active = idle;
     this.lastSwapTime = t;
   }

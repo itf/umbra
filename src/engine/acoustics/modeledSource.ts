@@ -16,13 +16,14 @@
  *    MOVING source Dopplers as those per-tap delays change between rebuilds and the
  *    dual-convolver crossfade ramps across — no separate DelayNode needed.
  *
- * It mirrors ClapRoom's proven dual-convolver equal-power crossfade (`swapIr`), but
+ * It mirrors ClapRoom's proven dual-convolver crossfade (`swapIr`), but
  * is fed by a continuous dry input (`input`) rather than a one-shot clap. Refreshes
  * are throttled (~14 Hz) with a quantized-pose dirty check so it stays cheap.
  */
 import { computeRoomTaps, type WallDef, type EdgeDef } from './core';
 import { buildRoomIr } from './roomIr';
 import type { HrtfSet } from '../hrtf/sofa';
+import { linearCrossfade } from '../crossfade';
 
 /**
  * Quantisation steps for the dirty check (mirrors `load.ts`'s POSE_*_QUANTUM, kept
@@ -109,7 +110,7 @@ export class ModeledSource {
   private ctx: AudioContext;
   private hrtf: HrtfSet;
   /**
-   * DUAL convolvers, equal-power crossfaded — copied from ClapRoom/renderer. Swapping
+   * DUAL convolvers, linearly crossfaded (crossfade.ts) — copied from ClapRoom/renderer. Swapping
    * a single ConvolverNode's buffer mid-signal CLICKS; loading each new IR into the
    * idle chain and ramping across is click-free.
    */
@@ -126,6 +127,12 @@ export class ModeledSource {
     this.hrtf = hrtf;
     this.input = ctx.createGain();
     this.output = ctx.createGain();
+    // HEADROOM: the convolved beacon already peaks near full-scale (~0.97) when
+    // facing it, leaving no room for the unavoidable transient when crossfading
+    // between two correlated IRs during a turn — which pushed peaks past 1.0 into the
+    // safety clip (the audible "farting" on fast spins). Trim ~3 dB so the worst-case
+    // crossfade transient stays under full-scale and the clip never engages here.
+    this.output.gain.value = 0.7;
     this.output.connect(master);
 
     const makeChain = (): ModeledChain => {
@@ -204,18 +211,23 @@ export class ModeledSource {
       return;
     }
     const t = ctx.currentTime;
-    const FADE = 0.08; // 80 ms equal-power-ish crossfade
+    const FADE = 0.08; // 80 ms crossfade
     const idle = this.active ^ 1;
-    // Rate-limit: if still mid-fade, just refresh the incoming buffer (no new ramp).
-    if (t - this.lastFadeT < FADE) {
-      this.chains[idle].convolver.buffer = buf;
-      return;
-    }
+    // Rate-limit: if still mid-fade, DON'T touch the chains. Swapping the audible
+    // chain's convolver buffer mid-fade resets the convolver (a click), and starting
+    // overlapping fades lets the two chains sum ABOVE full-scale during a fast spin
+    // (the audible "farting"/clipping). Drop this IR; the next refresh after the fade
+    // settles picks up the latest pose.
+    if (t - this.lastFadeT < FADE) return;
     this.chains[idle].convolver.buffer = buf;
-    this.chains[idle].gain.gain.cancelScheduledValues(t);
-    this.chains[this.active].gain.gain.cancelScheduledValues(t);
-    this.chains[idle].gain.gain.setTargetAtTime(1, t, FADE / 3);
-    this.chains[this.active].gain.gain.setTargetAtTime(0, t, FADE / 3);
+    // LINEAR sum-to-1 crossfade. Across adjacent listener poses these two room IRs
+    // share the same source and are dominated by the (correlated) direct + early
+    // path — and `tail:false` strips the decorrelated late reverb — so their outputs
+    // add as AMPLITUDE. A linear pair (g_in + g_out = 1 at every instant) keeps the
+    // level flat; equal-power (sin/cos) would peak at √2 (+3 dB) → the very overshoot
+    // we're removing. The old setTargetAtTime exponentials never summed to 1 mid-fade
+    // (worse on back-to-back swaps), which was the clipping heard when turning.
+    linearCrossfade(this.chains[idle].gain.gain, this.chains[this.active].gain.gain, t, FADE);
     this.active = idle;
     this.lastFadeT = t;
   }
