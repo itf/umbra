@@ -67,6 +67,30 @@ identity `matrixWorld`.
 This keeps the split at the conventional low/mid (250↔500) and mid/high (2k↔4k)
 octave boundaries.
 
+**How much realism does 8→3 cost?** Measured on our actual material data, as the
+per-band reflection-spectrum error (dB) introduced by the collapse:
+
+| material | avg err | max err |
+|----------|:-------:|:-------:|
+| concrete | 0.03 dB | 0.06 dB |
+| marble | 0.01 dB | 0.06 dB |
+| brick | 0.05 dB | 0.15 dB |
+| glass | 0.22 dB | 0.77 dB |
+| curtain | 0.47 dB | 1.34 dB |
+| carpet | 1.25 dB | 5.11 dB |
+
+The loss is **near-zero for hard materials** (concrete/marble/brick ≤0.05 dB avg —
+below the ~1 dB just-noticeable difference, i.e. inaudible) because their absorption
+curves are nearly flat, so 3 points capture them. It's **largest for soft, steeply
+frequency-shaped materials** (carpet's bass-reflective/treble-dead ramp) — but those
+barely reflect at all (carpet absorbs 60–80% at mid/high), so the error sits on a
+reflection that's already deep down. Net: the cues that carry size/distance/direction/
+hardness are preserved; only fine timbre on soft surfaces degrades, and least audibly.
+This is why the **trainer's material-ID drills stay on our 8-band engine** (cue
+precision matters there) while the game uses Steam Audio (the 3-band loss is swamped by
+the traced-reflection/diffusion gain). brick↔concrete — the one material-discrimination
+pair — differs by only ~0.05 dB even at 3-band, so it survives regardless.
+
 **Scattering → scalar.** Steam Audio takes one scattering value per material. We use
 our level's representative scattering scalar (`acousticScattering`, ~1 kHz region),
 matching how the engine's `representativeScattering` works. (If a per-band scattering
