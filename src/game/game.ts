@@ -292,17 +292,6 @@ export class Game {
       this.steamBeacon = this.steam.createSource();
       this.beaconInput = this.steamBeacon.input as GainNode;
       this.beaconOutput = this.steamBeacon.output as GainNode;
-      // STARTUP CRACKLE FIX: position the source + listener and warm the sim BEFORE
-      // any audio flows, so the first blocks don't convolve through an unpositioned
-      // (0,0,0) source with no simulated IR yet. Then fade the beacon in over ~0.5 s
-      // to mask any residual onset transient while the sim converges. The normal
-      // engine doesn't need this — HrtfSource snaps to a valid HRIR on first place.
-      this.steamBeacon.setPosition(level.beacon.x, this.headHeight, level.beacon.z);
-      this.steam.setListener(level.start.x, this.headHeight, level.start.z, level.start.yaw);
-      this.steam.step(0.016);
-      const t0 = graph.ctx.currentTime;
-      this.beaconOutput.gain.setValueAtTime(0, t0);
-      this.beaconOutput.gain.linearRampToValueAtTime(1, t0 + 0.5);
     } else if (level.acousticWalls && level.acousticWalls.length > 0) {
       // Pass the interpolating renderer (?hrtf=interp) so the modeled beacon's
       // REFLECTIONS are rendered through the click-free, head-tracked worklet instead
