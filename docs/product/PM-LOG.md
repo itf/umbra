@@ -76,3 +76,7 @@ until it finishes, then commit + run full suite + playtest-review meeting.
   Touches trainer/*.
 - Disjoint → parallel-safe. Then **3C** e2e smoke harness (keyboard completion path +
   absorber mode). Commit each on green; reconvene for Cycle-3 review.
+
+**3A Editor SHIPPED** (`7e2c330`): absorber-patch tool, goal mode, clap-budget fields,
+absorber round-trip bug fix, validate-on-save, autosave+guard. +11 tests (350 total).
+**3B Trainer** still building (agent `a5f3dc5c…`); trainer files held uncommitted until done.
