@@ -338,12 +338,27 @@ export class ClapRoom {
     const ch = buf.getChannelData(0);
     for (let i = 0; i < n; i++) {
       // Short decaying noise burst — broadband impulse to excite all reflections.
+      // Length (~10 ms) is kept deliberately: a real mouth click spans up to ~50 ms,
+      // and shortening it thins the excitation. (Probe-masking claim measured + rejected.)
       const env = 1 - i / n;
       ch[i] = (Math.random() * 2 - 1) * env * env;
     }
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(this.clapBus); // feeds both convolver chains (crossfaded)
+
+    // GENTLE HF PRE-EMPHASIS: a modest high-shelf (+6 dB above ~1 kHz) on the clap
+    // excitation, so the echo carries more energy where material + pinna cues live
+    // (carpet/brick/metal differ mostly above ~1–4 kHz; a flat-white probe under-
+    // weights exactly that band). One transient BiquadFilter per clap — cheap — sits
+    // between the noise source and the clapBus, leaving the dual-convolver/crossfade
+    // path untouched. Tasteful, not harsh (NEEDS the user's ears to fine-tune).
+    const shelf = ctx.createBiquadFilter();
+    shelf.type = 'highshelf';
+    shelf.frequency.value = 1000;
+    shelf.gain.value = 6;
+
+    src.connect(shelf);
+    shelf.connect(this.clapBus); // feeds both convolver chains (crossfaded)
     src.start();
   }
 }

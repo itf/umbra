@@ -78,6 +78,19 @@ export interface GenOptions {
   nearDistanceM?: number;
 }
 
+/** Speed of sound (m/s) for echo-delay feedback — matches the engine default. */
+export const SPEED_OF_SOUND = 343;
+
+/**
+ * Round-trip echo delay (ms) for a wall `distM` metres directly ahead: the clap
+ * travels out and back, so Δt = 2·d/c. Used by the distance drill's post-answer
+ * feedback to close the perceptual loop ("its echo returned about 8.7 ms after the
+ * clap"). PURE — unit-tested without Web Audio.
+ */
+export function echoDelayMs(distM: number, speedOfSound = SPEED_OF_SOUND): number {
+  return (2 * distM) / speedOfSound * 1000;
+}
+
 // --- Difficulty helpers ------------------------------------------------------
 
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));

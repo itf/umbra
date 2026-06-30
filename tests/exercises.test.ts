@@ -12,6 +12,7 @@ import {
   makeQuestion,
   makeRandomQuestion,
   bearingToDirection,
+  echoDelayMs,
   hasRoomB,
   AB_TYPES,
   ALL_TYPES,
@@ -410,5 +411,19 @@ describe('difficulty', () => {
       return w[0] / w[1];
     };
     expect(ratio(hard)).toBeLessThan(ratio(easy));
+  });
+});
+
+describe('echoDelayMs (round-trip echo delay)', () => {
+  it('computes Δt = 2·d/343 in ms', () => {
+    // 1.5 m → 2·1.5/343 = 0.008746 s ≈ 8.7 ms; 3.0 m → 17.5 ms.
+    expect(echoDelayMs(1.5)).toBeCloseTo(8.746, 2);
+    expect(echoDelayMs(3.0)).toBeCloseTo(17.49, 1);
+    expect(echoDelayMs(0)).toBe(0);
+  });
+
+  it('scales linearly with distance and inversely with speed of sound', () => {
+    expect(echoDelayMs(2)).toBeCloseTo(2 * echoDelayMs(1), 6);
+    expect(echoDelayMs(1, 686)).toBeCloseTo(echoDelayMs(1, 343) / 2, 6);
   });
 });
