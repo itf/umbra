@@ -135,6 +135,28 @@ export function draw(
     if (w.motion) drawWallMotion(ctx, v, w, ax, ay, bx, by);
   }
 
+  // Absorber patches: a thick coloured segment on the perimeter face the patch sits
+  // on, drawn slightly inside the wall so it reads as a panel set into the wall. The
+  // label shows the material; selected patches highlight in the editor's accent.
+  for (const p of level.absorbers ?? []) {
+    const { width, depth } = level.room;
+    const u0 = p.u0, u1 = p.u0 + p.uSize;
+    let a: [number, number]; let b: [number, number];
+    if (p.wall === '-x') { a = [0, u0]; b = [0, u1]; }
+    else if (p.wall === '+x') { a = [width, u0]; b = [width, u1]; }
+    else if (p.wall === '-z') { a = [u0, 0]; b = [u1, 0]; }
+    else { a = [u0, depth]; b = [u1, depth]; }
+    const [ax, ay] = worldToScreen(v, a[0], a[1]);
+    const [bx, by] = worldToScreen(v, b[0], b[1]);
+    ctx.save();
+    ctx.strokeStyle = p.id === opts.selectedId ? '#ffd166' : matColor(p.material);
+    ctx.lineWidth = 7;
+    ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    ctx.restore();
+    label(ctx, (ax + bx) / 2, (ay + by) / 2 - 10, `▥ ${p.material}`);
+  }
+
   // Beacons.
   for (const b of level.beacons) {
     const [bx, by] = worldToScreen(v, b.x, b.z);

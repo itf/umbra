@@ -6,6 +6,7 @@
 import {
   emptyLevel, type Level, type MaterialName,
   type WallObj, type BeaconObj, type FloorZone, type MonsterObj, type CeilingZone,
+  type WallPatch,
 } from '../level/schema';
 import {
   saveLevel, loadLevel, deleteLevel, listLevels, exportLevel, importLevel,
@@ -16,10 +17,26 @@ import {
 } from './view';
 import { beaconPresetNames, resolveBeaconPreset, BeaconVoice, type BeaconPreset } from '../game/beaconSounds';
 import { MONSTER_PRESETS, resolveMonsterPreset } from '../game/monsterSounds';
-import { applyWallMotion } from './apply';
+import { applyWallMotion, applyAbsorberProp, defaultAbsorber, lintLevel } from './apply';
 import { kindLabel, objectListModel } from './objectList';
 
-type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster';
+type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber';
+
+/** Perimeter face extents (u = in-plane horizontal axis, v = height) for patches. */
+function faceExtents(level: Level, wall: WallPatch['wall']): { uMax: number; vMax: number } {
+  const uMax = (wall === '-x' || wall === '+x') ? level.room.depth : level.room.width;
+  return { uMax, vMax: level.room.height };
+}
+
+/** Which perimeter face is a world point closest to? (for the absorber tool). */
+function nearestFace(wx: number, wz: number): WallPatch['wall'] {
+  const { width, depth } = level.room;
+  const d: Record<WallPatch['wall'], number> = {
+    '-x': Math.abs(wx), '+x': Math.abs(wx - width),
+    '-z': Math.abs(wz), '+z': Math.abs(wz - depth),
+  };
+  return (Object.keys(d) as WallPatch['wall'][]).reduce((a, b) => (d[b] < d[a] ? b : a), '-z');
+}
 
 const $ = (id: string) => document.getElementById(id)!;
 const canvas = $('canvas') as HTMLCanvasElement;
@@ -37,6 +54,10 @@ let drag: { kind: 'wall' | 'floor' | 'ceiling' | 'move'; ax: number; az: number;
 let nextId = 1;
 const genId = (p: string) => `${p}-${Date.now()}-${nextId++}`;
 
+// Set true once the initial boot render completes, so boot-time renders don't mark
+// the (pristine) level dirty and trigger a spurious autosave / unload prompt.
+let booted = false;
+
 // ---------- rendering ----------
 function resize() {
   const r = canvas.getBoundingClientRect();
@@ -49,6 +70,7 @@ function render() {
   view = fitView(level, canvas);
   draw(ctx, canvas, level, view, { selectedId, grid: true });
   renderObjectList();
+  if (booted) markDirty(); // any re-render after boot reflects an edit ⇒ autosave
 }
 
 /** Select an object by id (as if clicked on the canvas) and reveal its props. */
@@ -94,7 +116,23 @@ function hitTest(wx: number, wz: number): string | null {
   for (const f of level.floors) {
     if (wx >= f.x && wx <= f.x + f.w && wz >= f.z && wz <= f.z + f.d) return f.id;
   }
+  for (const p of level.absorbers ?? []) {
+    const seg = absorberSeg(p);
+    if (distToSeg(wx, wz, seg.ax, seg.az, seg.bx, seg.bz) < 0.4) return p.id;
+  }
   return null;
+}
+
+/** The patch's footprint as a 2D segment along its perimeter face (top-down). */
+function absorberSeg(p: WallPatch): { ax: number; az: number; bx: number; bz: number } {
+  const { width, depth } = level.room;
+  const u0 = p.u0, u1 = p.u0 + p.uSize;
+  switch (p.wall) {
+    case '-x': return { ax: 0, az: u0, bx: 0, bz: u1 };
+    case '+x': return { ax: width, az: u0, bx: width, bz: u1 };
+    case '-z': return { ax: u0, az: 0, bx: u1, bz: 0 };
+    case '+z': return { ax: u0, az: depth, bx: u1, bz: depth };
+  }
 }
 function distToSeg(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
   const dx = bx - ax, dz = bz - az;
@@ -110,6 +148,7 @@ function findObj(id: string): StartLike | null {
   const f = level.floors.find((o) => o.id === id); if (f) return { kind: 'floor', ref: f };
   const c = level.ceilings.find((o) => o.id === id); if (c) return { kind: 'ceiling', ref: c };
   const m = level.monsters.find((o) => o.id === id); if (m) return { kind: 'monster', ref: m };
+  const p = level.absorbers?.find((o) => o.id === id); if (p) return { kind: 'absorber', ref: p };
   return null;
 }
 type StartLike =
@@ -118,7 +157,8 @@ type StartLike =
   | { kind: 'wall'; ref: WallObj }
   | { kind: 'floor'; ref: FloorZone }
   | { kind: 'ceiling'; ref: CeilingZone }
-  | { kind: 'monster'; ref: MonsterObj };
+  | { kind: 'monster'; ref: MonsterObj }
+  | { kind: 'absorber'; ref: WallPatch };
 
 // ---------- pointer interaction ----------
 canvas.addEventListener('pointerdown', (e) => {
@@ -142,6 +182,19 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'monster') {
     const m: MonsterObj = { id: genId('monster'), x: wx, z: wz, speed: 1.2, sound: 'growl' };
     level.monsters.push(m); selectedId = m.id; renderProps(); render(); return;
+  }
+  if (tool === 'absorber') {
+    // Place a default patch on the perimeter face nearest the click point; the author
+    // then refines the wall/rectangle/material in the props panel. The click's u
+    // (in-plane position) seeds the patch so it lands roughly where you clicked.
+    const wall = nearestFace(wx, wz);
+    const { uMax, vMax } = faceExtents(level, wall);
+    const p = defaultAbsorber(genId('foam'), wall, material, uMax, vMax);
+    // Centre the patch's u on the click's in-plane coordinate, clamped on-face.
+    const u = (wall === '-x' || wall === '+x') ? wz : wx;
+    p.u0 = Math.max(0, Math.min(uMax - p.uSize, u - p.uSize / 2));
+    (level.absorbers ??= []).push(p);
+    selectedId = p.id; renderProps(); render(); return;
   }
   if (tool === 'wall') { drag = { kind: 'wall', ax: wx, az: wz }; return; }
   if (tool === 'floor') { drag = { kind: 'floor', ax: wx, az: wz }; return; }
@@ -207,6 +260,13 @@ function moveObject(id: string, dx: number, dz: number) {
   if (!o) return;
   if (o.kind === 'wall') {
     o.ref.ax += dx; o.ref.az += dz; o.ref.bx += dx; o.ref.bz += dz;
+  } else if (o.kind === 'absorber') {
+    // Slide the patch along its face: u advances with the in-plane drag component,
+    // clamped so it stays on-face.
+    const p = o.ref;
+    const { uMax } = faceExtents(level, p.wall);
+    const du = (p.wall === '-x' || p.wall === '+x') ? dz : dx;
+    p.u0 = Math.max(0, Math.min(uMax - p.uSize, p.u0 + du));
   } else {
     // floor / ceiling / beacon / monster / start all have x,z.
     o.ref.x += dx; o.ref.z += dz;
@@ -287,6 +347,18 @@ function renderProps() {
         (p) => `<option ${p === mcur ? 'selected' : ''}>${p}</option>`,
       ).join('')}</select></label>`,
       `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`);
+  } else if (o.kind === 'absorber') {
+    rows.push(
+      `<label>wall<select data-k="wall">${
+        (['-x', '+x', '-z', '+z'] as const).map(
+          (f) => `<option ${f === o.ref.wall ? 'selected' : ''}>${f}</option>`,
+        ).join('')
+      }</select></label>`,
+      numRow('u0 (along)', 'u0', o.ref.u0, 0.5),
+      numRow('v0 (height)', 'v0', o.ref.v0, 0.1),
+      numRow('u size', 'uSize', o.ref.uSize, 0.5),
+      numRow('v size', 'vSize', o.ref.vSize, 0.1),
+      matRow(o.ref.material));
   }
   const canDelete = o.kind !== 'start';
   host.innerHTML = heading + rows.join('') +
@@ -321,6 +393,13 @@ function previewBeacon(b: BeaconObj) {
 function applyProp(o: StartLike, key: string, raw: string) {
   const num = parseFloat(raw);
   const r = o.ref as unknown as Record<string, unknown>;
+  if (o.kind === 'absorber') {
+    if (applyAbsorberProp(o.ref, key, raw, num)) {
+      renderProps(); // a wall change re-clamps the rectangle preview
+      render();
+      return;
+    }
+  }
   if (key === 'yawDeg') { (level.start.yaw as number) = (num * Math.PI) / 180; }
   else if (key === 'material' || key === 'sound' || key === 'soundUrl') {
     if (key === 'soundUrl' && raw === '') delete r.soundUrl;
@@ -343,6 +422,7 @@ function deleteSelected() {
   level.floors = level.floors.filter((o) => o.id !== selectedId);
   level.ceilings = level.ceilings.filter((o) => o.id !== selectedId);
   level.monsters = level.monsters.filter((o) => o.id !== selectedId);
+  if (level.absorbers) level.absorbers = level.absorbers.filter((o) => o.id !== selectedId);
   selectedId = null; renderProps(); render();
 }
 
@@ -355,6 +435,7 @@ function setTool(t: Tool) {
     t === 'select' ? 'Click an object to select; drag to move.'
     : t === 'wall' ? 'Drag to draw a wall.'
     : t === 'floor' ? 'Drag to draw a floor zone.'
+    : t === 'absorber' ? 'Click near a perimeter wall to place an absorber patch, then size it in the panel.'
     : `Click to place a ${t}.`;
 }
 document.querySelectorAll<HTMLButtonElement>('.tool').forEach((b) =>
@@ -417,6 +498,31 @@ sosEl.addEventListener('input', () => {
   else delete level.speedOfSound;
 });
 
+// Objective: goal mode (beacon | absorber). Writes level.goal; 'beacon' is the
+// default so we leave it implicit (delete the field) to keep old levels byte-identical.
+const goalEl = $('goal-mode') as HTMLSelectElement;
+goalEl.value = level.goal ?? 'beacon';
+goalEl.addEventListener('change', () => {
+  if (goalEl.value === 'absorber') level.goal = 'absorber';
+  else delete level.goal;
+  markDirty(); render(); // re-render the object list "(goal)" badges
+});
+
+// Sonar budget: max claps + cooldown. Empty/0/invalid ⇒ field unset (unlimited /
+// no cooldown), mirroring the speedOfSound pattern so old levels stay unchanged.
+function bindClapField(id: string, key: 'clapBudget' | 'clapCooldownMs') {
+  const el = $(id) as HTMLInputElement;
+  el.value = level[key] != null ? String(level[key]) : '';
+  el.addEventListener('input', () => {
+    const n = parseFloat(el.value);
+    if (el.value.trim() !== '' && Number.isFinite(n) && n > 0) level[key] = n;
+    else delete level[key];
+    markDirty();
+  });
+}
+bindClapField('clap-budget', 'clapBudget');
+bindClapField('clap-cooldown', 'clapCooldownMs');
+
 // Name.
 const nameEl = $('level-name') as HTMLInputElement;
 nameEl.value = level.name;
@@ -441,7 +547,7 @@ async function refreshLevelList() {
 
 $('btn-new').addEventListener('click', () => {
   level = emptyLevel(); selectedId = null;
-  nameEl.value = level.name; syncRoomInputs(); renderProps(); render();
+  nameEl.value = level.name; syncRoomInputs(); renderProps(); render(); markClean();
 });
 $('btn-save').addEventListener('click', async () => {
   level.name = nameEl.value || 'Untitled';
@@ -449,7 +555,11 @@ $('btn-save').addEventListener('click', async () => {
   // Also keep a "current" copy the game's ?level=current can read.
   localStorage.setItem('papasangre-current-level', JSON.stringify(level));
   await refreshLevelList();
-  flashHint(`Saved "${level.name}".`);
+  markClean();
+  // Non-blocking lint: surface likely authoring mistakes without preventing the save.
+  const warnings = lintLevel(level);
+  if (warnings.length) flashHint(`Saved "${level.name}". ⚠ ${warnings.join(' ')}`);
+  else flashHint(`Saved "${level.name}".`);
 });
 ($('level-list') as HTMLSelectElement).addEventListener('change', async (e) => {
   const sel = e.target as HTMLSelectElement;
@@ -464,7 +574,7 @@ $('btn-save').addEventListener('click', async () => {
   } else if (value.startsWith('saved:')) {
     l = await loadLevel(value.slice('saved:'.length));
   }
-  if (l) { level = l; selectedId = null; nameEl.value = l.name; syncRoomInputs(); renderProps(); render(); }
+  if (l) { level = l; selectedId = null; nameEl.value = l.name; syncRoomInputs(); renderProps(); render(); markClean(); }
   sel.value = ''; // reset so re-selecting the same entry fires change again
 });
 $('btn-delete').addEventListener('click', async () => {
@@ -485,7 +595,7 @@ $('btn-import').addEventListener('click', () => ($('file-input') as HTMLInputEle
   if (!file) return;
   try {
     level = importLevel(await file.text());
-    selectedId = null; nameEl.value = level.name; syncRoomInputs(); renderProps(); render();
+    selectedId = null; nameEl.value = level.name; syncRoomInputs(); renderProps(); render(); markClean();
     flashHint(`Imported "${level.name}".`);
   } catch (err) {
     flashHint('Import failed: ' + (err as Error).message);
@@ -508,7 +618,36 @@ function syncRoomInputs() {
   ($('ceil-mat') as HTMLSelectElement).value = level.ceilingMaterial;
   ($('room-sos') as HTMLInputElement).value =
     level.speedOfSound != null ? String(level.speedOfSound) : '';
+  ($('goal-mode') as HTMLSelectElement).value = level.goal ?? 'beacon';
+  ($('clap-budget') as HTMLInputElement).value =
+    level.clapBudget != null ? String(level.clapBudget) : '';
+  ($('clap-cooldown') as HTMLInputElement).value =
+    level.clapCooldownMs != null ? String(level.clapCooldownMs) : '';
 }
+// ---------- autosave + unsaved-changes guard ----------
+// Debounced autosave to the "current" slot (what the game's ?level=current reads),
+// plus a beforeunload guard so a reload doesn't silently lose work. `dirty` tracks
+// whether there are edits since the last explicit Save.
+let dirty = false;
+let autosaveTimer = 0;
+function markDirty() {
+  dirty = true;
+  clearTimeout(autosaveTimer);
+  autosaveTimer = window.setTimeout(() => {
+    try {
+      localStorage.setItem('papasangre-current-level', JSON.stringify(level));
+      localStorage.setItem('papasangre-editor-autosave', JSON.stringify(level));
+    } catch { /* storage full / unavailable — best-effort */ }
+  }, 800);
+}
+/** Clear the dirty flag after an explicit Save / New / Load. */
+function markClean() { dirty = false; clearTimeout(autosaveTimer); }
+window.addEventListener('beforeunload', (e) => {
+  if (!dirty) return;
+  e.preventDefault();
+  e.returnValue = ''; // triggers the browser's "unsaved changes" prompt
+});
+
 let hintTimer = 0;
 function flashHint(msg: string) {
   const el = $('hint') as HTMLElement;
@@ -530,3 +669,4 @@ setTool('select');
 resize();
 renderProps();
 refreshLevelList();
+booted = true; // boot renders done; subsequent renders are real edits (autosave on)

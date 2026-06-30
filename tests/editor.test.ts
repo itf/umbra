@@ -10,8 +10,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   applyWallMotion, DEFAULT_TRANSLATE, DEFAULT_SLIDE,
+  applyAbsorberProp, defaultAbsorber, lintLevel,
 } from '../src/editor/apply';
-import { emptyLevel, type Level, type WallObj } from '../src/level/schema';
+import { emptyLevel, type Level, type WallObj, type WallPatch } from '../src/level/schema';
 import { exportLevel, importLevel } from '../src/level/storage';
 import { kindLabel, objectListModel, type SelKind } from '../src/editor/objectList';
 import { MONSTER_PRESETS } from '../src/game/monsterSounds';
@@ -84,6 +85,7 @@ describe('kindLabel', () => {
       floor: 'Floor zone',
       ceiling: 'Ceiling zone',
       monster: 'Monster',
+      absorber: 'Absorber patch',
     };
     for (const [kind, label] of Object.entries(expected)) {
       expect(kindLabel(kind as SelKind)).toBe(label);
@@ -105,7 +107,7 @@ describe('objectListModel', () => {
     expect(model.map((e) => e.id)).toEqual(['start', 'b1', 'wall-1', 'f2', 'c1', 'm1']);
     expect(model.map((e) => e.kind)).toEqual(['start', 'beacon', 'wall', 'floor', 'ceiling', 'monster']);
     expect(model[0].label).toBe('Start');
-    expect(model[1].label).toBe('Beacon b1');
+    expect(model[1].label).toBe('Beacon b1 (goal)');
     expect(model[2].label).toBe('Wall wall-1');
     expect(model[3].label).toBe('Floor f2 (carpet)');
     expect(model[4].label).toBe('Ceiling c1 (wood)');
@@ -127,6 +129,113 @@ describe('objectListModel', () => {
     expect(model).toHaveLength(5);
     expect(model.filter((e) => e.kind === 'beacon')).toHaveLength(2);
     expect(model.filter((e) => e.kind === 'monster')).toHaveLength(2);
+  });
+});
+
+describe('absorber patches in the object list', () => {
+  function withFoam(): Level {
+    const lvl = emptyLevel('Foam');
+    lvl.goal = 'absorber';
+    lvl.absorbers = [
+      { id: 'foam-1', wall: '-z', u0: 6.5, v0: 0.8, uSize: 3, vSize: 1.6, material: 'acoustic_foam' },
+      { id: 'foam-2', wall: '+x', u0: 1, v0: 1, uSize: 2, vSize: 1, material: 'curtain' },
+    ];
+    return lvl;
+  }
+
+  it('enumerates every absorber so it can be selected/deleted', () => {
+    const model = objectListModel(withFoam());
+    const abs = model.filter((e) => e.kind === 'absorber');
+    expect(abs.map((e) => e.id)).toEqual(['foam-1', 'foam-2']);
+    expect(abs[0].label).toContain('-z');
+    expect(abs[0].label).toContain('acoustic_foam');
+  });
+
+  it('marks the first absorber as the goal in absorber mode', () => {
+    const model = objectListModel(withFoam());
+    const abs = model.filter((e) => e.kind === 'absorber');
+    expect(abs[0].label).toContain('(goal)');
+    expect(abs[1].label).not.toContain('(goal)');
+  });
+
+  it('marks the first beacon as the goal in beacon mode (default)', () => {
+    const lvl = emptyLevel('Bm');
+    lvl.beacons = [
+      { id: 'b1', x: 1, z: 1, freq: 440, goalRadius: 0.8 },
+      { id: 'b2', x: 2, z: 2, freq: 440, goalRadius: 0.8 },
+    ];
+    const beacons = objectListModel(lvl).filter((e) => e.kind === 'beacon');
+    expect(beacons[0].label).toContain('(goal)');
+    expect(beacons[1].label).not.toContain('(goal)');
+  });
+});
+
+describe('applyAbsorberProp', () => {
+  function patch(): WallPatch {
+    return { id: 'p', wall: '-z', u0: 1, v0: 0.5, uSize: 2, vSize: 1, material: 'concrete' };
+  }
+  it('changes the face and material', () => {
+    const p = patch();
+    expect(applyAbsorberProp(p, 'wall', '+x', NaN)).toBe(true);
+    expect(p.wall).toBe('+x');
+    applyAbsorberProp(p, 'material', 'acoustic_foam', NaN);
+    expect(p.material).toBe('acoustic_foam');
+  });
+  it('edits the rectangle and floors sizes at a positive minimum', () => {
+    const p = patch();
+    applyAbsorberProp(p, 'u0', '3.5', 3.5);
+    applyAbsorberProp(p, 'uSize', '0', 0);
+    expect(p.u0).toBe(3.5);
+    expect(p.uSize).toBeGreaterThan(0);
+  });
+  it('returns false for unrelated keys', () => {
+    expect(applyAbsorberProp(patch(), 'freq', '5', 5)).toBe(false);
+  });
+});
+
+describe('defaultAbsorber', () => {
+  it('produces an on-face, non-degenerate patch', () => {
+    const p = defaultAbsorber('a1', '-z', 'acoustic_foam', 12, 3);
+    expect(p.u0).toBeGreaterThanOrEqual(0);
+    expect(p.u0 + p.uSize).toBeLessThanOrEqual(12);
+    expect(p.v0 + p.vSize).toBeLessThanOrEqual(3);
+    expect(p.uSize).toBeGreaterThan(0);
+    expect(p.vSize).toBeGreaterThan(0);
+  });
+});
+
+describe('lintLevel', () => {
+  it('warns on absorber goal with no patches', () => {
+    const lvl = emptyLevel('L'); lvl.goal = 'absorber'; lvl.absorbers = [];
+    expect(lintLevel(lvl).some((w) => /absorber/i.test(w))).toBe(true);
+  });
+  it('warns on a start outside the room', () => {
+    const lvl = emptyLevel('L'); lvl.start = { x: -5, z: 2, yaw: 0 };
+    expect(lintLevel(lvl).some((w) => /outside/i.test(w))).toBe(true);
+  });
+  it('is silent for a well-formed default level', () => {
+    expect(lintLevel(emptyLevel('OK'))).toEqual([]);
+  });
+});
+
+describe('absorber + objective fields round-trip through export/import', () => {
+  it('a find-the-foam style level is lossless (absorbers, goal, clap budget)', () => {
+    const lvl = emptyLevel('Foam round-trip');
+    // import backfills beacon.sound='tone'; set it so the deep-equality holds.
+    lvl.beacons = [{ id: 'b1', x: 6, z: 8, freq: 440, goalRadius: 1.5, sound: 'tone' }];
+    lvl.goal = 'absorber';
+    lvl.clapBudget = 5;
+    lvl.clapCooldownMs = 600;
+    lvl.absorbers = [
+      { id: 'foam-1', wall: '-z', u0: 6.5, v0: 0.8, uSize: 3, vSize: 1.6, material: 'acoustic_foam' },
+      { id: 'foam-2', wall: '+x', u0: 1, v0: 1, uSize: 2, vSize: 1, material: 'curtain' },
+    ];
+    const round = importLevel(exportLevel(lvl));
+    expect(round).toEqual(lvl);
+    expect(round.absorbers).toHaveLength(2);
+    expect(round.goal).toBe('absorber');
+    expect(round.clapBudget).toBe(5);
+    expect(round.clapCooldownMs).toBe(600);
   });
 });
 

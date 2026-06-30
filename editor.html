@@ -32,6 +32,7 @@
           <button class="tool" data-tool="floor">Floor zone</button>
           <button class="tool" data-tool="ceiling">Ceiling zone</button>
           <button class="tool" data-tool="monster">Monster</button>
+          <button class="tool" data-tool="absorber">Absorber patch</button>
         </div>
 
         <h2>Material</h2>
@@ -48,6 +49,16 @@
         <label>Ceiling height <input id="ceil-h" type="number" min="2" max="20" step="0.5" /></label>
         <label>Ceiling material <select id="ceil-mat" aria-label="Default ceiling material"></select></label>
         <label>Speed of sound (m/s) <input id="room-sos" type="number" min="100" max="700" step="1" placeholder="343" aria-label="Speed of sound in metres per second (blank = default 343)" /></label>
+
+        <h2>Objective</h2>
+        <label>Goal mode
+          <select id="goal-mode" aria-label="Win objective: navigate to a beacon, or find the absorber dead-spot">
+            <option value="beacon">beacon</option>
+            <option value="absorber">absorber</option>
+          </select>
+        </label>
+        <label>Clap budget <input id="clap-budget" type="number" min="0" step="1" placeholder="∞" aria-label="Max claps for the level (blank or 0 = unlimited)" /></label>
+        <label>Clap cooldown (ms) <input id="clap-cooldown" type="number" min="0" step="50" placeholder="0" aria-label="Minimum milliseconds between claps (blank or 0 = none)" /></label>
 
         <h2 id="props-title">Selection</h2>
         <div id="props"><p class="hint">Nothing selected.</p></div>
