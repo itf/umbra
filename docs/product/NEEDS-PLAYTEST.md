@@ -29,3 +29,15 @@ ear/judgment can truly confirm. Surfaced honestly rather than claimed "done."
 
 How to drive any of these: `npm run dev`, open `/?level=<id>` (add `&debug=1` for the
 minimap, `&companion=off` to mute the guide). Settings: press `S` in-game.
+
+## Added in later cycles (Cycle 4-9)
+- **Companion voice tone & timing** (6B) — `&companion=off` to compare; immersive vs chatty.
+- **TTS voice quality + the default-OFF decision** (8A) — opt-in to avoid screen-reader
+  double-speak, but a sighted-eyes-closed player gets silence until they enable it (Settings → S).
+- **Sandbox generated-level fairness** (8C) — esp. stealth at high difficulty (2 fast
+  monsters); a quiet route is guaranteed but the chase *feel* isn't verified by sim.
+- **Generated acoustic texture** — solvable + varied, but "fun to listen to" is subjective.
+- **Daily challenge + streak loop** — does it pull you back?
+- **Progress/leaderboard screen** — is the spoken summary useful/motivating?
+
+See `SESSION-HANDOFF.md` §4 for the consolidated list with URLs.

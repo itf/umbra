@@ -249,3 +249,16 @@ Web Speech TTS (default OFF, graceful fallback) + per-level time/clap scoring wi
 - **9B Full regression + bundle/perf audit** (agent `aab0847b…`): run all unit+e2e, build,
   verify default bundle stays lean (three/steam lazy), perf sanity, dead-code scan → report.
 - Then **9C** session hand-off doc + consolidated NEEDS-PLAYTEST with exact URLs/steps.
+
+**9A Leaderboard + 9B audit SHIPPED** (`fd6301c`): Progress/Best-Times screen; regression
+audit CLEAN (no regressions, default bundle lean, perf sane). +10 tests (583).
+**Audit follow-ups SHIPPED** (`199a090`): PWA precache 7.2MB→488KB (exclude lazy Steam
+assets), removed dead setProximity.
+**9C Hand-off SHIPPED**: SESSION-HANDOFF.md (full review guide + URLs) + consolidated
+NEEDS-PLAYTEST. Cycle 9 COMPLETE.
+
+### Session totals
+~24 feature/infra builds across 9 cycles. 583 unit + 26 e2e green, tsc clean, build OK,
+release-ready. Product: 4 modes, 26 levels + infinite sandbox, trainer + daily, scoring,
+companion+TTS, onboarding, settings, editor authoring, full a11y, PWA. The remaining work
+is ear-dependent (NEEDS-PLAYTEST / SESSION-HANDOFF §4) — the user's call.
