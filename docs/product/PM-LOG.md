@@ -170,3 +170,10 @@ by category. +8 tests (456). FLAGGED for ear-check: stealth AI catch-dynamics (d
 foam-corridor audibility) reasoned not tested.
 - **6B Companion voice** still building (agent `ab599eb6…`, game/companion.ts + main.ts +
   onboardingStore companion flag) — held until done. Then 6C settings/mix.
+
+**6B Companion voice SHIPPED** (`e1168b0`): optional spoken guide keyed by (mode,event),
+deterministic variety, rate-limited, sequenced after critical cues, ?companion=off persists.
++18 tests +2 e2e (474 unit, 22 e2e). Both 6A+6B done.
+- **6C Settings/mix** (agent `a8064e4b…`): spoken settings panel — master volume,
+  companion toggle, warmer-cue toggle, L/R swap / re-calibrate, reset progress. Persisted +
+  applied on load. Then Cycle-6 review.
