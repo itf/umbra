@@ -193,3 +193,9 @@ deterministic variety, rate-limited, sequenced after critical cues, ?companion=o
   path), refresh TECHNICAL/PRODUCT/DEPLOY docs. Closes items open since session start.
 - Then **7B cohesion** (controls source-of-truth, announcement-phrasing audit).
 - Authored `NEEDS-PLAYTEST.md` — the honest list of what only a human ear can confirm.
+
+**7A Stealth-AI sim SHIPPED** (`2cfc89e`): headless monster-AI simulation; all 3 stealth
+levels verified as built (careful route survivable, loud route caught, decoy lures warden).
++7 tests (493). No JSON tuning needed, no AI bugs. Margin note: foam = inaudible (binary).
+- **7C PWA/docs** still building (agent `a4e852bf…`, icons + _headers + DEPLOY/HOWTOPLAY/
+  TECHNICAL/PRODUCT docs) — held until verified (needs `npm run build` to confirm icons in dist).
