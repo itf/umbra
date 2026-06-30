@@ -569,12 +569,21 @@ startButton.addEventListener('click', async () => {
         // strength (the maze-navigation fix). Gated like sofaHrtf: the backend only
         // passes `reflections.headTracked` to createWorld when this is true, so it can't
         // confuse the published package if it were ever swapped back in.
+        // Steam reverb/reflection LEVELS (0..1 multipliers) read from Settings at
+        // create() time — they apply on THIS run start (and any later run), not live,
+        // since the backend is built here and not hot-swapped. BOTH default to 1.0
+        // (full = today's behavior); the user tunes them down to localize rooms.
+        const reverbLevel = settings.steamReverbLevel();
+        const reflectionLevel = settings.steamReflectionLevel();
         steam = await SteamAudioBackend.create(ctx, graph.master, {
           hrtf: true,
           scattering: SCATTER,
           sofaHrtf: wantSofa,
           headTrackedReflections: true,
+          reverbLevel,
+          reflectionLevel,
         });
+        console.info(`[papasangre] Steam levels — reverb: ${reverbLevel}, reflections: ${reflectionLevel}.`);
         console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true).`);
       } catch (e) {
         console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
@@ -1034,6 +1043,12 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       // Keep the Begin-screen checkbox in sync so returning to it shows the choice.
       if (engineToggle) engineToggle.checked = on;
     },
+    // Steam reverb/reflection levels — persisted only; read when the Steam backend
+    // is built (next run), not a live hot-swap. Default 1.0 (= today's behavior).
+    getSteamReverbLevel: () => settings.steamReverbLevel(),
+    setSteamReverbLevel: (v) => settings.setSteamReverbLevel(v),
+    getSteamReflectionLevel: () => settings.steamReflectionLevel(),
+    setSteamReflectionLevel: (v) => settings.setSteamReflectionLevel(v),
     getSwap: () => onboarding.swap(),
     setSwap: (on) => {
       onboarding.setSwap(on);

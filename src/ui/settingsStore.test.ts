@@ -13,6 +13,11 @@ import {
   TTS_PITCH_KEY,
   clampTtsRate,
   clampTtsPitch,
+  clampLevel,
+  STEAM_REVERB_LEVEL_KEY,
+  STEAM_REFLECTION_LEVEL_KEY,
+  DEFAULT_STEAM_REVERB_LEVEL,
+  DEFAULT_STEAM_REFLECTION_LEVEL,
 } from './settingsStore';
 
 /** A minimal in-memory Storage stand-in for deterministic, isolated tests. */
@@ -165,6 +170,54 @@ describe('clampTtsRate / clampTtsPitch (pure)', () => {
     expect(clampTtsPitch(-1)).toBe(0);
     expect(clampTtsPitch(5)).toBe(2);
     expect(clampTtsPitch(NaN)).toBe(1);
+  });
+});
+
+describe('clampLevel (pure)', () => {
+  it('clamps to [0,1], default on non-finite', () => {
+    expect(clampLevel(-1, 1)).toBe(0);
+    expect(clampLevel(0, 1)).toBe(0);
+    expect(clampLevel(0.3, 1)).toBe(0.3);
+    expect(clampLevel(2, 1)).toBe(1);
+    expect(clampLevel(NaN, 0.5)).toBe(0.5);
+  });
+});
+
+describe('SettingsStore Steam reverb / reflection levels', () => {
+  it('default to full (1.0) when unset — byte-identical to today', () => {
+    const s = new SettingsStore(memStorage());
+    expect(DEFAULT_STEAM_REVERB_LEVEL).toBe(1);
+    expect(DEFAULT_STEAM_REFLECTION_LEVEL).toBe(1);
+    expect(s.steamReverbLevel()).toBe(1);
+    expect(s.steamReflectionLevel()).toBe(1);
+  });
+  it('reverb level round-trips, clamps, and persists', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    s.setSteamReverbLevel(0.3);
+    expect(s.steamReverbLevel()).toBe(0.3);
+    expect(backing.map.get(STEAM_REVERB_LEVEL_KEY)).toBe('0.3');
+    expect(new SettingsStore(backing).steamReverbLevel()).toBe(0.3);
+    s.setSteamReverbLevel(5);
+    expect(s.steamReverbLevel()).toBe(1);
+    s.setSteamReverbLevel(-5);
+    expect(s.steamReverbLevel()).toBe(0);
+  });
+  it('reflection level round-trips, clamps, and persists', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    s.setSteamReflectionLevel(0.5);
+    expect(s.steamReflectionLevel()).toBe(0.5);
+    expect(backing.map.get(STEAM_REFLECTION_LEVEL_KEY)).toBe('0.5');
+    expect(new SettingsStore(backing).steamReflectionLevel()).toBe(0.5);
+  });
+  it('returns defaults for corrupt stored values', () => {
+    const backing = memStorage();
+    backing.map.set(STEAM_REVERB_LEVEL_KEY, 'garbage');
+    backing.map.set(STEAM_REFLECTION_LEVEL_KEY, 'nope');
+    const s = new SettingsStore(backing);
+    expect(s.steamReverbLevel()).toBe(DEFAULT_STEAM_REVERB_LEVEL);
+    expect(s.steamReflectionLevel()).toBe(DEFAULT_STEAM_REFLECTION_LEVEL);
   });
 });
 

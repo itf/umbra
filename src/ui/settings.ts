@@ -34,6 +34,16 @@ export interface SettingsHooks {
   getSteamEngine: () => boolean;
   setSteamEngine: (on: boolean) => void;
 
+  /**
+   * Steam Audio reverb level in [0,1]. Only affects the Steam Audio engine and is
+   * read when its backend is built (next run), not a live hot-swap.
+   */
+  getSteamReverbLevel: () => number;
+  setSteamReverbLevel: (v: number) => void;
+  /** Steam Audio reflection level in [0,1]; same next-run semantics. */
+  getSteamReflectionLevel: () => number;
+  setSteamReflectionLevel: (v: number) => void;
+
   /** L/R channel swap on/off. */
   getSwap: () => boolean;
   setSwap: (on: boolean) => void;
@@ -85,6 +95,43 @@ function checkboxRow(labelText: string, checked: boolean, onChange: (on: boolean
   span.textContent = labelText;
   label.append(input, span);
   return { row: label, input };
+}
+
+/**
+ * A 0..100% range row backed by a 0..1 value. `onInput` receives the 0..1 level;
+ * announcements are throttled so dragging doesn't machine-gun the live region.
+ */
+function levelRow(
+  id: string,
+  labelText: string,
+  ariaLabel: string,
+  value01: number,
+  say: (m: string) => void,
+  announce: (pct: number) => string,
+  onInput: (v01: number) => void,
+): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'settings-row';
+  const label = document.createElement('label');
+  label.htmlFor = id;
+  label.textContent = labelText;
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.id = id;
+  input.min = '0';
+  input.max = '100';
+  input.step = '1';
+  input.value = String(Math.round(value01 * 100));
+  input.setAttribute('aria-label', ariaLabel);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  input.addEventListener('input', () => {
+    const pct = Number(input.value);
+    onInput(pct / 100);
+    if (timer != null) clearTimeout(timer);
+    timer = setTimeout(() => say(announce(pct)), 200);
+  });
+  wrap.append(label, input);
+  return wrap;
 }
 
 /**
@@ -152,6 +199,30 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       : 'High-fidelity audio off. Applies when you start the next level.');
   });
   dialog.append(engine.row);
+
+  // --- Steam Audio reverb / reflection levels ---
+  // These ONLY affect the Steam Audio engine and are read when its backend is built
+  // (the next run/level start), so changes are not live. Both are a 0..100% of the
+  // CURRENT (full) Steam level, defaulting to 100% (today's behavior); lower them to
+  // localize rooms that otherwise sound "everywhere".
+  dialog.append(levelRow(
+    'set-steam-reverb',
+    'Steam Audio reverb level',
+    'Steam Audio reverb level percent',
+    hooks.getSteamReverbLevel(),
+    hooks.say,
+    (pct) => `Steam reverb ${pct} percent. Applies when you start the next level.`,
+    (v) => hooks.setSteamReverbLevel(v),
+  ));
+  dialog.append(levelRow(
+    'set-steam-reflections',
+    'Steam Audio reflections level',
+    'Steam Audio reflections level percent',
+    hooks.getSteamReflectionLevel(),
+    hooks.say,
+    (pct) => `Steam reflections ${pct} percent. Applies when you start the next level.`,
+    (v) => hooks.setSteamReflectionLevel(v),
+  ));
 
   // --- L/R channel swap ---
   const swap = checkboxRow('Swap left and right channels', hooks.getSwap(), (on) => {

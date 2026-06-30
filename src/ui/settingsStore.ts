@@ -25,9 +25,28 @@ export const TTS_ENABLED_KEY = 'ps.settings.ttsEnabled';
 export const TTS_VOICE_KEY = 'ps.settings.ttsVoice';
 export const TTS_RATE_KEY = 'ps.settings.ttsRate';
 export const TTS_PITCH_KEY = 'ps.settings.ttsPitch';
+// Steam Audio reverb / reflection LEVELS (0..1 multipliers on the backend's
+// hardcoded base sends). Only affect the Steam Audio engine; the next run reads
+// them at backend create() time (not a live hot-swap). BOTH default to 1.0 (full =
+// today's behavior); the user tunes them down in the UI to localize rooms.
+export const STEAM_REVERB_LEVEL_KEY = 'ps.settings.steamReverbLevel';
+export const STEAM_REFLECTION_LEVEL_KEY = 'ps.settings.steamReflectionLevel';
 
 /** Default master volume (full scale). */
 export const DEFAULT_MASTER_VOLUME = 1;
+
+/** Default Steam reverb level — full (= today's behavior). User tunes it down in the UI. */
+export const DEFAULT_STEAM_REVERB_LEVEL = 1;
+/** Default Steam reflection level — full (keep geometry echo cues). */
+export const DEFAULT_STEAM_REFLECTION_LEVEL = 1;
+
+/** PURE: clamp a 0..1 level; non-finite ⇒ `fallback`. */
+export function clampLevel(v: number, fallback: number): number {
+  if (!Number.isFinite(v)) return fallback;
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+}
 
 /** TTS rate/pitch defaults (mirrors speech.ts neutral values). */
 export const DEFAULT_TTS_RATE = 1;
@@ -176,5 +195,32 @@ export class SettingsStore {
   }
   setTtsPitch(p: number) {
     this.write(TTS_PITCH_KEY, String(clampTtsPitch(p)));
+  }
+
+  /**
+   * Steam Audio reverb level in [0,1]; the (reduced) default when unset/corrupt.
+   * A 0..1 MULTIPLIER on the backend's hardcoded reverb send. Read at backend
+   * create() time — applies on the next run, not live.
+   */
+  steamReverbLevel(): number {
+    const raw = this.read(STEAM_REVERB_LEVEL_KEY);
+    if (raw == null) return DEFAULT_STEAM_REVERB_LEVEL;
+    return clampLevel(Number(raw), DEFAULT_STEAM_REVERB_LEVEL);
+  }
+  setSteamReverbLevel(v: number) {
+    this.write(STEAM_REVERB_LEVEL_KEY, String(clampLevel(v, DEFAULT_STEAM_REVERB_LEVEL)));
+  }
+
+  /**
+   * Steam Audio reflection level in [0,1]; full by default. A 0..1 MULTIPLIER on
+   * the backend's hardcoded reflect send (+ wet). Read at backend create() time.
+   */
+  steamReflectionLevel(): number {
+    const raw = this.read(STEAM_REFLECTION_LEVEL_KEY);
+    if (raw == null) return DEFAULT_STEAM_REFLECTION_LEVEL;
+    return clampLevel(Number(raw), DEFAULT_STEAM_REFLECTION_LEVEL);
+  }
+  setSteamReflectionLevel(v: number) {
+    this.write(STEAM_REFLECTION_LEVEL_KEY, String(clampLevel(v, DEFAULT_STEAM_REFLECTION_LEVEL)));
   }
 }

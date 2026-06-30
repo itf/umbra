@@ -65,6 +65,17 @@ export interface SteamBackendOpts {
    * (off by default) and only enabled once the fork is the dep — mirrors `sofaHrtf`.
    */
   headTrackedReflections?: boolean;
+  /**
+   * User-facing MULTIPLIER (0..1) on the backend's hardcoded reverb send. Lets the
+   * Steam reverb bus be aggressively reduced (it otherwise reads "everywhere"/
+   * unlocalizable). Default 1 (no change). Read at create() — applies next run.
+   */
+  reverbLevel?: number;
+  /**
+   * User-facing MULTIPLIER (0..1) on the hardcoded reflection send AND `wet`.
+   * Default 1 (no change).
+   */
+  reflectionLevel?: number;
 }
 
 /** URL of OUR measured SADIE SOFA (48 kHz), served from the copied assets tree. */
@@ -105,6 +116,8 @@ export class SteamAudioBackend {
   private scattering: number;
   private useHrtf: boolean;
   private headTracked: boolean;
+  private reverbLevel: number;
+  private reflectionLevel: number;
 
   private constructor(world: any, three: any, master: AudioNode, opts: SteamBackendOpts) {
     this.world = world;
@@ -113,6 +126,9 @@ export class SteamAudioBackend {
     this.scattering = opts.scattering ?? 0.1;
     this.useHrtf = opts.hrtf ?? true;
     this.headTracked = opts.headTrackedReflections ?? false;
+    // 0..1 user multipliers; default 1 = no change to the hardcoded base sends.
+    this.reverbLevel = opts.reverbLevel ?? 1;
+    this.reflectionLevel = opts.reflectionLevel ?? 1;
   }
 
   /**
@@ -223,9 +239,17 @@ export class SteamAudioBackend {
     //    dead-center, so a loud reflected field reads "always in front" and masks the
     //    head-tracked direct path. Keep the suppressed values so the directional cue you
     //    navigate by dominates.
-    const refl = this.headTracked
+    const base = this.headTracked
       ? { wet: 0.7, reflectSend: 1.0, reverbSend: 0.4 }
       : { wet: 0.25, reflectSend: 0.35, reverbSend: 0.2 };
+    // Apply the user multipliers (default 1). `wet` + reflect send scale with
+    // reflectionLevel (the early/geometry field); the reverb send scales with
+    // reverbLevel (the diffuse tail that reads "everywhere" when too hot).
+    const refl = {
+      wet: base.wet * this.reflectionLevel,
+      reflectSend: base.reflectSend * this.reflectionLevel,
+      reverbSend: base.reverbSend * this.reverbLevel,
+    };
     const source = this.world.createSource({
       hrtf: this.useHrtf,
       distanceAttenuation: true,
