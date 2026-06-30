@@ -80,3 +80,22 @@ until it finishes, then commit + run full suite + playtest-review meeting.
 **3A Editor SHIPPED** (`7e2c330`): absorber-patch tool, goal mode, clap-budget fields,
 absorber round-trip bug fix, validate-on-save, autosave+guard. +11 tests (350 total).
 **3B Trainer** still building (agent `a5f3dc5c…`); trainer files held uncommitted until done.
+
+### Cycle 3 — Build COMPLETE
+- **3A Editor SHIPPED** (`7e2c330`): absorber tool, goal mode, clap fields, round-trip
+  fix, autosave. +11 tests.
+- **3B Trainer SHIPPED** (`db2a062`): persistence + reversals/streaks + Thaler distance
+  ladder + 4-way orientation drill. +31 tests. 381 total, tsc clean.
+
+### Cycle 4 — Build (in progress)
+- **3C e2e smoke harness** (agent `ac9602eb…`): Playwright (greenfield — was installed
+  but unconfigured) covering the keyboard completion path, find-the-absorber, editor boot,
+  help-key/a11y. Guards the accessibility win from silent regression.
+
+### Known limitations / follow-ups (tracked, not blocking)
+- 4-way orientation drill encodes the 4 classes as a single panel's tilt-about-horizontal
+  (closest the image-source engine supports), not full multi-panel plank geometry. Revisit
+  if richer orientation cues are wanted.
+- Warmer beacon cue doesn't cover custom-audio (soundUrl) beacons — only the synth voice.
+- Editor canvas is pointer-only (screen-reader a11y of the canvas is a separate larger track).
+- Compass widget a11y + cardinal detents (G2) still open.
