@@ -23,12 +23,12 @@
 export type ProbeGenerator = (sampleRate: number) => Float32Array;
 
 /** The available synth probe preset names. `clap` is the legacy default. */
-export type ProbeName = 'clap' | 'click' | 'hiss' | 'snap';
+export type ProbeName = 'clap' | 'click' | 'hiss' | 'snap' | 'stomp';
 
 /** The default probe (byte-compatible with the original hardcoded clap). */
 export const DEFAULT_PROBE: ProbeName = 'clap';
 
-const PROBE_NAMES: readonly ProbeName[] = ['clap', 'click', 'hiss', 'snap'];
+const PROBE_NAMES: readonly ProbeName[] = ['clap', 'click', 'hiss', 'snap', 'stomp'];
 
 /** Probe presets for UI pickers: name + a short human label/description. */
 export const PROBE_PRESETS: ReadonlyArray<{ name: ProbeName; label: string; hint: string }> = [
@@ -36,6 +36,7 @@ export const PROBE_PRESETS: ReadonlyArray<{ name: ProbeName; label: string; hint
   { name: 'click', label: 'Tongue click', hint: 'very short crisp transient — best for timing & direction' },
   { name: 'hiss', label: 'Hiss (shh)', hint: 'sustained filtered noise — faint reflections ring out' },
   { name: 'snap', label: 'Finger snap', hint: 'bright snappy transient with a short ping' },
+  { name: 'stomp', label: 'Footstep (stomp)', hint: 'a low thump + tap, like a footfall — echolocate with your steps' },
 ];
 
 /** Whether a string is a known synth probe name. */
@@ -122,7 +123,37 @@ const snap: ProbeGenerator = (sr) => {
   return ch;
 };
 
-const GENERATORS: Record<ProbeName, ProbeGenerator> = { clap, click, hiss, snap };
+/**
+ * Footstep "stomp": a footfall-shaped excitation (~140ms) — a short broadband tap
+ * (the heel/noise transient) over a low decaying ~80 Hz thump (the body/weight),
+ * mirroring the in-game footstep synth (game/footsteps.ts) but as a single mono
+ * probe buffer. Lets the trainer echolocate with a step sound instead of a clap.
+ */
+const stomp: ProbeGenerator = (sr) => {
+  const n = Math.ceil(0.14 * sr);
+  const ch = new Float32Array(n);
+  const thumpHz = 80;
+  const tapN = Math.ceil(0.04 * sr); // the noisy tap lives in the first ~40 ms
+  for (let i = 0; i < n; i++) {
+    const t = i / n;
+    // Low thump body: a decaying sine, like the step's weight.
+    const thump = 0.85 * Math.sin(2 * Math.PI * thumpHz * (i / sr)) * Math.exp(-t * 9);
+    // Short broadband tap (heel strike), quadratic decay, only at the start.
+    let tap = 0;
+    if (i < tapN) {
+      const te = 1 - i / tapN;
+      tap = 0.6 * (Math.random() * 2 - 1) * te * te;
+    }
+    ch[i] = thump + tap;
+  }
+  // Normalize to ~unit peak so it sits at a comparable level to the other probes.
+  let peak = 0;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(ch[i]));
+  if (peak > 0) for (let i = 0; i < n; i++) ch[i] /= peak;
+  return ch;
+};
+
+const GENERATORS: Record<ProbeName, ProbeGenerator> = { clap, click, hiss, snap, stomp };
 
 /**
  * Resolve a (possibly unknown / missing) probe name to its pure generator,

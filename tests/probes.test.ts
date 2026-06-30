@@ -56,6 +56,15 @@ describe('probe generators', () => {
     }
   });
 
+  it('stomp is a footfall-shaped probe: normalized peak, decays to near-zero', () => {
+    const b = resolveProbe('stomp')(SR);
+    expect(b.length).toBeGreaterThan(0);
+    let peak = 0;
+    for (const v of b) peak = Math.max(peak, Math.abs(v));
+    expect(peak).toBeCloseTo(1, 2); // normalized to ~unit peak
+    expect(Math.abs(b[b.length - 1])).toBeLessThan(1e-2); // thump has decayed by the end
+  });
+
   it('resolveProbe falls back to clap for unknown / missing names', () => {
     const clapLen = resolveProbe('clap')(SR).length;
     expect(resolveProbe('nope')(SR).length).toBe(clapLen);

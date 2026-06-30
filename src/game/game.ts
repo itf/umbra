@@ -500,7 +500,10 @@ export class Game {
       // Feet are on the floor — source near ground level so floor/wall bounce is right.
       source: [sx, 0.1, sz],
       yaw: this.audioYaw,
-      maxOrder: 1,
+      // Order 2: second-order bounces add the corridor/opening cue worth hearing. A
+      // step fires ~1-2×/s and the IR build is throttled in FootstepRoom, so this is
+      // far cheaper than the beacon's continuous order-3 solve — the cost is fine.
+      maxOrder: 2,
       scattering: this.level.acousticScattering ?? 0.1,
       speedOfSound: this.level.speedOfSound,
     };
