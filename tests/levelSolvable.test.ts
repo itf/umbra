@@ -52,7 +52,7 @@ function beaconReachable(game: GameLevel, roomSize: [number, number, number]): b
 }
 
 describe('maze demo levels are solvable (beacon reachable from start)', () => {
-  for (const id of ['clap-maze', 's-bend-maze']) {
+  for (const id of ['clap-maze', 's-bend-maze', 'sonar-vault']) {
     it(`${id}: the beacon is reachable from the start`, () => {
       const level = getBuiltin(id);
       expect(level, `${id} should be a builtin`).toBeTruthy();

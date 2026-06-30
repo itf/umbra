@@ -7,6 +7,12 @@ import { ClapRoom } from './engine/acoustics/clapRoom';
 import type { WallDef, EdgeDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
 import { ClapBudget } from './game/clapBudget';
+import {
+  clapFiredAnnouncement,
+  clapRefusedAnnouncement,
+  budgetIntroAnnouncement,
+  remainingPhrase as budgetRemainingPhrase,
+} from './game/clapAnnounce';
 import { Heading, keyTurnDelta, announceHeading } from './game/heading';
 import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
 import { getBuiltin, builtinLevels } from './level/builtins';
@@ -541,12 +547,8 @@ function setupClap(
   const budget = new ClapBudget({ max: LEVEL.clapBudget, cooldownMs: LEVEL.clapCooldownMs });
   const BASE_CLAP_LABEL = 'Listen — clap to hear the room';
 
-  /** Format remaining claps for an eyes-free cue ("3 claps left"). */
-  const remainingPhrase = () => {
-    const n = budget.remaining();
-    if (n === Infinity) return '';
-    return n === 1 ? '1 clap left' : `${n} claps left`;
-  };
+  /** Format remaining claps for the button label ("3 claps left"). */
+  const remainingPhrase = () => budgetRemainingPhrase(budget.remaining());
 
   /** Refresh the echo button's label + disabled state for the current budget. */
   const refreshClapUi = () => {
@@ -563,7 +565,7 @@ function setupClap(
   // "Walk to the beacon…" intro right after setupClap returns, so a `say` here would
   // never be heard.
   if (budget.isManaged() && budget.hasBudget()) {
-    alert(`Sonar budget: ${remainingPhrase()}. Clap deliberately.`);
+    alert(budgetIntroAnnouncement(budget.remaining()));
     refreshClapUi();
   }
 
@@ -571,9 +573,8 @@ function setupClap(
     const nowMs = performance.now();
     const res = budget.consume(nowMs);
     if (!res.ok) {
-      // Refused — give a clear spoken cue, no clap fired.
-      if (res.reason === 'exhausted') alert('No claps left.');
-      else alert(`Echo ready in ${Math.ceil(res.waitMs / 1000)}s.`);
+      // Refused — give a clear spoken cue (assertive), no clap fired.
+      alert(clapRefusedAnnouncement(res.reason, res.ok ? 0 : res.waitMs));
       refreshClapUi();
       return;
     }
@@ -588,9 +589,13 @@ function setupClap(
       speedOfSound: SPEED_OF_SOUND,
     });
     clapRoom.clap();
+    say('Clap! Listen to the room around you.');
     // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.
-    const phrase = budget.hasBudget() ? ` ${remainingPhrase()}.` : '';
-    say(`Clap! Listen to the room around you.${phrase}`);
+    // Use the assertive region for the budget cue so the last-clap warning and the
+    // out-of-sonar state aren't lost behind the routine "Clap!" status text.
+    if (budget.hasBudget()) {
+      alert(clapFiredAnnouncement(budget.remaining(), true));
+    }
     refreshClapUi();
   });
 

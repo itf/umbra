@@ -24,6 +24,7 @@ import clapMaze from './clap-maze.json';
 import cathedral from './cathedral.json';
 import slowSoundVault from './slow-sound-vault.json';
 import findTheFoam from './find-the-foam.json';
+import sonarVault from './sonar-vault.json';
 
 export interface BuiltinEntry {
   id: string;
@@ -124,5 +125,11 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     name: 'Find the Foam',
     description: 'Echolocation hunt: clap in a bright concrete room and listen for the DEAD SPOT where a foam patch swallows the echo. Walk to that wall to win — no beacon.',
     json: findTheFoam,
+  },
+  {
+    id: 'sonar-vault',
+    name: 'Sonar Vault',
+    description: 'Sonar-budget survival: a serpentine concrete-and-brick vault with only 6 claps and a long cooldown. Probe at each junction, then navigate from memory to the bell — running out of claps is spoken, not fatal.',
+    json: sonarVault,
   },
 ];

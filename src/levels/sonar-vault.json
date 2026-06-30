@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "name": "Sonar Vault",
+  "open": false,
+  "room": { "width": 12, "depth": 18, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "clapBudget": 6,
+  "clapCooldownMs": 2000,
+  "start": { "x": 1.5, "z": 16.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 10.5, "z": 1.5, "freq": 587, "goalRadius": 0.8, "sound": "bell" }
+  ],
+  "walls": [
+    { "id": "w1", "ax": 0, "az": 13, "bx": 9, "bz": 13, "material": "brick" },
+    { "id": "w2", "ax": 3, "az": 9, "bx": 12, "bz": 9, "material": "concrete" },
+    { "id": "w3", "ax": 0, "az": 5, "bx": 9, "bz": 5, "material": "brick" }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}
