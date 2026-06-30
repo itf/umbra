@@ -218,6 +218,17 @@ export interface Level {
   speedOfSound?: number;
 
   /**
+   * CLUTTER (0..1) — how "furnished/soft" the room is, without modelling individual
+   * objects. Absent/0 ⇒ today's behaviour (bare room). Higher values raise the
+   * representative SCATTERING (breaks up sharp flutter echoes into a natural diffuse
+   * decay) and the surfaces' ABSORPTION (shortens the reverb tail), so a hard, empty
+   * room with a long fluttery tail can be tamed with one knob. Applied in load.ts to
+   * every wall's absorption + the level scattering, so BOTH the clap/modeled engine
+   * and the Steam path inherit it. The settings "clutter" slider scales on top.
+   */
+  clutter?: number;
+
+  /**
    * Win objective. Absent or 'beacon' ⇒ today's behaviour (navigate to the first
    * beacon). 'absorber' ⇒ "find the absorber" mode: the goal is the wall region in
    * front of the first `absorbers` patch, and the beacon is silenced (the clap

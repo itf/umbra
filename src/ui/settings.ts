@@ -27,6 +27,13 @@ export interface SettingsHooks {
   setCompanion: (on: boolean) => void;
 
   /**
+   * Room CLUTTER (0..1): adds scattering + absorption to tame a hard, fluttery room
+   * (affects BOTH audio engines). Applies on the next level load. Setter persists.
+   */
+  getClutter: () => number;
+  setClutter: (v: number) => void;
+
+  /**
    * High-fidelity audio (Steam Audio) engine on/off. The setter PERSISTS the
    * preference; it does not hot-swap the live audio graph (the backend is built at
    * level start), so the change applies on the next level / restart.
@@ -214,6 +221,19 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     hooks.say(on ? 'Companion voice on.' : 'Companion voice off.');
   });
   dialog.append(companion.row);
+
+  // --- Room clutter (both engines) ---
+  // Adds scattering + absorption to tame a hard, fluttery/echoey room. Baked into the
+  // room geometry at load, so it applies on the NEXT level (re-enter to hear a change).
+  dialog.append(levelRow(
+    'set-clutter',
+    'Room clutter (softer echoes)',
+    'Room clutter percent',
+    hooks.getClutter(),
+    hooks.say,
+    (pct) => `Room clutter ${pct} percent. Applies on the next level.`,
+    (v) => hooks.setClutter(v),
+  ));
 
   // --- High-fidelity audio engine (Steam Audio) ---
   // Persisted preference, NOT a live hot-swap: the audio backend is constructed at

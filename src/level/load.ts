@@ -406,9 +406,38 @@ function perimeterSegments(level: Level) {
   ];
 }
 
-export function loadLevel(level: Level): LoadedLevel {
+/** Clamp a clutter value to [0,1]; non-finite ⇒ 0 (bare room). */
+function sanitizeClutter(v: number | undefined): number {
+  return typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+}
+
+/**
+ * Apply CLUTTER to a wall's per-band absorption: push each band toward full
+ * absorption by a fraction of its remaining headroom. clutter=0 ⇒ unchanged;
+ * clutter=1 ⇒ ~MAX_ABSORB_BOOST of the way to fully absorptive. Pure.
+ */
+const MAX_ABSORB_BOOST = 0.6;
+function clutterAbsorption(absorption: number[], clutter: number): number[] {
+  if (clutter <= 0) return absorption;
+  return absorption.map((a) => a + clutter * MAX_ABSORB_BOOST * (1 - a));
+}
+
+/** Raise the representative scattering toward a diffuse target as clutter rises. */
+const CLUTTER_SCATTER_TARGET = 0.85;
+function clutterScattering(scattering: number, clutter: number): number {
+  if (clutter <= 0) return scattering;
+  return scattering + clutter * (CLUTTER_SCATTER_TARGET - scattering) * (CLUTTER_SCATTER_TARGET > scattering ? 1 : 0);
+}
+
+/**
+ * Load a level into the runtime form. `clutterOverride` (0..1), when given, REPLACES
+ * the level's own `clutter` — used by the live settings "clutter" slider so the user
+ * can tame a fluttery room by ear (re-load to apply). Absent ⇒ the level's value.
+ */
+export function loadLevel(level: Level, clutterOverride?: number): LoadedLevel {
   const first = level.beacons[0];
   const speedOfSound = sanitizeLevelSpeed(level.speedOfSound);
+  const clutter = sanitizeClutter(clutterOverride ?? level.clutter);
   // Map ALL beacons to uniform specs; `beacon` mirrors the first (back-compat).
   const beacon = first
     ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
@@ -459,10 +488,17 @@ export function loadLevel(level: Level): LoadedLevel {
   // Open levels have no enclosing box — only the free-standing walls you placed.
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the
   // interior geometry per frame via `wallsAt(level, t)`.
-  const walls = wallsAt(level, 0);
+  const rawWalls = wallsAt(level, 0);
+  // CLUTTER raises every surface's absorption (shorter tail). Both engines read
+  // WallDef.absorption (Steam via convert.ts, our engine directly), so this one map
+  // makes a cluttered room sound damped everywhere.
+  const walls = clutter > 0
+    ? rawWalls.map((w) => ({ ...w, absorption: clutterAbsorption(w.absorption, clutter) }))
+    : rawWalls;
   const edges = diffractionEdgesAt(level, 0);
 
-  // Representative mid-band scattering across all the materials in play.
+  // Representative mid-band scattering across all the materials in play, then raised
+  // by clutter (breaks sharp flutter echoes into a diffuse decay).
   const usedMats = new Set<string>([
     level.roomMaterial, level.floorMaterial, level.ceilingMaterial,
     ...level.walls.map((w) => w.material),
@@ -470,7 +506,7 @@ export function loadLevel(level: Level): LoadedLevel {
   ]);
   let sSum = 0;
   for (const m of usedMats) sSum += scatteringFor(m)[4]; // ~1kHz band
-  const scattering = usedMats.size ? sSum / usedMats.size : 0.1;
+  const scattering = clutterScattering(usedMats.size ? sSum / usedMats.size : 0.1, clutter);
 
   return {
     game,

@@ -349,7 +349,10 @@ function stopActiveRun() {
  * owns the user-gesture-to-start-audio step.
  */
 function applyLevel(level: Level, displayName: string) {
-  const loaded = loadLevel(level);
+  // CLUTTER: the settings slider only ADDS to a level's own clutter (max), so a level
+  // that authored clutter is never made more live by a low slider. 0 ⇒ no extra.
+  const effClutter = Math.max(level.clutter ?? 0, settings.clutter());
+  const loaded = loadLevel(level, effClutter);
   LEVEL = loaded.game;
   ROOM = loaded.roomSize;
   WALLS = loaded.walls;
@@ -1193,6 +1196,10 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     },
     getCompanion: () => companionEnabled(),
     setCompanion: (on) => setCompanion(on),
+    // Room clutter (both engines) — persisted; baked into geometry at level load, so
+    // it applies on the next level (applyLevel reads settings.clutter()).
+    getClutter: () => settings.clutter(),
+    setClutter: (v) => settings.setClutter(v),
     // High-fidelity (Steam Audio) engine. Persisted only — the backend is built at
     // Begin, so switching mid-session can't hot-swap the live graph; the next level
     // start honours the stored choice (see the Begin handler's wantSteam below). The

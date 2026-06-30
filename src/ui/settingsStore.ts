@@ -37,6 +37,9 @@ export const TTS_PITCH_KEY = 'ps.settings.ttsPitch';
 export const STEAM_REFLECTION_WET_KEY = 'ps.settings.steamReflectionWet';
 export const STEAM_REFLECTION_BUS_KEY = 'ps.settings.steamReflectionBus';
 export const STEAM_REVERB_BUS_KEY = 'ps.settings.steamReverbBus';
+/** Global room CLUTTER (0..1) added on top of each level's own clutter — tames a
+ *  hard, fluttery room (more scattering + absorption). Default 0 (no extra). */
+export const CLUTTER_KEY = 'ps.settings.clutter';
 
 /** Default master volume (full scale). */
 export const DEFAULT_MASTER_VOLUME = 1;
@@ -270,5 +273,20 @@ export class SettingsStore {
   }
   setSteamReverbBus(v: number) {
     this.write(STEAM_REVERB_BUS_KEY, String(clampLevel(v, DEFAULT_STEAM_REVERB_BUS)));
+  }
+
+  /**
+   * Global room CLUTTER (0..1), ADDED on top of each level's own clutter (the runtime
+   * uses max(level, this)), so the slider only ever damps a too-live room and never
+   * undoes a level that authored clutter. Default 0 (no extra). Affects BOTH engines;
+   * applies on the next level load (re-load to hear a change).
+   */
+  clutter(): number {
+    const raw = this.read(CLUTTER_KEY);
+    if (raw == null) return 0;
+    return clampLevel(Number(raw), 0);
+  }
+  setClutter(v: number) {
+    this.write(CLUTTER_KEY, String(clampLevel(v, 0)));
   }
 }

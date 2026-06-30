@@ -2,6 +2,41 @@ import { describe, it, expect } from 'vitest';
 import { emptyLevel, isLevel, type Level } from '../src/level/schema';
 import { loadLevel } from '../src/level/load';
 
+describe('clutter raises absorption + scattering', () => {
+  it('clutter 0 (or absent) leaves walls + scattering unchanged', () => {
+    const lvl = emptyLevel();
+    const bare = loadLevel(lvl);
+    const c0 = loadLevel(lvl, 0);
+    expect(c0.walls[0].absorption).toEqual(bare.walls[0].absorption);
+    expect(c0.scattering).toBe(bare.scattering);
+  });
+
+  it('higher clutter raises every wall band absorption and the scattering', () => {
+    const lvl = emptyLevel(); // concrete: low absorption, low scattering
+    const bare = loadLevel(lvl, 0);
+    const cluttered = loadLevel(lvl, 0.8);
+    // Every band of every wall is more absorptive (toward 1, never exceeding it).
+    for (let w = 0; w < bare.walls.length; w++) {
+      for (let b = 0; b < bare.walls[w].absorption.length; b++) {
+        expect(cluttered.walls[w].absorption[b]).toBeGreaterThan(bare.walls[w].absorption[b]);
+        expect(cluttered.walls[w].absorption[b]).toBeLessThanOrEqual(1);
+      }
+    }
+    expect(cluttered.scattering).toBeGreaterThan(bare.scattering);
+  });
+
+  it('the settings override only ADDs (max with the level value) — checked at the call site', () => {
+    // loadLevel itself just takes the effective clutter; main.ts computes max(level, slider).
+    const lvl = emptyLevel();
+    lvl.clutter = 0.5;
+    // No override → uses the level's own clutter.
+    const own = loadLevel(lvl);
+    const explicitLower = loadLevel(lvl, 0.2); // an override CAN lower at the load layer…
+    expect(own.scattering).toBeGreaterThan(explicitLower.scattering);
+    // …which is why main.ts passes max(level.clutter, settings.clutter()).
+  });
+});
+
 describe('level → game geometry', () => {
   it('enclosed room yields a closed box (6 surfaces incl ceiling)', () => {
     const lvl = emptyLevel();
