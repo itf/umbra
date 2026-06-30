@@ -86,6 +86,7 @@ describe('kindLabel', () => {
       ceiling: 'Ceiling zone',
       monster: 'Monster',
       absorber: 'Absorber patch',
+      exit: 'Escape exit',
     };
     for (const [kind, label] of Object.entries(expected)) {
       expect(kindLabel(kind as SelKind)).toBe(label);
@@ -111,7 +112,7 @@ describe('objectListModel', () => {
     expect(model[2].label).toBe('Wall wall-1');
     expect(model[3].label).toBe('Floor f2 (carpet)');
     expect(model[4].label).toBe('Ceiling c1 (wood)');
-    expect(model[5].label).toBe('Monster m1');
+    expect(model[5].label).toBe('Monster m1 (growl)');
   });
 
   it('includes every object as multiple are added', () => {
@@ -236,6 +237,80 @@ describe('absorber + objective fields round-trip through export/import', () => {
     expect(round.goal).toBe('absorber');
     expect(round.clapBudget).toBe(5);
     expect(round.clapCooldownMs).toBe(600);
+  });
+});
+
+describe('escape-mode authoring', () => {
+  function escapeLevel(name = 'Esc'): Level {
+    const lvl = emptyLevel(name);
+    lvl.goal = 'escape';
+    lvl.exit = { x: 2.5, z: 1.5 };
+    lvl.decoyBudget = 3;
+    lvl.beacons = [{ id: 'exit', x: 2.5, z: 1.5, freq: 330, goalRadius: 1, sound: 'tone' }];
+    lvl.monsters = [{ id: 'm1', x: 8, z: 11, speed: 0.6, sound: 'growl' }];
+    return lvl;
+  }
+
+  it('serializes goal/exit/decoyBudget and round-trips losslessly', () => {
+    const lvl = escapeLevel('Round');
+    const round = importLevel(exportLevel(lvl));
+    expect(round).toEqual(lvl);
+    expect(round.goal).toBe('escape');
+    expect(round.exit).toEqual({ x: 2.5, z: 1.5 });
+    expect(round.decoyBudget).toBe(3);
+  });
+
+  it('a level with no exit/decoyBudget has no such keys after round-trip', () => {
+    const lvl = emptyLevel('Plain');
+    const round = importLevel(exportLevel(lvl));
+    expect('exit' in round).toBe(false);
+    expect('decoyBudget' in round).toBe(false);
+  });
+
+  it('lists the exit (as goal) and labels monsters to evade in escape mode', () => {
+    const model = objectListModel(escapeLevel());
+    const exit = model.find((e) => e.kind === 'exit');
+    expect(exit).toBeDefined();
+    expect(exit!.id).toBe('__exit');
+    expect(exit!.label).toContain('(goal)');
+    const mon = model.find((e) => e.kind === 'monster');
+    expect(mon!.label).toContain('evade');
+    expect(mon!.label).toContain('growl');
+  });
+
+  it('kindLabel covers the exit', () => {
+    expect(kindLabel('exit')).toBe('Escape exit');
+  });
+
+  describe('lint', () => {
+    it('warns when escape goal has no exit', () => {
+      const lvl = escapeLevel(); delete lvl.exit;
+      expect(lintLevel(lvl).some((w) => /no exit/i.test(w))).toBe(true);
+    });
+    it('warns when escape goal has no monsters', () => {
+      const lvl = escapeLevel(); lvl.monsters = [];
+      expect(lintLevel(lvl).some((w) => /no monsters/i.test(w))).toBe(true);
+    });
+    it('warns when the exit is outside the room', () => {
+      const lvl = escapeLevel(); lvl.exit = { x: -3, z: 1 };
+      expect(lintLevel(lvl).some((w) => /exit position is outside/i.test(w))).toBe(true);
+    });
+    it('is silent for a well-formed escape level', () => {
+      expect(lintLevel(escapeLevel())).toEqual([]);
+    });
+  });
+});
+
+describe('stealth-escape.json round-trips losslessly', () => {
+  it('preserves goal/exit/decoyBudget/monsters', async () => {
+    const raw = await import('../src/levels/stealth-escape.json');
+    const lvl = importLevel(JSON.stringify(raw.default));
+    const round = importLevel(exportLevel(lvl));
+    expect(round).toEqual(lvl);
+    expect(round.goal).toBe('escape');
+    expect(round.exit).toEqual({ x: 2.5, z: 1.5 });
+    expect(round.decoyBudget).toBe(3);
+    expect(round.monsters).toHaveLength(1);
   });
 });
 

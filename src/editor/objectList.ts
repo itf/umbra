@@ -9,7 +9,7 @@
 import type { Level } from '../level/schema';
 
 /** The selectable object kinds in the editor. */
-export type SelKind = 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber';
+export type SelKind = 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber' | 'exit';
 
 /** Human-readable heading for a selected object's kind. */
 export function kindLabel(kind: SelKind): string {
@@ -21,6 +21,7 @@ export function kindLabel(kind: SelKind): string {
     case 'ceiling': return 'Ceiling zone';
     case 'monster': return 'Monster';
     case 'absorber': return 'Absorber patch';
+    case 'exit': return 'Escape exit';
   }
 }
 
@@ -51,7 +52,15 @@ export function objectListModel(level: Level): ObjectListEntry[] {
   for (const w of level.walls) out.push({ id: w.id, kind: 'wall', label: `Wall ${w.id}` });
   for (const f of level.floors) out.push({ id: f.id, kind: 'floor', label: `Floor ${f.id} (${f.material})` });
   for (const c of level.ceilings) out.push({ id: c.id, kind: 'ceiling', label: `Ceiling ${c.id} (${c.material})` });
-  for (const m of level.monsters) out.push({ id: m.id, kind: 'monster', label: `Monster ${m.id}` });
+  const escape = level.goal === 'escape';
+  for (const m of level.monsters) {
+    out.push({ id: m.id, kind: 'monster',
+      label: `Monster ${m.id} (${m.sound})${escape ? ' — evade' : ''}` });
+  }
+  if (level.exit) {
+    out.push({ id: '__exit', kind: 'exit',
+      label: `Exit (${level.exit.x}, ${level.exit.z})${escape ? ' (goal)' : ''}` });
+  }
   (level.absorbers ?? []).forEach((p, i) =>
     out.push({ id: p.id, kind: 'absorber',
       label: `Absorber ${p.id} (${p.wall}, ${p.material})${level.goal === 'absorber' && i === 0 ? ' (goal)' : ''}` }));

@@ -16,11 +16,14 @@ import {
   fitView, draw, screenToWorld, worldToScreen, type ViewState, MATERIAL_NAMES,
 } from './view';
 import { beaconPresetNames, resolveBeaconPreset, BeaconVoice, type BeaconPreset } from '../game/beaconSounds';
-import { MONSTER_PRESETS, resolveMonsterPreset } from '../game/monsterSounds';
+import { MONSTER_PRESETS, resolveMonsterPreset, MonsterVoice } from '../game/monsterSounds';
 import { applyWallMotion, applyAbsorberProp, defaultAbsorber, lintLevel } from './apply';
 import { kindLabel, objectListModel } from './objectList';
 
-type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber';
+type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber' | 'exit';
+
+/** Selection id used for the level's escape `exit` Vec2 (no real object id). */
+const EXIT_ID = '__exit';
 
 /** Perimeter face extents (u = in-plane horizontal axis, v = height) for patches. */
 function faceExtents(level: Level, wall: WallPatch['wall']): { uMax: number; vMax: number } {
@@ -104,6 +107,7 @@ function worldAt(e: PointerEvent): [number, number] {
 /** Hit-test the topmost object near a world point; returns its id or null. */
 function hitTest(wx: number, wz: number): string | null {
   const near = 0.5;
+  if (level.exit && Math.hypot(level.exit.x - wx, level.exit.z - wz) < near) return EXIT_ID;
   for (const m of level.monsters) if (Math.hypot(m.x - wx, m.z - wz) < near) return m.id;
   for (const b of level.beacons) if (Math.hypot(b.x - wx, b.z - wz) < near) return b.id;
   if (Math.hypot(level.start.x - wx, level.start.z - wz) < near) return 'start';
@@ -143,6 +147,7 @@ function distToSeg(px: number, pz: number, ax: number, az: number, bx: number, b
 }
 function findObj(id: string): StartLike | null {
   if (id === 'start') return { kind: 'start', ref: level.start };
+  if (id === EXIT_ID && level.exit) return { kind: 'exit', ref: level.exit };
   const b = level.beacons.find((o) => o.id === id); if (b) return { kind: 'beacon', ref: b };
   const w = level.walls.find((o) => o.id === id); if (w) return { kind: 'wall', ref: w };
   const f = level.floors.find((o) => o.id === id); if (f) return { kind: 'floor', ref: f };
@@ -158,7 +163,8 @@ type StartLike =
   | { kind: 'floor'; ref: FloorZone }
   | { kind: 'ceiling'; ref: CeilingZone }
   | { kind: 'monster'; ref: MonsterObj }
-  | { kind: 'absorber'; ref: WallPatch };
+  | { kind: 'absorber'; ref: WallPatch }
+  | { kind: 'exit'; ref: NonNullable<Level['exit']> };
 
 // ---------- pointer interaction ----------
 canvas.addEventListener('pointerdown', (e) => {
@@ -178,6 +184,9 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'beacon') {
     const b: BeaconObj = { id: genId('beacon'), x: wx, z: wz, freq: 440, goalRadius: 0.8 };
     level.beacons.push(b); selectedId = b.id; renderProps(); render(); return;
+  }
+  if (tool === 'exit') {
+    level.exit = { x: wx, z: wz }; selectedId = EXIT_ID; renderProps(); render(); return;
   }
   if (tool === 'monster') {
     const m: MonsterObj = { id: genId('monster'), x: wx, z: wz, speed: 1.2, sound: 'growl' };
@@ -283,7 +292,7 @@ function renderProps() {
   // Announce WHAT is selected: a clear kind heading + the object's id.
   const heading =
     `<div class="sel-kind">${kindLabel(o.kind)}` +
-    (o.kind === 'start' ? '' : ` <span class="sel-id">${selectedId}</span>`) +
+    (o.kind === 'start' || o.kind === 'exit' ? '' : ` <span class="sel-id">${selectedId}</span>`) +
     '</div>';
 
   const rows: string[] = [];
@@ -297,6 +306,8 @@ function renderProps() {
   if (o.kind === 'start') {
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('yaw°', 'yawDeg', Math.round((o.ref.yaw * 180) / Math.PI), 5));
+  } else if (o.kind === 'exit') {
+    rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z));
   } else if (o.kind === 'beacon') {
     rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
       numRow('freq', 'freq', o.ref.freq, 10), numRow('goal r', 'goalRadius', o.ref.goalRadius, 0.1));
@@ -346,7 +357,8 @@ function renderProps() {
       `<label>sound<select data-k="sound">${MONSTER_PRESETS.map(
         (p) => `<option ${p === mcur ? 'selected' : ''}>${p}</option>`,
       ).join('')}</select></label>`,
-      `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`);
+      `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`,
+      '<button class="row-btn" id="preview-monster">Preview sound</button>');
   } else if (o.kind === 'absorber') {
     rows.push(
       `<label>wall<select data-k="wall">${
@@ -371,6 +383,9 @@ function renderProps() {
   if (o.kind === 'beacon') {
     $('preview-beacon')?.addEventListener('click', () => previewBeacon(o.ref as BeaconObj));
   }
+  if (o.kind === 'monster') {
+    $('preview-monster')?.addEventListener('click', () => previewMonster(o.ref as MonsterObj));
+  }
 }
 
 // Lazily-created AudioContext for the editor's beacon preview.
@@ -388,6 +403,20 @@ function previewBeacon(b: BeaconObj) {
   previewVoice.start();
   // Auto-stop after a couple of seconds so it's a sample, not a drone.
   window.setTimeout(() => previewVoice?.stop(), 2500);
+}
+
+// Monster-sound preview — reuses the editor's preview AudioContext (like the beacon).
+let previewMonsterVoice: MonsterVoice | null = null;
+function previewMonster(m: MonsterObj) {
+  previewCtx ??= new AudioContext();
+  void previewCtx.resume();
+  previewMonsterVoice?.stop();
+  const gain = previewCtx.createGain();
+  gain.gain.value = 0.6;
+  gain.connect(previewCtx.destination);
+  previewMonsterVoice = new MonsterVoice(previewCtx, gain, resolveMonsterPreset(m.sound));
+  previewMonsterVoice.start();
+  window.setTimeout(() => previewMonsterVoice?.stop(), 2500);
 }
 
 function applyProp(o: StartLike, key: string, raw: string) {
@@ -417,6 +446,7 @@ function applyProp(o: StartLike, key: string, raw: string) {
 
 function deleteSelected() {
   if (!selectedId || selectedId === 'start') return;
+  if (selectedId === EXIT_ID) { delete level.exit; selectedId = null; renderProps(); render(); return; }
   level.beacons = level.beacons.filter((o) => o.id !== selectedId);
   level.walls = level.walls.filter((o) => o.id !== selectedId);
   level.floors = level.floors.filter((o) => o.id !== selectedId);
@@ -436,6 +466,7 @@ function setTool(t: Tool) {
     : t === 'wall' ? 'Drag to draw a wall.'
     : t === 'floor' ? 'Drag to draw a floor zone.'
     : t === 'absorber' ? 'Click near a perimeter wall to place an absorber patch, then size it in the panel.'
+    : t === 'exit' ? 'Click to place the escape exit (the win target in escape mode).'
     : `Click to place a ${t}.`;
 }
 document.querySelectorAll<HTMLButtonElement>('.tool').forEach((b) =>
@@ -504,8 +535,20 @@ const goalEl = $('goal-mode') as HTMLSelectElement;
 goalEl.value = level.goal ?? 'beacon';
 goalEl.addEventListener('change', () => {
   if (goalEl.value === 'absorber') level.goal = 'absorber';
+  else if (goalEl.value === 'escape') level.goal = 'escape';
   else delete level.goal;
   markDirty(); render(); // re-render the object list "(goal)" badges
+});
+
+// Decoy budget (escape mode's stealth verb). Empty/0/invalid ⇒ field unset
+// (unlimited), mirroring the clapBudget pattern so old levels stay unchanged.
+const decoyEl = $('decoy-budget') as HTMLInputElement;
+decoyEl.value = level.decoyBudget != null ? String(level.decoyBudget) : '';
+decoyEl.addEventListener('input', () => {
+  const n = parseFloat(decoyEl.value);
+  if (decoyEl.value.trim() !== '' && Number.isFinite(n) && n > 0) level.decoyBudget = n;
+  else delete level.decoyBudget;
+  markDirty();
 });
 
 // Sonar budget: max claps + cooldown. Empty/0/invalid ⇒ field unset (unlimited /
@@ -619,6 +662,8 @@ function syncRoomInputs() {
   ($('room-sos') as HTMLInputElement).value =
     level.speedOfSound != null ? String(level.speedOfSound) : '';
   ($('goal-mode') as HTMLSelectElement).value = level.goal ?? 'beacon';
+  ($('decoy-budget') as HTMLInputElement).value =
+    level.decoyBudget != null ? String(level.decoyBudget) : '';
   ($('clap-budget') as HTMLInputElement).value =
     level.clapBudget != null ? String(level.clapBudget) : '';
   ($('clap-cooldown') as HTMLInputElement).value =

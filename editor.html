@@ -33,6 +33,7 @@
           <button class="tool" data-tool="ceiling">Ceiling zone</button>
           <button class="tool" data-tool="monster">Monster</button>
           <button class="tool" data-tool="absorber">Absorber patch</button>
+          <button class="tool" data-tool="exit">Exit (escape)</button>
         </div>
 
         <h2>Material</h2>
@@ -55,8 +56,10 @@
           <select id="goal-mode" aria-label="Win objective: navigate to a beacon, or find the absorber dead-spot">
             <option value="beacon">beacon</option>
             <option value="absorber">absorber</option>
+            <option value="escape">escape</option>
           </select>
         </label>
+        <label>Decoy budget <input id="decoy-budget" type="number" min="0" step="1" placeholder="∞" aria-label="Max decoys the player may throw this level (blank = unlimited); used in escape mode" /></label>
         <label>Clap budget <input id="clap-budget" type="number" min="0" step="1" placeholder="∞" aria-label="Max claps for the level (blank or 0 = unlimited)" /></label>
         <label>Clap cooldown (ms) <input id="clap-cooldown" type="number" min="0" step="50" placeholder="0" aria-label="Minimum milliseconds between claps (blank or 0 = none)" /></label>
 

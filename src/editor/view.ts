@@ -176,6 +176,19 @@ export function draw(
     label(ctx, mx, my - 14, `☠ ${m.sound}`);
   }
 
+  // Escape exit (the win target in goal:'escape' mode): a distinct diamond marker.
+  if (level.exit) {
+    const [ex, ey] = worldToScreen(v, level.exit.x, level.exit.z);
+    const selExit = opts.selectedId === '__exit';
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(Math.PI / 4);
+    ctx.fillStyle = selExit ? '#fff' : '#6ee7ff';
+    ctx.fillRect(-7, -7, 14, 14);
+    ctx.restore();
+    label(ctx, ex, ey - 14, '⎋ EXIT');
+  }
+
   // Start point with facing arrow.
   const [sx, sy] = worldToScreen(v, level.start.x, level.start.z);
   dot(ctx, sx, sy, opts.selectedId === 'start' ? '#fff' : '#6ee787', 9);

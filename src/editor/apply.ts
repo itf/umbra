@@ -98,6 +98,16 @@ export function lintLevel(level: Level): string[] {
   if ((level.goal ?? 'beacon') === 'beacon' && level.beacons.length === 0) {
     warnings.push('Goal is "beacon" but the level has no beacons.');
   }
+  if (level.goal === 'escape') {
+    if (!level.exit) {
+      warnings.push('Goal is "escape" but the level has no exit. Place an exit with the Exit tool.');
+    } else if (!level.open && (level.exit.x < 0 || level.exit.x > width || level.exit.z < 0 || level.exit.z > depth)) {
+      warnings.push('Exit position is outside the room.');
+    }
+    if (level.monsters.length === 0) {
+      warnings.push('Goal is "escape" but the level has no monsters to evade.');
+    }
+  }
   if (!level.open) {
     const { x, z } = level.start;
     if (x < 0 || x > width || z < 0 || z > depth) {
