@@ -206,3 +206,17 @@ levels verified as built (careful route survivable, loud route caught, decoy lur
 - **7B Cohesion** (agent `a66bf88d…`): single controls/help source of truth (controls.ts
   consumed by speakControls + tutorial + HOWTOPLAY) + announcement-phrasing/clobbering
   audit. Behavior-preserving. Then Cycle-7 review.
+
+**7B Cohesion SHIPPED** (`2888f34`): single controls source of truth (controls.ts) + found
+& fixed a real announcement clobber (sonar budget-intro vs mode primer in assertive region).
++5 tests (498). Cycle 7 (harden & verify) COMPLETE.
+- Cycle-7 review (`meetings/2026-06-29-cycle7-review.md`): product release-ready + coherent
+  → return to breadth (engagement/replay).
+
+### Cycle 8 — Engagement & replay (in progress, 2 parallel agents)
+- **8A Web Speech companion voice** (agent `aeeb3eca…`): optional real TTS (voice/rate/pitch
+  in settings), default OFF (avoid screen-reader double-speak), graceful fallback. Owns
+  src/ui/speech.ts + settings + main say/alert hookup.
+- **8B Scoring + per-level bests** (agent `a4b33b0b…`): time/claps per level, localStorage
+  bests, "New best!" announce; seeds a leaderboard. Owns scoreStore + game.ts instrumentation.
+- Both touch main.ts (different spots) — commit carefully. Then **8C** sandbox generator.
