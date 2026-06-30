@@ -155,6 +155,10 @@ export class InterpolatingHrtfSource {
     }
     this.placed = true;
 
+    // Inverse-distance law on AMPLITUDE (1/r), clamped to unity within 1 m. Web Audio
+    // gain scales pressure amplitude, and intensity ∝ amplitude², so 1/r on amplitude IS
+    // the inverse-SQUARE law for intensity (−6 dB per distance doubling). Using 1/r² here
+    // would wrongly double-attenuate (−12 dB/doubling).
     const g = 1 / Math.max(1, dist);
     this.distanceGain.gain.setTargetAtTime(g, ctx.currentTime, 0.02);
     const cutoff = Math.max(1500, 20000 - dist * 900);
