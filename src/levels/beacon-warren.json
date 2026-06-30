@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "Beacon Warren",
+  "open": false,
+  "room": { "width": 14, "depth": 20, "height": 3 },
+  "roomMaterial": "brick",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "plaster",
+  "start": { "x": 7, "z": 18.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 7, "z": 1.5, "freq": 392, "goalRadius": 1.0, "sound": "drip" }
+  ],
+  "walls": [
+    { "id": "w1", "ax": 0, "az": 15, "bx": 10, "bz": 15, "material": "brick" },
+    { "id": "w2", "ax": 4, "az": 10, "bx": 14, "bz": 10, "material": "concrete" },
+    { "id": "w3", "ax": 0, "az": 5, "bx": 10, "bz": 5, "material": "brick" }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

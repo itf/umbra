@@ -13,6 +13,7 @@
  *   - `renderLevelPicker()` is the thin DOM wiring around that model.
  */
 import type { BuiltinInfo } from '../level/builtins';
+import type { BuiltinCategory } from '../levels';
 
 /** One selectable row in the picker. */
 export interface PickerItem {
@@ -23,7 +24,22 @@ export interface PickerItem {
   ref: string;
   label: string;
   description: string;
+  /** Mode/showcase grouping (builtins only; saved levels are 'saved'). */
+  category: BuiltinCategory | 'saved';
 }
+
+/**
+ * Picker section headings, in display order. Builtins are grouped by mode so a
+ * player can find "more <mode> levels"; saved levels come last.
+ */
+export const PICKER_GROUPS: Array<{ category: BuiltinCategory | 'saved'; heading: string }> = [
+  { category: 'showcase', heading: 'Acoustics tour' },
+  { category: 'beacon', heading: 'Beacon — navigate to a sound' },
+  { category: 'absorber', heading: 'Absorber — find the dead spot' },
+  { category: 'sonar', heading: 'Sonar — clap on a budget' },
+  { category: 'stealth', heading: 'Stealth — escape the hunter' },
+  { category: 'saved', heading: 'Your saved levels' },
+];
 
 /**
  * Merge the bundled levels and the saved level names into one ordered list.
@@ -37,6 +53,7 @@ export function buildPickerModel(builtins: BuiltinInfo[], savedNames: string[]):
     ref: b.id,
     label: b.name,
     description: b.description,
+    category: b.category,
   }));
   for (const name of savedNames) {
     items.push({
@@ -45,6 +62,7 @@ export function buildPickerModel(builtins: BuiltinInfo[], savedNames: string[]):
       ref: name,
       label: name,
       description: 'Your saved level (from the editor).',
+      category: 'saved',
     });
   }
   return items;
@@ -75,20 +93,15 @@ export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): 
   const model = buildPickerModel(opts.builtins, opts.savedNames);
   container.replaceChildren();
 
-  const groups: Array<{ source: 'builtin' | 'saved'; heading: string }> = [
-    { source: 'builtin', heading: 'Demo levels' },
-    { source: 'saved', heading: 'Your saved levels' },
-  ];
-
-  for (const g of groups) {
-    const rows = model.filter((m) => m.source === g.source);
+  for (const g of PICKER_GROUPS) {
+    const rows = model.filter((m) => m.category === g.category);
     if (rows.length === 0) continue;
 
     const section = document.createElement('section');
     section.className = 'picker-group';
     const h = document.createElement('h2');
     h.textContent = g.heading;
-    h.id = `picker-h-${g.source}`;
+    h.id = `picker-h-${g.category}`;
     section.appendChild(h);
 
     const list = document.createElement('ul');

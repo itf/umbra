@@ -26,6 +26,24 @@ import slowSoundVault from './slow-sound-vault.json';
 import findTheFoam from './find-the-foam.json';
 import sonarVault from './sonar-vault.json';
 import stealthEscape from './stealth-escape.json';
+// Cycle-6A level pack — a short difficulty arc per mode.
+import beaconMeadow from './beacon-meadow.json';
+import beaconWarren from './beacon-warren.json';
+import shiftingVault from './shifting-vault.json';
+import foamCathedral from './foam-cathedral.json';
+import twoDeadSpots from './two-dead-spots.json';
+import glassGalleryFoam from './glass-gallery-foam.json';
+import sonarTight from './sonar-tight.json';
+import sonarLabyrinth from './sonar-labyrinth.json';
+import stealthTwinWardens from './stealth-twin-wardens.json';
+import stealthChokepoint from './stealth-chokepoint.json';
+
+/**
+ * Coarse grouping used by the picker to list levels under mode/showcase
+ * headings. `showcase` = the original acoustics-tour levels; the four mode
+ * categories cluster each game mode's difficulty arc.
+ */
+export type BuiltinCategory = 'showcase' | 'beacon' | 'absorber' | 'sonar' | 'stealth';
 
 export interface BuiltinEntry {
   id: string;
@@ -33,6 +51,8 @@ export interface BuiltinEntry {
   name: string;
   /** One-line description of the feature this demo showcases. */
   description: string;
+  /** Coarse mode/showcase grouping for the picker. Absent ⇒ 'showcase'. */
+  category?: BuiltinCategory;
   /** The raw level JSON (validated by the loader, not here). */
   json: unknown;
 }
@@ -83,6 +103,7 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     id: 'monster-cellar',
     name: 'Monster Cellar',
     description: 'A monster hunts your noise. Loud gravel vs quiet carpet patches make stealth matter.',
+    category: 'stealth',
     json: monsterCellar,
   },
   {
@@ -107,6 +128,7 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     id: 'clap-maze',
     name: 'Clap-Maze',
     description: 'A serpentine brick maze navigated by echo, with a tight clap budget — probe deliberately at each junction to find where the echo isn’t.',
+    category: 'sonar',
     json: clapMaze,
   },
   {
@@ -125,18 +147,104 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     id: 'find-the-foam',
     name: 'Find the Foam',
     description: 'Echolocation hunt: clap in a bright concrete room and listen for the DEAD SPOT where a foam patch swallows the echo. Walk to that wall to win — no beacon.',
+    category: 'absorber',
     json: findTheFoam,
   },
   {
     id: 'sonar-vault',
     name: 'Sonar Vault',
     description: 'Sonar-budget survival: a serpentine concrete-and-brick vault with only 6 claps and a long cooldown. Probe at each junction, then navigate from memory to the bell — running out of claps is spoken, not fatal.',
+    category: 'sonar',
     json: sonarVault,
   },
   {
     id: 'stealth-escape',
     name: 'Stealth Escape',
     description: 'Slip past a noise-hunting monster to the exit. Tread the quiet carpet corridor (not the loud gravel), and press T to throw a sound decoy that lures the monster away. Being heard or caught is spoken.',
+    category: 'stealth',
     json: stealthEscape,
+  },
+
+  // ===========================================================================
+  // Cycle-6A level pack — a short, legible difficulty arc per mode. Grouped by
+  // mode (easy → hard within each) so a player can find "more <mode> levels".
+  // ===========================================================================
+
+  // --- BEACON: open → occluded maze → moving-wall / slow-sound twist ---
+  {
+    id: 'beacon-meadow',
+    name: 'Beacon Meadow',
+    description: 'EASY beacon. A warm, open wood-panelled room with a music-box beacon dead ahead — a gentle first walk to learn the homing cue.',
+    category: 'beacon',
+    json: beaconMeadow,
+  },
+  {
+    id: 'beacon-warren',
+    name: 'Beacon Warren',
+    description: 'MEDIUM beacon. A brick warren of three offset baffles occludes a dripping beacon — weave the serpentine, following the sound as it muffles and clears.',
+    category: 'beacon',
+    json: beaconWarren,
+  },
+  {
+    id: 'shifting-vault',
+    name: 'Shifting Vault',
+    description: 'HARD beacon. A bright marble vault where sound crawls at 220 m/s, so the bell arrives late and a sliding sheet-metal wall keeps re-shaping the echoes — trust the lagging beacon.',
+    category: 'beacon',
+    json: shiftingVault,
+  },
+
+  // --- ABSORBER: subtle big room → pick-the-deadest → bright-room contrast ---
+  {
+    id: 'foam-cathedral',
+    name: 'Foam in the Cathedral',
+    description: 'HARD absorber. A vast 9 m marble cathedral rings for a long time; one small rock-wool panel barely dents that tail — hunt the faint, subtle dead spot.',
+    category: 'absorber',
+    json: foamCathedral,
+  },
+  {
+    id: 'two-dead-spots',
+    name: 'The Deadest Spot',
+    description: 'MEDIUM absorber. A live ceramic room with TWO soft patches — a velvet drape and a dead rock-wool panel. Clap both walls and walk to the DEADER one to win.',
+    category: 'absorber',
+    json: twoDeadSpots,
+  },
+  {
+    id: 'glass-gallery-foam',
+    name: 'The Glass Gallery',
+    description: 'EASY absorber. A brilliant, ringing glass gallery where a fibreglass panel kills the echo hard — the brightest room makes the dead spot the easiest to hear.',
+    category: 'absorber',
+    json: glassGalleryFoam,
+  },
+
+  // --- SONAR-BUDGET: tight & few claps → long with a patient cooldown ---
+  {
+    id: 'sonar-tight',
+    name: 'Four Claps',
+    description: 'MEDIUM sonar. A compact two-baffle vault with only FOUR claps — spend each probe at a junction, then commit to the bell from memory.',
+    category: 'sonar',
+    json: sonarTight,
+  },
+  {
+    id: 'sonar-labyrinth',
+    name: 'The Patient Labyrinth',
+    description: 'HARD sonar. A long four-turn stone labyrinth, eight claps but a 3.5 s cooldown — patience is the resource; probe, walk, wait, probe again.',
+    category: 'sonar',
+    json: sonarLabyrinth,
+  },
+
+  // --- STEALTH: two wardens (long quiet route) → decoy chokepoint ---
+  {
+    id: 'stealth-twin-wardens',
+    name: 'Twin Wardens',
+    description: 'HARD stealth. TWO noise-hunters patrol the loud gravel; a long silent foam corridor hugs the left wall — keep to the quiet and they never hear you pass.',
+    category: 'stealth',
+    json: stealthTwinWardens,
+  },
+  {
+    id: 'stealth-chokepoint',
+    name: 'The Chokepoint',
+    description: 'HARD stealth. A single warden sits squarely in the only gateway. Throw a decoy (T) to one side to lure it off the gap, then slip through on the quiet spine.',
+    category: 'stealth',
+    json: stealthChokepoint,
   },
 ];

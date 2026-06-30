@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "name": "Four Claps",
+  "open": false,
+  "room": { "width": 9, "depth": 13, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "clapBudget": 4,
+  "clapCooldownMs": 1500,
+  "start": { "x": 4.5, "z": 12, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 4.5, "z": 1, "freq": 587, "goalRadius": 0.9, "sound": "bell" }
+  ],
+  "walls": [
+    { "id": "w1", "ax": 0, "az": 9, "bx": 6, "bz": 9, "material": "brick" },
+    { "id": "w2", "ax": 3, "az": 5, "bx": 9, "bz": 5, "material": "brick" }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

@@ -94,11 +94,29 @@ describe('picker model (pure)', () => {
 
   it('keys are stable and namespaced by source', () => {
     const model = buildPickerModel(
-      [{ id: 'x', name: 'X', description: 'd' }],
+      [{ id: 'x', name: 'X', description: 'd', category: 'beacon' }],
       ['Saved One'],
     );
     expect(model[0].key).toBe('builtin:x');
     expect(model[1].key).toBe('saved:Saved One');
+  });
+
+  it('carries the builtin category through to each item; saved rows are "saved"', () => {
+    const builtins = builtinLevels();
+    const model = buildPickerModel(builtins, ['Mine']);
+    const byKey = new Map(model.map((m) => [m.key, m]));
+    for (const b of builtins) {
+      expect(byKey.get(`builtin:${b.id}`)!.category).toBe(b.category);
+    }
+    expect(byKey.get('saved:Mine')!.category).toBe('saved');
+  });
+
+  it('every mode is represented by at least two levels (a difficulty arc)', () => {
+    const counts: Record<string, number> = {};
+    for (const b of builtinLevels()) counts[b.category] = (counts[b.category] ?? 0) + 1;
+    for (const mode of ['beacon', 'absorber', 'sonar', 'stealth']) {
+      expect(counts[mode] ?? 0).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('the manifest and registry agree on ids', () => {

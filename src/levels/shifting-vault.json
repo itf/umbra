@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "Shifting Vault",
+  "open": false,
+  "room": { "width": 12, "depth": 16, "height": 3 },
+  "roomMaterial": "marble",
+  "floorMaterial": "tile",
+  "hasCeiling": true,
+  "ceilingMaterial": "marble",
+  "speedOfSound": 220,
+  "start": { "x": 6, "z": 14.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 6, "z": 1.5, "freq": 587, "goalRadius": 1.0, "sound": "bell" }
+  ],
+  "walls": [
+    {
+      "id": "w-mid",
+      "ax": 0, "az": 8, "bx": 8, "bz": 8,
+      "material": "sheet_metal",
+      "motion": { "kind": "translate", "dx": 4, "dz": 0, "period": 8 }
+    }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

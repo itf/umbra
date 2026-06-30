@@ -52,7 +52,20 @@ function beaconReachable(game: GameLevel, roomSize: [number, number, number]): b
 }
 
 describe('maze demo levels are solvable (beacon reachable from start)', () => {
-  for (const id of ['clap-maze', 's-bend-maze', 'sonar-vault', 'stealth-escape']) {
+  for (const id of [
+    'clap-maze',
+    's-bend-maze',
+    'sonar-vault',
+    'stealth-escape',
+    // Cycle-6A pack — every navigable new level (beacon maze, sonar mazes,
+    // moving-wall vault at its rest position, and the stealth exits).
+    'beacon-warren',
+    'shifting-vault',
+    'sonar-tight',
+    'sonar-labyrinth',
+    'stealth-twin-wardens',
+    'stealth-chokepoint',
+  ]) {
     it(`${id}: the beacon is reachable from the start`, () => {
       const level = getBuiltin(id);
       expect(level, `${id} should be a builtin`).toBeTruthy();

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "The Chokepoint",
+  "open": false,
+  "room": { "width": 12, "depth": 20, "height": 3 },
+  "roomMaterial": "rough_stone",
+  "floorMaterial": "gravel",
+  "hasCeiling": true,
+  "ceilingMaterial": "rough_stone",
+  "goal": "escape",
+  "exit": { "x": 6, "z": 1.5 },
+  "decoyBudget": 2,
+  "start": { "x": 6, "z": 18.5, "yaw": 0 },
+  "beacons": [
+    { "id": "exit", "x": 6, "z": 1.5, "freq": 330, "goalRadius": 1.0, "sound": "hum" }
+  ],
+  "walls": [
+    { "id": "gate-l", "ax": 0, "az": 10, "bx": 4.5, "bz": 10, "material": "rough_stone" },
+    { "id": "gate-r", "ax": 7.5, "az": 10, "bx": 12, "bz": 10, "material": "rough_stone" }
+  ],
+  "floors": [
+    { "id": "quiet-spine", "x": 4.5, "z": 1, "w": 3, "d": 18, "material": "acoustic_foam" }
+  ],
+  "ceilings": [],
+  "monsters": [
+    { "id": "m1", "x": 6, "z": 9, "speed": 0.6, "sound": "growl" }
+  ]
+}

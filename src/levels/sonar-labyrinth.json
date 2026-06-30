@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "name": "The Patient Labyrinth",
+  "open": false,
+  "room": { "width": 12, "depth": 24, "height": 3 },
+  "roomMaterial": "rough_stone",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "rough_stone",
+  "clapBudget": 8,
+  "clapCooldownMs": 3500,
+  "start": { "x": 1.5, "z": 22.5, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 10.5, "z": 1.5, "freq": 523, "goalRadius": 0.9, "sound": "bell" }
+  ],
+  "walls": [
+    { "id": "w1", "ax": 0, "az": 19, "bx": 9, "bz": 19, "material": "brick" },
+    { "id": "w2", "ax": 3, "az": 14, "bx": 12, "bz": 14, "material": "rough_stone" },
+    { "id": "w3", "ax": 0, "az": 9, "bx": 9, "bz": 9, "material": "brick" },
+    { "id": "w4", "ax": 3, "az": 4, "bx": 12, "bz": 4, "material": "rough_stone" }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

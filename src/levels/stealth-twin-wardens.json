@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "Twin Wardens",
+  "open": false,
+  "room": { "width": 14, "depth": 22, "height": 3 },
+  "roomMaterial": "rough_stone",
+  "floorMaterial": "gravel",
+  "hasCeiling": true,
+  "ceilingMaterial": "rough_stone",
+  "goal": "escape",
+  "exit": { "x": 2, "z": 1.5 },
+  "decoyBudget": 3,
+  "start": { "x": 2, "z": 20.5, "yaw": 0 },
+  "beacons": [
+    { "id": "exit", "x": 2, "z": 1.5, "freq": 330, "goalRadius": 1.0, "sound": "hum" }
+  ],
+  "walls": [],
+  "floors": [
+    { "id": "quiet-left", "x": 0.5, "z": 1, "w": 3.5, "d": 20, "material": "acoustic_foam" },
+    { "id": "fringe-left", "x": 4.0, "z": 1, "w": 1.5, "d": 20, "material": "carpet" }
+  ],
+  "ceilings": [],
+  "monsters": [
+    { "id": "m1", "x": 9, "z": 14, "speed": 0.55, "sound": "growl" },
+    { "id": "m2", "x": 10, "z": 6, "speed": 0.55, "sound": "growl" }
+  ]
+}

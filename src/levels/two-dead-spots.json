@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "name": "The Deadest Spot",
+  "open": false,
+  "room": { "width": 14, "depth": 14, "height": 4 },
+  "roomMaterial": "ceramic_tile",
+  "floorMaterial": "ceramic_tile",
+  "hasCeiling": true,
+  "ceilingMaterial": "ceramic_tile",
+  "goal": "absorber",
+  "absorbers": [
+    {
+      "id": "deadest",
+      "wall": "-z",
+      "u0": 1.0,
+      "v0": 0.8,
+      "uSize": 2.6,
+      "vSize": 2.0,
+      "material": "panel_fabric_rockwool"
+    },
+    {
+      "id": "decoy",
+      "wall": "+z",
+      "u0": 10.4,
+      "v0": 0.8,
+      "uSize": 2.6,
+      "vSize": 2.0,
+      "material": "curtains_velvet"
+    }
+  ],
+  "start": { "x": 7, "z": 7, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 7, "z": 7, "freq": 440, "goalRadius": 1.5, "sound": "tone" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

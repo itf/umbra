@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "Foam in the Cathedral",
+  "open": false,
+  "room": { "width": 16, "depth": 22, "height": 9 },
+  "roomMaterial": "marble",
+  "floorMaterial": "marble",
+  "hasCeiling": true,
+  "ceilingMaterial": "marble",
+  "goal": "absorber",
+  "absorbers": [
+    {
+      "id": "foam-1",
+      "wall": "-z",
+      "u0": 9.0,
+      "v0": 0.8,
+      "uSize": 2.4,
+      "vSize": 1.8,
+      "material": "panel_fabric_rockwool"
+    }
+  ],
+  "start": { "x": 8, "z": 19, "yaw": 0 },
+  "beacons": [
+    { "id": "b1", "x": 8, "z": 11, "freq": 440, "goalRadius": 1.5, "sound": "tone" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

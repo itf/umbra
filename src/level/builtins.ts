@@ -15,16 +15,21 @@
 import type { Level } from './schema';
 import { isLevel } from './schema';
 import { BUILTIN_MANIFEST } from '../levels';
+import type { BuiltinCategory } from '../levels';
 
 export interface BuiltinInfo {
   id: string;
   name: string;
   description: string;
+  /** Coarse mode/showcase grouping for the picker (defaults to 'showcase'). */
+  category: BuiltinCategory;
 }
 
 interface BuiltinRecord extends BuiltinInfo {
   level: Level;
 }
+
+const DEFAULT_CATEGORY: BuiltinCategory = 'showcase';
 
 /** Validate the manifest once. `isLevel` mutates-in to back-fill defaults. */
 function buildRegistry(): Map<string, BuiltinRecord> {
@@ -43,6 +48,7 @@ function buildRegistry(): Map<string, BuiltinRecord> {
       id: entry.id,
       name: entry.name || data.name,
       description: entry.description,
+      category: entry.category ?? DEFAULT_CATEGORY,
       level: data,
     });
   }
@@ -53,7 +59,12 @@ const REGISTRY = buildRegistry();
 
 /** The bundled demo levels as picker-ready info (id + name + description). */
 export function builtinLevels(): BuiltinInfo[] {
-  return [...REGISTRY.values()].map(({ id, name, description }) => ({ id, name, description }));
+  return [...REGISTRY.values()].map(({ id, name, description, category }) => ({
+    id,
+    name,
+    description,
+    category,
+  }));
 }
 
 /**
