@@ -73,6 +73,13 @@ function steamEnginePref(): boolean {
   return selectBackendFromSearch(location.search) === 'steam';
 }
 
+/** Effective Steam HRTF choice: our SADIE SOFA (true) vs Steam's generic (false).
+ *  The Settings toggle OR the ?engine=steam-sofa URL override enables SADIE. */
+function steamSofaPref(): boolean {
+  return settings.steamSofaHrtf()
+    || new URLSearchParams(location.search).get('engine') === 'steam-sofa';
+}
+
 // Initialise the Begin-screen engine toggle from the effective preference (saved
 // Settings choice, else ?engine=steam). The checkbox stays the source of truth at
 // Begin (it can override), and the Settings toggle keeps it in sync.
@@ -97,6 +104,12 @@ let currentGame: Game | null = null;
  * vs HEAVY (engine toggled) without reaching into Game internals.
  */
 let currentEngineIsSteam = false;
+/** Whether the live Steam backend was built with our SADIE HRTF (vs generic). Lets
+ *  Apply detect an HRTF change (which needs a full rebuild — HRTF is baked at create). */
+let currentSteamIsSofa = false;
+/** Ambisonic order the live Steam backend was built with (1..3). Lets Apply detect an
+ *  order change (a rebuild — order is baked at world creation). 0 ⇒ no Steam backend. */
+let currentSteamOrder = 0;
 
 // Companion-voice preference. OPTIONAL + remembered: defaults ON for first-timers
 // (stored pref), but `?companion=off` / `?companion=on` overrides AND persists the
@@ -163,7 +176,10 @@ async function buildSteamBackend(
 ): Promise<SpatialBackend | null> {
   try {
     const { SteamAudioBackend } = await import('./engine/steamaudio/backend');
-    const wantSofa = new URLSearchParams(location.search).get('engine') === 'steam-sofa';
+    // Our measured SADIE HRTF in Steam (vs Steam's generic): the Settings toggle, OR
+    // the ?engine=steam-sofa URL override. Either enables the fork's custom-SOFA path.
+    const wantSofa = settings.steamSofaHrtf()
+      || new URLSearchParams(location.search).get('engine') === 'steam-sofa';
     const reflectionWetLevel = settings.steamReflectionWet();
     const reflectionBusLevel = settings.steamReflectionBus();
     const reverbBusLevel = settings.steamReverbBus();
@@ -172,6 +188,7 @@ async function buildSteamBackend(
       scattering: SCATTER,
       sofaHrtf: wantSofa,
       headTrackedReflections: true,
+      reflectionOrder: settings.steamReflectionOrder(),
       reflectionWetLevel,
       reflectionBusLevel,
       reverbBusLevel,
@@ -732,9 +749,11 @@ startButton.addEventListener('click', async () => {
     // hot-swap; null both on teardown so Apply knows no level is running.
     currentGame = game;
     currentEngineIsSteam = steam != null;
+    currentSteamIsSofa = steam != null && steamSofaPref();
+    currentSteamOrder = steam != null ? settings.steamReflectionOrder() : 0;
     teardowns.push(() => {
       game.destroy();
-      if (currentGame === game) { currentGame = null; currentEngineIsSteam = false; }
+      if (currentGame === game) { currentGame = null; currentEngineIsSteam = false; currentSteamIsSofa = false; currentSteamOrder = 0; }
     });
 
     // --- Settings panel (audio mix + preferences). Opened from the ⚙ button or the
@@ -1108,14 +1127,21 @@ async function applySteamNow(graph: AudioGraph) {
   const game = currentGame;
   if (!game) { say('Start a level first to apply Steam Audio settings.'); return; }
   const wantSteam = steamEnginePref();
+  const wantSofa = steamSofaPref();
+  const wantOrder = settings.steamReflectionOrder();
   const reflectionWetLevel = settings.steamReflectionWet();
   const reflectionBusLevel = settings.steamReflectionBus();
   const reverbBusLevel = settings.steamReverbBus();
 
-  if (wantSteam === currentEngineIsSteam) {
+  // The HRTF (SADIE vs generic) AND the Ambisonic order are baked at world creation,
+  // so switching either needs a full backend rebuild even when engine on/off is unchanged.
+  const engineUnchanged = wantSteam === currentEngineIsSteam;
+  const bakedChanged = wantSteam && currentEngineIsSteam
+    && (wantSofa !== currentSteamIsSofa || wantOrder !== currentSteamOrder);
+  if (engineUnchanged && !bakedChanged) {
     if (currentEngineIsSteam) {
-      // LIGHT: engine unchanged, Steam live → re-scale the two bus levels in place,
-      // then apply the per-source reflection level (which rebuilds the voices).
+      // LIGHT: engine + HRTF unchanged, Steam live → re-scale the two bus levels in
+      // place, then apply the per-source reflection level (which rebuilds the voices).
       game.setSteamBusLevels(reflectionBusLevel, reverbBusLevel);
       game.setSteamReflectionWet(reflectionWetLevel);
       say('Steam Audio levels applied.');
@@ -1125,7 +1151,7 @@ async function applySteamNow(graph: AudioGraph) {
     return;
   }
 
-  // HEAVY: the engine choice changed → rebuild the spatial voices on the new backend.
+  // HEAVY: engine toggled OR a baked param (HRTF / order) changed → fresh backend.
   if (wantSteam) {
     say('Switching to high-fidelity audio…');
     const steam = await buildSteamBackend(graph.ctx, graph.master);
@@ -1140,10 +1166,16 @@ async function applySteamNow(graph: AudioGraph) {
     if (currentGame !== game) { try { steam.dispose?.(); } catch { /* noop */ } return; }
     game.setSpatialBackend(steam);
     currentEngineIsSteam = true;
-    say('High-fidelity audio applied.');
+    currentSteamIsSofa = wantSofa;
+    currentSteamOrder = wantOrder;
+    say(bakedChanged && engineUnchanged
+      ? 'Steam Audio settings applied.'
+      : 'High-fidelity audio applied.');
   } else {
     game.setSpatialBackend(null);
     currentEngineIsSteam = false;
+    currentSteamIsSofa = false;
+    currentSteamOrder = 0;
     say('Switched to the standard audio engine.');
   }
 }
@@ -1171,6 +1203,12 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       // Keep the Begin-screen checkbox in sync so returning to it shows the choice.
       if (engineToggle) engineToggle.checked = on;
     },
+    // Steam HRTF: our SADIE vs generic. Persisted; applied on next level or via Apply
+    // (an HRTF change forces a backend rebuild — it's baked at world creation).
+    getSteamSofaHrtf: () => settings.steamSofaHrtf(),
+    setSteamSofaHrtf: (on) => settings.setSteamSofaHrtf(on),
+    getSteamReflectionOrder: () => settings.steamReflectionOrder(),
+    setSteamReflectionOrder: (order) => settings.setSteamReflectionOrder(order),
     // Steam reflection / bus levels (3 knobs) — persisted by these setters; made live
     // by "Apply now" (the bus levels live; the per-source reflection level rebuilds).
     // All default 1.0 (= today's behavior).

@@ -101,6 +101,13 @@ export interface SteamBackendOpts {
    */
   headTrackedReflections?: boolean;
   /**
+   * Ambisonic ORDER of the head-tracked reflected field (1..3). Higher = sharper
+   * directionality of reflections (order-1 ≈ blobby; order-3 ≈ 16-channel, crisp) at
+   * higher CPU. Baked at world creation, so a change needs a backend rebuild. Default
+   * 1 (today's behavior) for the head-tracked path. Only used when headTracked is on.
+   */
+  reflectionOrder?: number;
+  /**
    * User-facing MULTIPLIER (0..1) on the PER-SOURCE reflected-field `wet` (the early
    * geometry field baked into each source). Default 1 (no change). Baked at source
    * create() — only a source REBUILD picks up a new value (the bus levels are live).
@@ -228,9 +235,14 @@ export class SteamAudioBackend {
       ...(hrtf ? { hrtf } : {}),
       reflections: {
         maxDuration: r.maxDuration ?? 1.0,
-        // Head-tracked decode is order-1 (`maxOrder:1`); the parametric path keeps the
-        // prior default of 2.
-        maxOrder: r.maxOrder ?? (opts.headTrackedReflections ? 1 : 2),
+        // Ambisonic order of the (head-tracked) reflected field. User-selectable via
+        // opts.reflectionOrder (1..3; higher = sharper reflection directionality, more
+        // CPU). Defaults to 1 for the head-tracked path (today's behavior), 2 for the
+        // parametric path. Clamped to [1,3].
+        maxOrder: r.maxOrder
+          ?? (opts.headTrackedReflections
+            ? Math.max(1, Math.min(3, Math.round(opts.reflectionOrder ?? 1)))
+            : 2),
         maxRays: r.maxRays ?? 4096,
         diffuseSamples: r.diffuseSamples ?? 1024,
         ...headTracked,

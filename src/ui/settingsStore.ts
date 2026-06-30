@@ -19,6 +19,8 @@ export const MASTER_VOLUME_KEY = 'ps.settings.masterVolume';
 // `?engine=steam` choice so the in-game Settings toggle can persist it; honoured by
 // the NEXT level start (the audio backend is constructed at Begin, not hot-swapped).
 export const STEAM_ENGINE_KEY = 'ps.settings.steamEngine';
+export const STEAM_SOFA_KEY = 'ps.settings.steamSofaHrtf';
+export const STEAM_REFLECTION_ORDER_KEY = 'ps.settings.steamReflectionOrder';
 // Spoken-voice (Web Speech / TTS) prefs (8A). TTS is OPT-IN: default OFF so a
 // screen-reader user isn't double-spoken by both their AT and our synthesis.
 export const TTS_ENABLED_KEY = 'ps.settings.ttsEnabled';
@@ -160,6 +162,34 @@ export class SettingsStore {
   }
   setSteamEngineEnabled(on: boolean) {
     this.write(STEAM_ENGINE_KEY, on ? '1' : '0');
+  }
+
+  /**
+   * Steam Audio HRTF choice: ON ⇒ feed OUR measured SADIE SOFA into Steam (same ears
+   * as our own engine); OFF ⇒ Steam's generic built-in HRTF. DEFAULTS TO OFF (generic).
+   * Only affects the Steam path; takes effect on the next level start or via Apply
+   * (the HRTF is baked at world creation, so applying it rebuilds the backend).
+   * The `?engine=steam-sofa` URL still forces SADIE regardless of this setting.
+   */
+  steamSofaHrtf(): boolean {
+    return this.read(STEAM_SOFA_KEY) === '1';
+  }
+  setSteamSofaHrtf(on: boolean) {
+    this.write(STEAM_SOFA_KEY, on ? '1' : '0');
+  }
+
+  /**
+   * Ambisonic ORDER of Steam's head-tracked reflected field, 1..3. Higher = sharper
+   * reflection directionality at more CPU. DEFAULTS TO 1 (today's behavior). Baked at
+   * world creation, so a change applies on the next level or via Apply (rebuild).
+   */
+  steamReflectionOrder(): number {
+    const v = Math.round(Number(this.read(STEAM_REFLECTION_ORDER_KEY)));
+    return Number.isFinite(v) && v >= 1 && v <= 3 ? v : 1;
+  }
+  setSteamReflectionOrder(order: number) {
+    const v = Math.max(1, Math.min(3, Math.round(order)));
+    this.write(STEAM_REFLECTION_ORDER_KEY, String(v));
   }
 
   /**

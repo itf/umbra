@@ -35,6 +35,20 @@ export interface SettingsHooks {
   setSteamEngine: (on: boolean) => void;
 
   /**
+   * Steam HRTF choice: ON ⇒ our measured SADIE HRTF in Steam; OFF ⇒ Steam's generic.
+   * Only affects the Steam path; baked at world creation, so Apply rebuilds to switch.
+   */
+  getSteamSofaHrtf: () => boolean;
+  setSteamSofaHrtf: (on: boolean) => void;
+
+  /**
+   * Steam reflected-field Ambisonic order (1..3): higher = sharper reflection
+   * directionality, more CPU. Baked at world creation, so Apply rebuilds to switch.
+   */
+  getSteamReflectionOrder: () => number;
+  setSteamReflectionOrder: (order: number) => void;
+
+  /**
    * Steam per-source REFLECTION WET level in [0,1]. Only affects the Steam Audio
    * engine; Apply rebuilds the sources so the baked reflected `wet` changes.
    */
@@ -211,6 +225,43 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       : 'High-fidelity audio off. Press Apply Steam settings to switch the running level, or it applies on the next one.');
   });
   dialog.append(engine.row);
+
+  // --- Steam Audio HRTF: our SADIE vs Steam's generic ---
+  // Baked at world creation, so (like the engine toggle) it applies on the next level
+  // or via Apply (which rebuilds the backend). Only meaningful when Steam is on.
+  const sofa = checkboxRow('Use our SADIE HRTF in Steam (vs generic)', hooks.getSteamSofaHrtf(), (on) => {
+    hooks.setSteamSofaHrtf(on);
+    hooks.say(on
+      ? 'Steam will use our SADIE HRTF. Press Apply Steam settings to switch the running level, or it applies on the next one.'
+      : 'Steam will use its generic HRTF. Press Apply Steam settings to switch the running level, or it applies on the next one.');
+  });
+  dialog.append(sofa.row);
+
+  // --- Steam reflected-field Ambisonic order (1..3) ---
+  // Higher order = sharper reflection directionality (order-1 is "blobby"), more CPU.
+  // Baked at world creation, so it applies on the next level or via Apply (rebuild).
+  {
+    const row = document.createElement('label');
+    row.className = 'settings-row';
+    const span = document.createElement('span');
+    span.textContent = 'Steam reflection sharpness (Ambisonic order)';
+    const sel = document.createElement('select');
+    sel.setAttribute('aria-label', 'Steam reflection Ambisonic order');
+    for (const [val, label] of [[1, '1 — soft / least CPU'], [2, '2 — sharper'], [3, '3 — sharpest / most CPU']] as const) {
+      const opt = document.createElement('option');
+      opt.value = String(val);
+      opt.textContent = label;
+      sel.appendChild(opt);
+    }
+    sel.value = String(hooks.getSteamReflectionOrder());
+    sel.addEventListener('change', () => {
+      const v = Number(sel.value);
+      hooks.setSteamReflectionOrder(v);
+      hooks.say(`Steam reflection order ${v}. Press Apply Steam settings to switch the running level, or it applies on the next one.`);
+    });
+    row.append(span, sel);
+    dialog.append(row);
+  }
 
   // --- Steam Audio reflection / bus levels (THREE knobs) ---
   // These ONLY affect the Steam Audio engine. Each is a 0..100% of the CURRENT (full)
