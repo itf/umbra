@@ -24,6 +24,7 @@ import { precomputeMinPhase, type MinPhaseHrtf } from './interpolatingDsp';
 import { DEFAULT_SPEED_OF_SOUND } from '../acoustics/core';
 import { DEFAULT_MAX_DELAY_SEC, propagationDelaySec, clampDelaySec } from './propagation';
 import type { ListenerPose } from './renderer';
+import { nearFieldEarGains } from './nearFieldIld';
 
 // The worklet is pre-bundled (esbuild) into `public/hrtf-worklet.js` by the
 // `worklet` npm script (run in `dev` and `build`); served verbatim by Vite in dev
@@ -161,6 +162,16 @@ export class InterpolatingHrtfSource {
 
     const [hx, hy, hz] = this.r.headDir(x, y, z);
     this.node.port.postMessage({ type: 'dir', x: hx, y: hy, z: hz });
+
+    // NEAR-FIELD per-ear ILD. `headDir` returns the UN-normalized head-relative offset
+    // (it carries distance), so it's the source position in head space. nearFieldEarGains
+    // returns each ear's r_ref/r_ear CORRECTION ratio (≈1 at the 1.2 m measurement shell,
+    // <1 farther — removing the residual the far-field HRTF baked in, >1 nearer — the
+    // near-field boost). It multiplies the existing mono distanceGain (the common 1/r term)
+    // in the worklet's L/R output, so a source close to one ear is dramatically louder in
+    // that ear. Head-occlusion ILD is untouched (it lives in the HRTF, direction-based).
+    const ear = nearFieldEarGains({ x: hx, y: hy, z: hz });
+    this.node.port.postMessage({ type: 'earGains', left: ear.left, right: ear.right });
   }
 
   disconnect() {

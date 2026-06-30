@@ -23,6 +23,11 @@ declare const AudioWorkletProcessor: {
 class HrtfProcessor extends AudioWorkletProcessor {
   private dsp: HrtfDsp;
   private dir: [number, number, number] = [0, 0, -1];
+  // NEAR-FIELD per-ear ILD gains (r_ref/r_ear correction; 1 = no correction = at the
+  // measurement shell). Targets posted from setPosition; the current values glide toward
+  // them per-sample so a moving source doesn't zipper. Default 1 (no-op) until posted.
+  private earGainL = 1; private earGainR = 1;
+  private earTargetL = 1; private earTargetR = 1;
 
   constructor(options: { processorOptions: { mp: MinPhaseHrtf; k?: number } }) {
     super();
@@ -32,6 +37,8 @@ class HrtfProcessor extends AudioWorkletProcessor {
       const d = e.data;
       if (d && d.type === 'dir') {
         this.dir[0] = d.x; this.dir[1] = d.y; this.dir[2] = d.z;
+      } else if (d && d.type === 'earGains') {
+        this.earTargetL = d.left; this.earTargetR = d.right;
       }
     };
   }
@@ -48,6 +55,16 @@ class HrtfProcessor extends AudioWorkletProcessor {
     const mono = inCh ?? new Float32Array(n);
     this.dsp.setDirection(this.dir[0], this.dir[1], this.dir[2]);
     this.dsp.process(mono, outL, outR);
+    // Apply the near-field per-ear gain, gliding toward the target each sample (one-pole,
+    // ~5 ms at 48 kHz) so abrupt gain changes between messages don't click.
+    const a = 0.0005;
+    let gl = this.earGainL, gr = this.earGainR;
+    const tl = this.earTargetL, tr = this.earTargetR;
+    for (let i = 0; i < n; i++) {
+      gl += (tl - gl) * a; gr += (tr - gr) * a;
+      outL[i] *= gl; outR[i] *= gr;
+    }
+    this.earGainL = gl; this.earGainR = gr;
     return true;
   }
 }
