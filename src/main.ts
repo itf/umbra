@@ -85,6 +85,18 @@ const scoreStore = new ScoreStore();
 // The mounted settings panel (audio mix + prefs). Null until the game starts +
 // setupSettings mounts it; the in-game S key + the ⚙ button drive it.
 let settingsPanel: SettingsPanel | null = null;
+/**
+ * The currently-running Game, for the live Settings "Apply now" hot-swap (engine
+ * on/off + reverb/reflection levels). Set right after construction in the Begin
+ * handler, nulled in the run teardown. Null ⇒ no level running (Apply announces so).
+ */
+let currentGame: Game | null = null;
+/**
+ * Whether the live run currently has the Steam Audio engine. Tracked alongside
+ * `currentGame` so Apply can decide LIGHT (level tweak on a running Steam backend)
+ * vs HEAVY (engine toggled) without reaching into Game internals.
+ */
+let currentEngineIsSteam = false;
 
 // Companion-voice preference. OPTIONAL + remembered: defaults ON for first-timers
 // (stored pref), but `?companion=off` / `?companion=on` overrides AND persists the
@@ -135,6 +147,42 @@ function applyChannelSwap(graph: AudioGraph, want: boolean) {
 function setMasterVolume(graph: AudioGraph, v: number) {
   const t = graph.ctx.currentTime;
   graph.master.gain.setTargetAtTime(Math.max(0, Math.min(1, v)), t, 0.03);
+}
+
+/**
+ * Build the Steam Audio backend for the current settings, or return null on ANY
+ * failure (no cross-origin isolation, WASM load error, …) so the caller NEVER leaves
+ * the game silent — it falls back to our engine. Shared by the Begin handler and the
+ * live "Apply now" engine hot-swap, so both honour the same SOFA / head-tracked /
+ * reverb-reflection-level choices. The dynamic import keeps `three` + the 6 MB WASM
+ * out of the default bundle (only opt-in pays for it).
+ */
+async function buildSteamBackend(
+  ctx: AudioContext,
+  master: AudioNode,
+): Promise<SpatialBackend | null> {
+  try {
+    const { SteamAudioBackend } = await import('./engine/steamaudio/backend');
+    const wantSofa = new URLSearchParams(location.search).get('engine') === 'steam-sofa';
+    const reflectionWetLevel = settings.steamReflectionWet();
+    const reflectionBusLevel = settings.steamReflectionBus();
+    const reverbBusLevel = settings.steamReverbBus();
+    const steam = await SteamAudioBackend.create(ctx, master, {
+      hrtf: true,
+      scattering: SCATTER,
+      sofaHrtf: wantSofa,
+      headTrackedReflections: true,
+      reflectionWetLevel,
+      reflectionBusLevel,
+      reverbBusLevel,
+    });
+    console.info(`[papasangre] Steam levels — reflection (per-source): ${reflectionWetLevel}, reflection bus: ${reflectionBusLevel}, reverb bus: ${reverbBusLevel}.`);
+    console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true).`);
+    return steam;
+  } catch (e) {
+    console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
+    return null;
+  }
 }
 
 // OPTIONAL spoken-voice (Web Speech / TTS) layer. ADDITIVE to the ARIA live
@@ -556,39 +604,10 @@ startButton.addEventListener('click', async () => {
     const wantSteam = engineToggle ? engineToggle.checked : steamEnginePref();
     if (wantSteam) {
       say('Loading Steam Audio backend…');
-      try {
-        const { SteamAudioBackend } = await import('./engine/steamaudio/backend');
-        // ?engine=steam-sofa opts into feeding OUR SADIE SOFA to Steam Audio's custom-HRTF
-        // API (needs the SOFA-capable three-steam-audio fork as the resolved dependency).
-        // Plain ?engine=steam uses Steam's generic HRTF — works against the published pkg.
-        const wantSofa = new URLSearchParams(location.search).get('engine') === 'steam-sofa';
-        // Head-tracked Ambisonic reflections: ON for the steam path now that the
-        // SOFA+head-tracked fork is the vendored dependency (vendor/three-steam-audio).
-        // This rotates the reflected field with the listener so it no longer masks the
-        // direct path, which lets backend.ts raise reflections to material-driven
-        // strength (the maze-navigation fix). Gated like sofaHrtf: the backend only
-        // passes `reflections.headTracked` to createWorld when this is true, so it can't
-        // confuse the published package if it were ever swapped back in.
-        // Steam reverb/reflection LEVELS (0..1 multipliers) read from Settings at
-        // create() time — they apply on THIS run start (and any later run), not live,
-        // since the backend is built here and not hot-swapped. BOTH default to 1.0
-        // (full = today's behavior); the user tunes them down to localize rooms.
-        const reverbLevel = settings.steamReverbLevel();
-        const reflectionLevel = settings.steamReflectionLevel();
-        steam = await SteamAudioBackend.create(ctx, graph.master, {
-          hrtf: true,
-          scattering: SCATTER,
-          sofaHrtf: wantSofa,
-          headTrackedReflections: true,
-          reverbLevel,
-          reflectionLevel,
-        });
-        console.info(`[papasangre] Steam levels — reverb: ${reverbLevel}, reflections: ${reflectionLevel}.`);
-        console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true).`);
-      } catch (e) {
-        console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
-        steam = null;
-      }
+      // Build via the shared helper (returns null on ANY failure → our engine). The
+      // live "Apply now" engine hot-swap uses the SAME builder, so Begin + Apply honour
+      // identical SOFA / head-tracked / reverb-reflection-level choices.
+      steam = await buildSteamBackend(ctx, graph.master);
     }
 
     startScreen.hidden = true;
@@ -709,7 +728,14 @@ startButton.addEventListener('click', async () => {
       },
     }, undefined, steam, interpRenderer, { levelId, clapsUsed: () => clapsUsed });
 
-    teardowns.push(() => game.destroy());
+    // Expose the running game + its engine state for the live Settings "Apply now"
+    // hot-swap; null both on teardown so Apply knows no level is running.
+    currentGame = game;
+    currentEngineIsSteam = steam != null;
+    teardowns.push(() => {
+      game.destroy();
+      if (currentGame === game) { currentGame = null; currentEngineIsSteam = false; }
+    });
 
     // --- Settings panel (audio mix + preferences). Opened from the ⚙ button or the
     // S key; every control wired to its existing hook, every change spoken. ---
@@ -1061,6 +1087,67 @@ function speakControls() {
  * single place that applies + persists each pref. Reset clears trainer + daily
  * streak + onboarding/primer flags so first-run onboarding replays.
  */
+/**
+ * Make the persisted Steam Audio settings LIVE on the running level (the Settings
+ * "Apply now" verb), without restarting it. The decision:
+ *
+ *  - No level running → announce "start a level first" (nothing to apply to).
+ *  - Engine UNCHANGED & a Steam backend is live → LIGHT: just push the new reverb/
+ *    reflection levels (bus levels live via setSteamBusLevels → setGain; the
+ *    per-source reflection level via setSteamReflectionWet → voice rebuild).
+ *  - Engine UNCHANGED & Steam is OFF (staying off) → announce it only affects Steam.
+ *  - Engine TOGGLED → HEAVY: rebuild the spatial voices on the new backend.
+ *      • turning ON: build a Steam backend; on FAILURE keep our engine + announce
+ *        (never silent).
+ *      • turning OFF: setSpatialBackend(null) → back to our engine.
+ *
+ * State (won/caught/decoys/pose/monsters/footsteps) is preserved across the HEAVY
+ * swap by Game.setSpatialBackend.
+ */
+async function applySteamNow(graph: AudioGraph) {
+  const game = currentGame;
+  if (!game) { say('Start a level first to apply Steam Audio settings.'); return; }
+  const wantSteam = steamEnginePref();
+  const reflectionWetLevel = settings.steamReflectionWet();
+  const reflectionBusLevel = settings.steamReflectionBus();
+  const reverbBusLevel = settings.steamReverbBus();
+
+  if (wantSteam === currentEngineIsSteam) {
+    if (currentEngineIsSteam) {
+      // LIGHT: engine unchanged, Steam live → re-scale the two bus levels in place,
+      // then apply the per-source reflection level (which rebuilds the voices).
+      game.setSteamBusLevels(reflectionBusLevel, reverbBusLevel);
+      game.setSteamReflectionWet(reflectionWetLevel);
+      say('Steam Audio levels applied.');
+    } else {
+      say('Those settings only affect Steam Audio, which is off.');
+    }
+    return;
+  }
+
+  // HEAVY: the engine choice changed → rebuild the spatial voices on the new backend.
+  if (wantSteam) {
+    say('Switching to high-fidelity audio…');
+    const steam = await buildSteamBackend(graph.ctx, graph.master);
+    if (!steam) {
+      // Build failed → keep the current (our) engine; never leave the game silent.
+      say('High-fidelity audio is unavailable here. Keeping the standard engine.');
+      return;
+    }
+    // The backend build is async (dynamic import + WASM init); the run could have been
+    // torn down (or replaced) meanwhile. If so, drop the freshly-built backend rather
+    // than apply it to a dead/other game.
+    if (currentGame !== game) { try { steam.dispose?.(); } catch { /* noop */ } return; }
+    game.setSpatialBackend(steam);
+    currentEngineIsSteam = true;
+    say('High-fidelity audio applied.');
+  } else {
+    game.setSpatialBackend(null);
+    currentEngineIsSteam = false;
+    say('Switched to the standard audio engine.');
+  }
+}
+
 function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
   const host = document.getElementById('settings-screen');
   if (!host) return;
@@ -1084,12 +1171,18 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       // Keep the Begin-screen checkbox in sync so returning to it shows the choice.
       if (engineToggle) engineToggle.checked = on;
     },
-    // Steam reverb/reflection levels — persisted only; read when the Steam backend
-    // is built (next run), not a live hot-swap. Default 1.0 (= today's behavior).
-    getSteamReverbLevel: () => settings.steamReverbLevel(),
-    setSteamReverbLevel: (v) => settings.setSteamReverbLevel(v),
-    getSteamReflectionLevel: () => settings.steamReflectionLevel(),
-    setSteamReflectionLevel: (v) => settings.setSteamReflectionLevel(v),
+    // Steam reflection / bus levels (3 knobs) — persisted by these setters; made live
+    // by "Apply now" (the bus levels live; the per-source reflection level rebuilds).
+    // All default 1.0 (= today's behavior).
+    getSteamReflectionWet: () => settings.steamReflectionWet(),
+    setSteamReflectionWet: (v) => settings.setSteamReflectionWet(v),
+    getSteamReflectionBus: () => settings.steamReflectionBus(),
+    setSteamReflectionBus: (v) => settings.setSteamReflectionBus(v),
+    getSteamReverbBus: () => settings.steamReverbBus(),
+    setSteamReverbBus: (v) => settings.setSteamReverbBus(v),
+    // LIVE "Apply now": make the persisted Steam engine + reverb/reflection choices
+    // take effect on the RUNNING level without restarting it. Decides LIGHT vs HEAVY.
+    applySteamNow: () => { void applySteamNow(graph); },
     getSwap: () => onboarding.swap(),
     setSwap: (on) => {
       onboarding.setSwap(on);

@@ -267,6 +267,15 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   background: #161616; border: 1px solid #555; border-radius: 12px;
   padding: 24px; width: min(440px, 92vw);
   display: flex; flex-direction: column; gap: 16px;
+  /* The panel can grow taller than the viewport (engine + reverb/reflection +
+     Apply + TTS + reset/close). Cap it and scroll instead of overflowing off the
+     centered overlay — otherwise the lower controls (e.g. Apply) are unreachable. */
+  max-height: 90vh; overflow-y: auto;
+}
+/* Live-apply button: a clear, full-width affordance distinct from the rows. */
+.settings-apply-steam {
+  background: #14321a; border: 1px solid #2f7d45; color: #bfe8cc;
+  padding: 12px 20px; border-radius: 8px; font-size: 1rem; cursor: pointer;
 }
 .settings-dialog h2 { margin: 0; font-size: 1.4rem; }
 .settings-row { display: flex; align-items: center; gap: 12px; }

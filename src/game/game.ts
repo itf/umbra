@@ -124,6 +124,23 @@ export interface SpatialBackend {
   setGeometry(walls: WallDef[]): void;
   setListener(x: number, y: number, z: number, yaw: number): void;
   step(deltaSeconds: number): void;
+  /**
+   * LIGHT live hot-swap of the two BUS levels (0..1 multipliers on the reflection +
+   * reverb bus wets AND each source's matching send) on the already-running backend.
+   * Optional: a backend that can't re-scale them omits it. Implemented by SteamAudioBackend.
+   */
+  setBusLevels?(reflectionBusLevel: number, reverbBusLevel: number): void;
+  /**
+   * Store the 0..1 per-source reflected-field `wet` multiplier. Optional. The baked
+   * `wet` only changes on a source REBUILD, so the caller rebuilds after this.
+   * Implemented by SteamAudioBackend.
+   */
+  setReflectionWetLevel?(v: number): void;
+  /**
+   * Release the backend's resources. Optional. Used when a backend built for a live
+   * "Apply" is discarded because the run was torn down mid-build (so it isn't leaked).
+   */
+  dispose?(): void;
 }
 
 /**
@@ -668,6 +685,141 @@ export class Game {
     // Steam Audio: rebuild its static scene from the live walls (moving-wall levels).
     // commit() rebuilds the BVH; cheap enough at the moving-walls throttle.
     this.steam?.setGeometry(walls);
+  }
+
+  /**
+   * HEAVY live hot-swap of the spatial backend (engine on/off) on a RUNNING level,
+   * WITHOUT restarting it. Tears down ONLY the spatial voices (beacons + monster
+   * src/voice/custom — mirroring destroy()), swaps `this.steam`, re-pushes geometry,
+   * and rebuilds those voices preserving ALL game state.
+   *
+   * PRESERVED (never reset): won, caught, ended (derived), decoysLeft (setDecoyBudget
+   * is NOT called), audioYaw, glide, noise, lastResultValue, lastTickMs, player,
+   * footsteps/footstepRoom, and every monster's PURE MonsterState (reused by reference
+   * so a chase in progress continues from exactly where it was).
+   *
+   * Edge cases honoured: beacons rebuilt already-faded (gain 0) when `this.won`;
+   * monster custom-audio loops vetoed when `this.ended` so a finished run stays silent.
+   */
+  setSpatialBackend(steam: SpatialBackend | null) {
+    // Swap the engine + re-push the current geometry into the new backend, then rebuild
+    // the spatial voices against it (preserving ALL game state).
+    this.steam = steam;
+    if (this.steam) this.steam.setGeometry(this.level.acousticWalls ?? []);
+    this.rebuildVoices();
+  }
+
+  /**
+   * Tear down ONLY the spatial voices (beacons + monster src/voice/custom — mirroring
+   * destroy()) and rebuild them against the CURRENT `this.steam` backend, preserving
+   * ALL game state (won/caught/ended/decoysLeft/audioYaw/glide/noise/player/footsteps,
+   * and each monster's PURE MonsterState by reference). Used by both `setSpatialBackend`
+   * (after it swaps `this.steam`) and `setSteamReflectionWet` (which keeps the same
+   * backend but needs new sources to bake the updated per-source reflected `wet`).
+   */
+  private rebuildVoices() {
+    // 1) Tear down ONLY the spatial voices, mirroring destroy() (leave footsteps,
+    //    glide, player, noise, and the monster STATE objects untouched).
+    for (const u of this.beacons) {
+      u.voice?.stop();
+      u.voice = null;
+      if (u.custom) {
+        try { u.custom.stop(); } catch { /* already stopped */ }
+        u.custom = null;
+      }
+      u.plain?.disconnect();
+      u.interp?.output.disconnect();
+      u.modeled?.disconnect();
+      u.steam?.dispose();
+    }
+    this.beacons = [];
+    // Snapshot the monster STATES (kept by reference) so the rebuilt voices resume
+    // each monster exactly where its AI left off; then drop the old audio.
+    const monsterStates = this.monsters.map((m) => m.state);
+    for (const m of this.monsters) {
+      m.voice?.stop();
+      if (m.custom) {
+        try { m.custom.stop(); } catch { /* already stopped */ }
+        m.custom = null;
+      }
+      m.src.teardown();
+    }
+    this.monsters = [];
+
+    // 2) Rebuild beacons through the current engine. A FINISHED run (won OR caught — both
+    //    fade the beacons to 0 in their handlers) rebuilds them already muted so the
+    //    swap doesn't un-mute a completed level.
+    for (const spec of this.level.beacons) {
+      const u = this.makeBeaconUnit(spec);
+      this.beacons.push(u);
+      this.startBeaconSource(u);
+      if (this.ended) u.output.gain.value = 0;
+    }
+
+    // 3) Rebuild monsters AT THEIR CURRENT position, reusing the same MonsterState by
+    //    reference. A finished run vetoes both the synth voice fade and custom loops.
+    monsterStates.forEach((state, i) => {
+      // Recover this monster's sound/soundUrl from its level spawn by index (states
+      // are snapshotted in level order, so index lines up with `level.monsters`).
+      const spawn = this.level.monsters?.[i];
+      const src = this.makePositionedSource();
+      src.setPosition(state.x, this.headHeight, state.z);
+      const preset = resolveMonsterPreset(spawn?.sound ?? 'growl');
+      let voice: MonsterVoice | null = null;
+      if (!this.ended) {
+        voice = new MonsterVoice(this.graph.ctx, src.input, preset);
+        voice.start();
+      }
+      const entry: (typeof this.monsters)[number] = { state, src, voice, custom: null };
+      this.monsters.push(entry);
+      const soundUrl = spawn?.soundUrl;
+      if (soundUrl) {
+        void attachCustomLoop(
+          this.graph.ctx,
+          src.input,
+          soundUrl,
+          () => { /* keep the synth growl/hum already running */ },
+          { shouldStart: () => !this.ended && entry.custom == null },
+        ).then((handle) => {
+          if (!handle.source) return;
+          entry.voice?.stop();
+          entry.voice = null;
+          entry.custom = handle.source;
+        });
+      }
+    });
+
+    // 4) Re-apply the pose so the new engine's listener + sources are correct
+    //    immediately (and the modeled beacon, if any, solves for the start pose).
+    this.syncListener();
+    this.applyAudioPose(this.glide.current);
+    this.refreshBeacon();
+  }
+
+  /**
+   * LIGHT live hot-swap of the two Steam BUS levels (reflection bus + reverb bus, each
+   * 0..1) on the running backend — re-scales the bus wets + each source's matching send
+   * in place, no rebuild. No-op when no Steam backend is active or it can't re-scale them.
+   */
+  setSteamBusLevels(reflectionBusLevel: number, reverbBusLevel: number) {
+    this.steam?.setBusLevels?.(reflectionBusLevel, reverbBusLevel);
+  }
+
+  /**
+   * Apply a new Steam PER-SOURCE reflected-field `wet` level (0..1). The baked `wet`
+   * can't change in place, so this stores it on the backend and then REBUILDS the
+   * spatial voices (rebuildVoices) so the new sources bake the updated wet — preserving
+   * ALL game state. No-op when no Steam backend is active.
+   */
+  setSteamReflectionWet(v: number) {
+    if (!this.steam) return;
+    this.steam.setReflectionWetLevel?.(v);
+    this.rebuildVoices();
+  }
+
+  /** Whether a Steam Audio backend is currently active (for the host's Apply logic). */
+  get steamActive(): boolean {
+    return this.steam != null;
   }
 
   /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */

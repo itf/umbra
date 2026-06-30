@@ -14,10 +14,12 @@ import {
   clampTtsRate,
   clampTtsPitch,
   clampLevel,
-  STEAM_REVERB_LEVEL_KEY,
-  STEAM_REFLECTION_LEVEL_KEY,
-  DEFAULT_STEAM_REVERB_LEVEL,
-  DEFAULT_STEAM_REFLECTION_LEVEL,
+  STEAM_REFLECTION_WET_KEY,
+  STEAM_REFLECTION_BUS_KEY,
+  STEAM_REVERB_BUS_KEY,
+  DEFAULT_STEAM_REFLECTION_WET,
+  DEFAULT_STEAM_REFLECTION_BUS,
+  DEFAULT_STEAM_REVERB_BUS,
 } from './settingsStore';
 
 /** A minimal in-memory Storage stand-in for deterministic, isolated tests. */
@@ -183,41 +185,53 @@ describe('clampLevel (pure)', () => {
   });
 });
 
-describe('SettingsStore Steam reverb / reflection levels', () => {
-  it('default to full (1.0) when unset — byte-identical to today', () => {
+describe('SettingsStore Steam reflection / bus levels', () => {
+  it('all three default to full (1.0) when unset — byte-identical to today', () => {
     const s = new SettingsStore(memStorage());
-    expect(DEFAULT_STEAM_REVERB_LEVEL).toBe(1);
-    expect(DEFAULT_STEAM_REFLECTION_LEVEL).toBe(1);
-    expect(s.steamReverbLevel()).toBe(1);
-    expect(s.steamReflectionLevel()).toBe(1);
+    expect(DEFAULT_STEAM_REFLECTION_WET).toBe(1);
+    expect(DEFAULT_STEAM_REFLECTION_BUS).toBe(1);
+    expect(DEFAULT_STEAM_REVERB_BUS).toBe(1);
+    expect(s.steamReflectionWet()).toBe(1);
+    expect(s.steamReflectionBus()).toBe(1);
+    expect(s.steamReverbBus()).toBe(1);
   });
-  it('reverb level round-trips, clamps, and persists', () => {
+  it('reflection wet level round-trips, clamps, and persists', () => {
     const backing = memStorage();
     const s = new SettingsStore(backing);
-    s.setSteamReverbLevel(0.3);
-    expect(s.steamReverbLevel()).toBe(0.3);
-    expect(backing.map.get(STEAM_REVERB_LEVEL_KEY)).toBe('0.3');
-    expect(new SettingsStore(backing).steamReverbLevel()).toBe(0.3);
-    s.setSteamReverbLevel(5);
-    expect(s.steamReverbLevel()).toBe(1);
-    s.setSteamReverbLevel(-5);
-    expect(s.steamReverbLevel()).toBe(0);
+    s.setSteamReflectionWet(0.3);
+    expect(s.steamReflectionWet()).toBe(0.3);
+    expect(backing.map.get(STEAM_REFLECTION_WET_KEY)).toBe('0.3');
+    expect(new SettingsStore(backing).steamReflectionWet()).toBe(0.3);
+    s.setSteamReflectionWet(5);
+    expect(s.steamReflectionWet()).toBe(1);
+    s.setSteamReflectionWet(-5);
+    expect(s.steamReflectionWet()).toBe(0);
   });
-  it('reflection level round-trips, clamps, and persists', () => {
+  it('reflection bus level round-trips, clamps, and persists', () => {
     const backing = memStorage();
     const s = new SettingsStore(backing);
-    s.setSteamReflectionLevel(0.5);
-    expect(s.steamReflectionLevel()).toBe(0.5);
-    expect(backing.map.get(STEAM_REFLECTION_LEVEL_KEY)).toBe('0.5');
-    expect(new SettingsStore(backing).steamReflectionLevel()).toBe(0.5);
+    s.setSteamReflectionBus(0.5);
+    expect(s.steamReflectionBus()).toBe(0.5);
+    expect(backing.map.get(STEAM_REFLECTION_BUS_KEY)).toBe('0.5');
+    expect(new SettingsStore(backing).steamReflectionBus()).toBe(0.5);
+  });
+  it('reverb bus level round-trips, clamps, and persists', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    s.setSteamReverbBus(0.5);
+    expect(s.steamReverbBus()).toBe(0.5);
+    expect(backing.map.get(STEAM_REVERB_BUS_KEY)).toBe('0.5');
+    expect(new SettingsStore(backing).steamReverbBus()).toBe(0.5);
   });
   it('returns defaults for corrupt stored values', () => {
     const backing = memStorage();
-    backing.map.set(STEAM_REVERB_LEVEL_KEY, 'garbage');
-    backing.map.set(STEAM_REFLECTION_LEVEL_KEY, 'nope');
+    backing.map.set(STEAM_REFLECTION_WET_KEY, 'garbage');
+    backing.map.set(STEAM_REFLECTION_BUS_KEY, 'nope');
+    backing.map.set(STEAM_REVERB_BUS_KEY, 'bad');
     const s = new SettingsStore(backing);
-    expect(s.steamReverbLevel()).toBe(DEFAULT_STEAM_REVERB_LEVEL);
-    expect(s.steamReflectionLevel()).toBe(DEFAULT_STEAM_REFLECTION_LEVEL);
+    expect(s.steamReflectionWet()).toBe(DEFAULT_STEAM_REFLECTION_WET);
+    expect(s.steamReflectionBus()).toBe(DEFAULT_STEAM_REFLECTION_BUS);
+    expect(s.steamReverbBus()).toBe(DEFAULT_STEAM_REVERB_BUS);
   });
 });
 

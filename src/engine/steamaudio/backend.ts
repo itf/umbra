@@ -35,6 +35,41 @@ export interface SteamSourceHandle {
   dispose(): void;
 }
 
+/** The create-time `wet` of the SHARED reflection bus (multiplied by the bus level). */
+export const BUS_BASE_REFL = 1;
+/** The create-time `wet` of the SHARED reverb bus (multiplied by the bus level). */
+export const BUS_BASE_REVERB = 0.5;
+
+/**
+ * The pure recompute of a live source's reflect/reverb SEND gains from its stored
+ * BASE sends × the new 0..1 BUS levels. Exported so the multiplier math is unit-
+ * testable without a real Steam Audio world. The per-source `reflections.wet` is NOT
+ * recomputed here: it's baked into the source at create() (only a REBUILD can change
+ * it), and the two BUS sends are what `setBusLevels` re-scales live.
+ */
+export function recomputeSends(
+  base: { reflectSend: number; reverbSend: number },
+  reflectionBusLevel: number,
+  reverbBusLevel: number,
+): { reflectSend: number; reverbSend: number } {
+  return {
+    reflectSend: base.reflectSend * reflectionBusLevel,
+    reverbSend: base.reverbSend * reverbBusLevel,
+  };
+}
+
+/**
+ * A live, tracked Steam Audio source whose reflect/reverb sends can be re-scaled in
+ * place (the LIGHT hot-swap). Holds the connection handles returned by
+ * connectReflections/connectReverb (each has a live `setGain`) plus the BASE sends so
+ * a new level recomputes from the original, not the already-scaled, value.
+ */
+interface LiveSteamSource {
+  reflConn: { setGain: (g: number) => void } | null;
+  reverbConn: { setGain: (g: number) => void } | null;
+  base: { reflectSend: number; reverbSend: number };
+}
+
 /** A quaternion for the listener orientation. */
 export interface Quat { x: number; y: number; z: number; w: number; }
 
@@ -66,16 +101,21 @@ export interface SteamBackendOpts {
    */
   headTrackedReflections?: boolean;
   /**
-   * User-facing MULTIPLIER (0..1) on the backend's hardcoded reverb send. Lets the
-   * Steam reverb bus be aggressively reduced (it otherwise reads "everywhere"/
-   * unlocalizable). Default 1 (no change). Read at create() — applies next run.
+   * User-facing MULTIPLIER (0..1) on the PER-SOURCE reflected-field `wet` (the early
+   * geometry field baked into each source). Default 1 (no change). Baked at source
+   * create() — only a source REBUILD picks up a new value (the bus levels are live).
    */
-  reverbLevel?: number;
+  reflectionWetLevel?: number;
   /**
-   * User-facing MULTIPLIER (0..1) on the hardcoded reflection send AND `wet`.
-   * Default 1 (no change).
+   * User-facing MULTIPLIER (0..1) on the shared REFLECTION BUS wet AND every source's
+   * reflect SEND. LIVE-applicable via setBusLevels (no rebuild). Default 1 (no change).
    */
-  reflectionLevel?: number;
+  reflectionBusLevel?: number;
+  /**
+   * User-facing MULTIPLIER (0..1) on the shared REVERB BUS wet AND every source's
+   * reverb SEND. LIVE-applicable via setBusLevels (no rebuild). Default 1 (no change).
+   */
+  reverbBusLevel?: number;
 }
 
 /** URL of OUR measured SADIE SOFA (48 kHz), served from the copied assets tree. */
@@ -116,8 +156,18 @@ export class SteamAudioBackend {
   private scattering: number;
   private useHrtf: boolean;
   private headTracked: boolean;
-  private reverbLevel: number;
-  private reflectionLevel: number;
+  /** 0..1 multiplier on each source's baked reflected-field `wet` (rebuild to apply). */
+  private reflectionWetLevel: number;
+  /** 0..1 multiplier on the reflection bus wet + each source's reflect send (live). */
+  private reflectionBusLevel: number;
+  /** 0..1 multiplier on the reverb bus wet + each source's reverb send (live). */
+  private reverbBusLevel: number;
+  /**
+   * Every live source created by this backend, for the LIGHT hot-swap. `setBusLevels`
+   * walks this set and re-scales each source's sends; `dispose` (via the source's own
+   * `dispose`) removes itself so a torn-down source is never touched.
+   */
+  private liveSources = new Set<LiveSteamSource>();
 
   private constructor(world: any, three: any, master: AudioNode, opts: SteamBackendOpts) {
     this.world = world;
@@ -126,9 +176,10 @@ export class SteamAudioBackend {
     this.scattering = opts.scattering ?? 0.1;
     this.useHrtf = opts.hrtf ?? true;
     this.headTracked = opts.headTrackedReflections ?? false;
-    // 0..1 user multipliers; default 1 = no change to the hardcoded base sends.
-    this.reverbLevel = opts.reverbLevel ?? 1;
-    this.reflectionLevel = opts.reflectionLevel ?? 1;
+    // 0..1 user multipliers; default 1 = no change to the hardcoded base sends/wets.
+    this.reflectionWetLevel = opts.reflectionWetLevel ?? 1;
+    this.reflectionBusLevel = opts.reflectionBusLevel ?? 1;
+    this.reverbBusLevel = opts.reverbBusLevel ?? 1;
   }
 
   /**
@@ -186,8 +237,9 @@ export class SteamAudioBackend {
       },
     });
     const backend = new SteamAudioBackend(world, three, master, opts);
-    backend.reflectionBus = world.createReflectionBus({ wet: 1 });
-    backend.reverbBus = world.createReverbBus({ wet: 0.5 });
+    // Scale the shared bus wets by the user BUS levels (default 1 = base wets).
+    backend.reflectionBus = world.createReflectionBus({ wet: BUS_BASE_REFL * backend.reflectionBusLevel });
+    backend.reverbBus = world.createReverbBus({ wet: BUS_BASE_REVERB * backend.reverbBusLevel });
     backend.reflectionBus.connect(master);
     backend.reverbBus.connect(master);
     return backend;
@@ -242,13 +294,15 @@ export class SteamAudioBackend {
     const base = this.headTracked
       ? { wet: 0.7, reflectSend: 1.0, reverbSend: 0.4 }
       : { wet: 0.25, reflectSend: 0.35, reverbSend: 0.2 };
-    // Apply the user multipliers (default 1). `wet` + reflect send scale with
-    // reflectionLevel (the early/geometry field); the reverb send scales with
-    // reverbLevel (the diffuse tail that reads "everywhere" when too hot).
+    // Apply the THREE user multipliers (default 1 = today's behavior):
+    //  - reflections.wet (per-source baked field) × reflectionWetLevel — only a
+    //    REBUILD picks up a new value, so this is read here at create() time;
+    //  - reflect send × reflectionBusLevel and reverb send × reverbBusLevel — these
+    //    are live-rescalable via setBusLevels from the stored base sends.
     const refl = {
-      wet: base.wet * this.reflectionLevel,
-      reflectSend: base.reflectSend * this.reflectionLevel,
-      reverbSend: base.reverbSend * this.reverbLevel,
+      wet: base.wet * this.reflectionWetLevel,
+      reflectSend: base.reflectSend * this.reflectionBusLevel,
+      reverbSend: base.reverbSend * this.reverbBusLevel,
     };
     const source = this.world.createSource({
       hrtf: this.useHrtf,
@@ -267,8 +321,23 @@ export class SteamAudioBackend {
     input.connect(node);
     node.connect(output);
     output.connect(this.master);
-    if (node.connectReflections) node.connectReflections(this.reflectionBus, { gain: refl.reflectSend });
-    if (node.connectReverb) node.connectReverb(this.reverbBus, { gain: refl.reverbSend });
+    // Retain the connection handles (each exposes a live `setGain`) so `setBusLevels`
+    // can re-scale this source's sends in place WITHOUT calling node.setControl
+    // (which would clobber the per-frame direction/occlusion the sim publishes).
+    const reflConn = node.connectReflections
+      ? node.connectReflections(this.reflectionBus, { gain: refl.reflectSend })
+      : null;
+    const reverbConn = node.connectReverb
+      ? node.connectReverb(this.reverbBus, { gain: refl.reverbSend })
+      : null;
+    // Track this source for live level changes, keyed by its BASE (pre-multiplier)
+    // sends so a future setBusLevels recomputes from the original strength.
+    const live: LiveSteamSource = {
+      reflConn,
+      reverbConn,
+      base: { reflectSend: base.reflectSend, reverbSend: base.reverbSend },
+    };
+    this.liveSources.add(live);
 
     return {
       input,
@@ -280,6 +349,7 @@ export class SteamAudioBackend {
         source.setPosition({ x, y, z });
       },
       dispose: () => {
+        this.liveSources.delete(live);
         try { input.disconnect(); } catch { /* already gone */ }
         try { output.disconnect(); } catch { /* already gone */ }
         try { source.dispose?.(); } catch { /* best-effort */ }
@@ -290,15 +360,19 @@ export class SteamAudioBackend {
   /** Update the listener pose. `yaw` is radians about +y; converted to a quaternion. */
   setListener(x: number, y: number, z: number, yaw: number): void {
     const half = yaw / 2;
-    // Quaternion for a rotation of `yaw` about the +y axis.
-    // Update position and orientation TOGETHER in a single transform so the listener's
-    // ahead/up vectors (derived from the quaternion) and position are committed atomically.
-    // The library's Listener.setTransform publishes every source's head-relative binaural
-    // direction immediately (publishSourceControls), so a head turn updates the perceived
-    // direction the same frame — no need to wait for the async reflection callback.
+    // Quaternion for a rotation of −yaw about +y. The NEGATION is essential: this
+    // game's `yaw` convention is ahead = (sin yaw, 0, −cos yaw) — i.e. yaw=+90° faces
+    // +x (RIGHT), which is what our own HRTF engine is tuned to. Steam derives the
+    // listener's ahead as (0,0,−1)·q; with the three.js-standard +yaw quaternion that
+    // gives −x at +90° (LEFT) — a left/right MIRROR vs the game. Negating the y term
+    // (q = rot(−yaw)) makes Steam's ahead match the game's, so azimuth is correctly
+    // sided. (up = (0,1,0)·q is unaffected — the rotation axis.)
+    // Update position + orientation TOGETHER so ahead/up and position commit atomically;
+    // setTransform publishes every source's head-relative binaural direction immediately
+    // (publishSourceControls), so a head turn updates the perceived direction that frame.
     this.world.listener.setTransform(
       { x, y, z },
-      { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) },
+      { x: 0, y: -Math.sin(half), z: 0, w: Math.cos(half) },
     );
   }
 
@@ -307,7 +381,38 @@ export class SteamAudioBackend {
     this.world.step(deltaSeconds);
   }
 
+  /**
+   * LIGHT live hot-swap of the two BUS levels on a RUNNING level. Stores the new 0..1
+   * multipliers (so any source created later uses them), re-scales BOTH shared bus wets
+   * (BUS_BASE × level via bus.setWet), AND re-scales every live source's reflect/reverb
+   * SEND from its stored base × the new bus level via the retained connection handle's
+   * `setGain`. Does NOT touch each source's `wet` (baked at create — needs a rebuild)
+   * or call node.setControl (which would clobber per-frame direction/occlusion).
+   */
+  setBusLevels(reflectionBusLevel: number, reverbBusLevel: number): void {
+    this.reflectionBusLevel = reflectionBusLevel;
+    this.reverbBusLevel = reverbBusLevel;
+    try { this.reflectionBus?.setWet?.(BUS_BASE_REFL * reflectionBusLevel); } catch { /* best-effort */ }
+    try { this.reverbBus?.setWet?.(BUS_BASE_REVERB * reverbBusLevel); } catch { /* best-effort */ }
+    for (const s of this.liveSources) {
+      const sends = recomputeSends(s.base, reflectionBusLevel, reverbBusLevel);
+      try { s.reflConn?.setGain(sends.reflectSend); } catch { /* best-effort */ }
+      try { s.reverbConn?.setGain(sends.reverbSend); } catch { /* best-effort */ }
+    }
+  }
+
+  /**
+   * Store the new 0..1 per-source reflected-field `wet` multiplier so that sources
+   * created AFTER this (i.e. on the next REBUILD) bake the new wet at create(). Does
+   * NOT touch already-created sources — `wet` can't be changed in place, so the caller
+   * (Game.setSteamReflectionWet) rebuilds the voices after calling this.
+   */
+  setReflectionWetLevel(v: number): void {
+    this.reflectionWetLevel = v;
+  }
+
   dispose(): void {
+    this.liveSources.clear();
     try { this.reflectionBus?.disconnect(); } catch { /* */ }
     try { this.reverbBus?.disconnect(); } catch { /* */ }
     try { this.world?.dispose?.(); } catch { /* */ }

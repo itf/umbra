@@ -35,14 +35,26 @@ export interface SettingsHooks {
   setSteamEngine: (on: boolean) => void;
 
   /**
-   * Steam Audio reverb level in [0,1]. Only affects the Steam Audio engine and is
-   * read when its backend is built (next run), not a live hot-swap.
+   * Steam per-source REFLECTION WET level in [0,1]. Only affects the Steam Audio
+   * engine; Apply rebuilds the sources so the baked reflected `wet` changes.
    */
-  getSteamReverbLevel: () => number;
-  setSteamReverbLevel: (v: number) => void;
-  /** Steam Audio reflection level in [0,1]; same next-run semantics. */
-  getSteamReflectionLevel: () => number;
-  setSteamReflectionLevel: (v: number) => void;
+  getSteamReflectionWet: () => number;
+  setSteamReflectionWet: (v: number) => void;
+  /** Steam REFLECTION BUS level in [0,1] (bus wet + reflect send); live on Apply. */
+  getSteamReflectionBus: () => number;
+  setSteamReflectionBus: (v: number) => void;
+  /** Steam REVERB BUS level in [0,1] (bus wet + reverb send); live on Apply. */
+  getSteamReverbBus: () => number;
+  setSteamReverbBus: (v: number) => void;
+
+  /**
+   * Apply the Steam Audio settings (engine on/off + reverb/reflection levels) to the
+   * RUNNING level NOW, without restarting it. Optional: when absent the "Apply now"
+   * button is hidden (the changes still apply on the next level start). main.ts wires
+   * it to a LIGHT live level change (engine unchanged) or a HEAVY backend rebuild
+   * (engine toggled); it announces the outcome itself.
+   */
+  applySteamNow?: () => void;
 
   /** L/R channel swap on/off. */
   getSwap: () => boolean;
@@ -195,34 +207,57 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   const engine = checkboxRow('High-fidelity audio (Steam Audio)', hooks.getSteamEngine(), (on) => {
     hooks.setSteamEngine(on);
     hooks.say(on
-      ? 'High-fidelity audio on. Applies when you start the next level.'
-      : 'High-fidelity audio off. Applies when you start the next level.');
+      ? 'High-fidelity audio on. Press Apply Steam settings to switch the running level, or it applies on the next one.'
+      : 'High-fidelity audio off. Press Apply Steam settings to switch the running level, or it applies on the next one.');
   });
   dialog.append(engine.row);
 
-  // --- Steam Audio reverb / reflection levels ---
-  // These ONLY affect the Steam Audio engine and are read when its backend is built
-  // (the next run/level start), so changes are not live. Both are a 0..100% of the
-  // CURRENT (full) Steam level, defaulting to 100% (today's behavior); lower them to
-  // localize rooms that otherwise sound "everywhere".
+  // --- Steam Audio reflection / bus levels (THREE knobs) ---
+  // These ONLY affect the Steam Audio engine. Each is a 0..100% of the CURRENT (full)
+  // Steam level, defaulting to 100% (today's behavior); lower them to localize rooms
+  // that otherwise sound "everywhere". Minimum on all three = truly no reflected/reverb
+  // energy. Apply: the per-source reflection level rebuilds the sources; the two bus
+  // levels are live.
   dialog.append(levelRow(
-    'set-steam-reverb',
-    'Steam Audio reverb level',
-    'Steam Audio reverb level percent',
-    hooks.getSteamReverbLevel(),
+    'set-steam-reflection-wet',
+    'Steam reflection level (per-source)',
+    'Steam reflection level per-source percent',
+    hooks.getSteamReflectionWet(),
     hooks.say,
-    (pct) => `Steam reverb ${pct} percent. Applies when you start the next level.`,
-    (v) => hooks.setSteamReverbLevel(v),
+    (pct) => `Steam reflection level ${pct} percent. Press Apply Steam settings to hear it now.`,
+    (v) => hooks.setSteamReflectionWet(v),
   ));
   dialog.append(levelRow(
-    'set-steam-reflections',
-    'Steam Audio reflections level',
-    'Steam Audio reflections level percent',
-    hooks.getSteamReflectionLevel(),
+    'set-steam-reflection-bus',
+    'Steam reflection bus level',
+    'Steam reflection bus level percent',
+    hooks.getSteamReflectionBus(),
     hooks.say,
-    (pct) => `Steam reflections ${pct} percent. Applies when you start the next level.`,
-    (v) => hooks.setSteamReflectionLevel(v),
+    (pct) => `Steam reflection bus ${pct} percent. Press Apply Steam settings to hear it now.`,
+    (v) => hooks.setSteamReflectionBus(v),
   ));
+  dialog.append(levelRow(
+    'set-steam-reverb-bus',
+    'Steam reverb bus level',
+    'Steam reverb bus level percent',
+    hooks.getSteamReverbBus(),
+    hooks.say,
+    (pct) => `Steam reverb bus ${pct} percent. Press Apply Steam settings to hear it now.`,
+    (v) => hooks.setSteamReverbBus(v),
+  ));
+
+  // --- Apply Steam settings to the running level NOW (live hot-swap) ---
+  // Per-control handlers above only PERSIST; this button is what makes the Steam
+  // engine + reverb/reflection changes live on the current level. Shown only when the
+  // host wired `applySteamNow` (i.e. a level is running through setupSettings).
+  if (hooks.applySteamNow) {
+    const apply = document.createElement('button');
+    apply.type = 'button';
+    apply.className = 'settings-apply-steam';
+    apply.textContent = 'Apply Steam settings now';
+    apply.addEventListener('click', () => hooks.applySteamNow?.());
+    dialog.append(apply);
+  }
 
   // --- L/R channel swap ---
   const swap = checkboxRow('Swap left and right channels', hooks.getSwap(), (on) => {
