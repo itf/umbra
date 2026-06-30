@@ -268,3 +268,9 @@ is ear-dependent (NEEDS-PLAYTEST / SESSION-HANDOFF §4) — the user's call.
   (via the proven `feat/sofa-hrtf` fork) instead of Steam's generic HRTF. Guard: STOP
   cleanly if consuming the local fork is fragile (don't break the default path/bundle).
   Completes the Steam-SOFA thread from earlier this session.
+
+**10A Steam-SOFA SHIPPED** (`2b38760`): the steam path can use our SADIE SOFA via
+?engine=steam-sofa. PM correction: the agent's file:../ fork dependency would break
+npm install elsewhere — refactored to OPT-IN + portable (npm dep retained, SOFA dormant,
+activates only when fork is linked). Default path byte-unchanged, bundle lean, .sofa
+runtime-cached not precached. +6 tests (588). Live in-browser SOFA localization = manual confirm.
