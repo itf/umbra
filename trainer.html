@@ -20,6 +20,7 @@
       .row > button { flex: 1 1 140px; }
       .play { background: #5bd1ff; }
       .answer { background: #2c2c2c; color: #eee; border: 2px solid #444; }
+      #answers.estimate-grid { max-height: 260px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; }
       .answer.correct { background: #1f7a3f; border-color: #6ee787; color: #fff; }
       .answer.wrong { background: #7a1f1f; border-color: #ff6b6b; color: #fff; }
       .answer.focused { outline: 3px solid #ffd166; outline-offset: 2px; }
@@ -69,6 +70,7 @@
           <option value="material">Identify the material (easy→hard)</option>
           <option value="metal">Which wall is metal (inverted tilt)</option>
           <option value="orientation" id="type-orientation" hidden>Panel orientation (4-way: vertical / 45° / 135° / horizontal)</option>
+          <option value="estimate">Distance estimation (name that distance)</option>
         </select>
       </label>
       <label style="margin-top:14px">Difficulty

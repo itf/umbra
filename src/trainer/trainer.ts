@@ -20,6 +20,7 @@ import {
   makeRandomQuestion,
   hasRoomB,
   echoDelayMs,
+  scoreEstimate,
   ALL_TYPES,
   type Question,
   type ExerciseType,
@@ -315,6 +316,9 @@ function sizeReveal(q: Question): string {
     return ` Room A wall: ${da.toFixed(1)} m — its echo returned about ${echoDelayMs(da).toFixed(1)} ms after the clap.` +
       ` Room B wall: ${db.toFixed(1)} m — ${echoDelayMs(db).toFixed(1)} ms.`;
   }
+  if (q.type === 'estimate' && q.trueDist != null) {
+    return ` Echo returned about ${echoDelayMs(q.trueDist).toFixed(1)} ms after the clap.`;
+  }
   return '';
 }
 
@@ -399,6 +403,8 @@ function renderQuestion(q: Question) {
   // Answer buttons.
   const answers = $('answers');
   answers.innerHTML = '';
+  // Estimate drill has many distance choices — use a scrollable grid.
+  answers.classList.toggle('estimate-grid', q.type === 'estimate');
   for (const choice of q.choices) {
     const btn = document.createElement('button');
     btn.className = 'answer';
@@ -483,10 +489,37 @@ async function runReplay(plan: ReplayPlan) {
   }
 }
 
+/**
+ * For the estimate drill: parse "X.XX m" back to a float, score it against the
+ * true distance, and produce a graded spoken + on-screen verdict.
+ */
+function estimateVerdict(choice: string, q: Question, diff: number): { correct: boolean; text: string } {
+  const guessM = parseFloat(choice);
+  const trueM = q.trueDist!;
+  const result = scoreEstimate(guessM, trueM, diff);
+  const trueStr = `${trueM.toFixed(2)} m`;
+  const echoMs = echoDelayMs(trueM).toFixed(1);
+  if (result.correct) {
+    return {
+      correct: true,
+      text: `Correct! You said ${choice}, it was ${trueStr} (echo: ${echoMs} ms) — ${result.errorPct.toFixed(1)}% off (within ±${result.tolerancePct.toFixed(0)}%).`,
+    };
+  }
+  const dir = guessM > trueM ? 'overshot' : 'undershot';
+  return {
+    correct: false,
+    text: `Not quite. You said ${choice}, it was ${trueStr} (echo: ${echoMs} ms) — ${result.errorPct.toFixed(1)}% off (limit ±${result.tolerancePct.toFixed(0)}%). You ${dir}.`,
+  };
+}
+
 function onAnswer(choice: string, btn: HTMLButtonElement) {
   if (!current || answered) return;
   answered = true;
-  const correct = choice === current.correctAnswer;
+  // Estimate drill: use graded scoring rather than exact-match correctness.
+  const isEstimate = current.type === 'estimate' && current.trueDist != null;
+  const correct = isEstimate
+    ? scoreEstimate(parseFloat(choice), current.trueDist!, difficulty()).correct
+    : choice === current.correctAnswer;
   if (correct) score++;
 
   // Onboarding "blind reference" trial: prove the skill, then bow out of the
@@ -536,12 +569,14 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   for (const el of Array.from($('answers').children) as HTMLButtonElement[]) {
     el.disabled = true;
     if (el.textContent === current.correctAnswer) el.classList.add('correct');
-    else if (el === btn) el.classList.add('wrong');
+    else if (el === btn) el.classList.add(correct ? 'correct' : 'wrong');
   }
 
-  const verdict = (correct
-    ? 'Correct.'
-    : `Incorrect. The answer was ${current.correctAnswer}.`) + sizeReveal(current);
+  const verdict = isEstimate
+    ? estimateVerdict(choice, current, difficulty()).text
+    : (correct
+        ? 'Correct.'
+        : `Incorrect. The answer was ${current.correctAnswer}.`) + sizeReveal(current);
 
   // Eyes-free progress cue: the level band, and at reversals / settled, a mastery
   // readout ("discriminating at ~70% of full difficulty").

@@ -40,7 +40,7 @@ export function makeRng(seed: number): Rng {
 
 export type ExerciseType =
   | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector'
-  | 'distance' | 'gap' | 'material' | 'metal' | 'orientation';
+  | 'distance' | 'gap' | 'material' | 'metal' | 'orientation' | 'estimate';
 
 export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector', 'distance', 'material', 'metal'];
 export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction', 'gap', 'orientation'];
@@ -64,6 +64,8 @@ export interface Question {
   /** Distance-drill only: the true wall-ahead distance (m) in each room, for the
    *  post-answer reveal. */
   wallDistsM?: { a: number; b: number };
+  /** Estimate-drill only: the true wall distance (m), for scoring + feedback. */
+  trueDist?: number;
 }
 
 export interface GenOptions {
@@ -704,6 +706,108 @@ function genGap(rng: Rng, difficulty: number): Question {
   };
 }
 
+// --- Absolute distance estimation (echo delay → metres) ---------------------
+
+/**
+ * Distance range for the estimate drill: 0.75 m (very close, ~4.4 ms echo) to
+ * 6 m (far, ~35 ms echo). Difficulty narrows the scoring tolerance and uses a
+ * finer distance grid to reduce lucky guesses.
+ *
+ * Candidate distances form a coarse-to-fine ladder:
+ *   easy  (d < 0.3): every 0.5 m — {0.75, 1.25, 1.75, 2.25, 2.75, 3.25, 3.75, 4.25, 4.75, 5.25, 5.75} → round to nearest 0.5 m
+ *   hard  (d ≥ 0.7): every 0.25 m → finer, harder to guess
+ */
+export const ESTIMATE_MIN_M = 0.75;
+export const ESTIMATE_MAX_M = 6.0;
+
+/** Candidate distance set for a given difficulty (coarser = easier). */
+export function estimateDistances(difficulty: number): number[] {
+  const step = difficulty < 0.5 ? 0.5 : 0.25;
+  const dists: number[] = [];
+  for (let d = ESTIMATE_MIN_M; d <= ESTIMATE_MAX_M + 1e-9; d = Math.round((d + step) * 100) / 100) {
+    dists.push(d);
+  }
+  return dists;
+}
+
+/**
+ * Tolerance (fraction of trueDist) within which a guess is "correct":
+ *   easy (d=0): ±25%,  hard (d=1): ±10%.
+ * Returns 0.25 → 0.10 interpolated linearly.
+ */
+export function estimateTolerance(difficulty: number): number {
+  return contrast(difficulty, 0.25, 0.10);
+}
+
+export interface EstimateScoreResult {
+  correct: boolean;
+  /** Absolute percentage error: |guess − true| / true × 100. */
+  errorPct: number;
+  /** Tolerance that was applied (as a percentage). */
+  tolerancePct: number;
+}
+
+/**
+ * PURE scoring helper: how well did the user estimate? Used by trainer and tests.
+ * `guessM` and `trueM` in metres; `difficulty` in [0,1].
+ */
+export function scoreEstimate(guessM: number, trueM: number, difficulty: number): EstimateScoreResult {
+  const tol = estimateTolerance(difficulty);
+  const errorFrac = Math.abs(guessM - trueM) / trueM;
+  return {
+    correct: errorFrac <= tol,
+    errorPct: Math.round(errorFrac * 1000) / 10, // one decimal place
+    tolerancePct: Math.round(tol * 1000) / 10,
+  };
+}
+
+/**
+ * ESTIMATE drill: one room, a concrete panel straight ahead at a randomised
+ * distance. Listener claps, then enters or picks a distance in metres.
+ * Only `sceneA` is set (single-scene, like `direction`).
+ *
+ * The distance is chosen from the difficulty-appropriate candidate set so that
+ * the correct answer is always one of the labeled buttons — no free-form entry
+ * needed on mobile/screen-reader.
+ */
+function genEstimate(rng: Rng, difficulty: number): Question {
+  const roomSize: [number, number, number] = [16, 4, 16];
+  const center: [number, number, number] = [8, 1.6, 8];
+  const faint = allMat('acoustic_foam');
+
+  const dists = estimateDistances(difficulty);
+  const trueDist = dists[Math.floor(rng() * dists.length) % dists.length];
+
+  const [cx, cz] = bearingToPos(center, 0, trueDist);
+  const extraWalls = makePanel(center, cx, cz, 'concrete');
+
+  const sceneA: Scene = {
+    id: 'estimate',
+    title: 'Estimate',
+    description: 'Clap and estimate the wall distance.',
+    listener: center,
+    roomSize,
+    materials: faint,
+    extraWalls,
+    sources: [{ pos: center, kind: 'clap', label: 'clap' }],
+    maxOrder: 1,
+  };
+
+  // Choices: the full candidate set for this difficulty level, formatted as "X.XX m".
+  const choices = dists.map((d) => `${d.toFixed(2)} m`);
+  const correctAnswer = `${trueDist.toFixed(2)} m`;
+
+  return {
+    type: 'estimate',
+    id: '',
+    prompt: 'How far is the wall ahead? Clap and estimate the distance in metres.',
+    choices,
+    correctAnswer,
+    sceneA,
+    trueDist,
+  };
+}
+
 // --- Entry point -------------------------------------------------------------
 
 const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number, opts: GenOptions) => Question> = {
@@ -719,10 +823,11 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number, opts: GenO
   material: genMaterial,
   metal: genMetal,
   orientation: genOrientation,
+  estimate: genEstimate,
 };
 
 /** Single-scene exercises (one room, play once) rather than A/B. */
-export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap', 'orientation'];
+export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap', 'orientation', 'estimate'];
 
 /**
  * Pure predicate: does this question have a genuine Room B to play?
