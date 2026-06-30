@@ -164,3 +164,9 @@ HRTF) + controls surfacing + per-mode primers (remembered, never re-wall). +4 te
   keyed by (mode,event), rate-limited, remembered, ?companion=off. Owns game/companion.ts +
   main.ts wiring.
 - Then **6C** settings/mix (volume, companion toggle, reset) after 6B.
+
+**6A Level pack SHIPPED** (`2e7979e`): +10 levels (2-3/mode, easy→hard) + picker grouping
+by category. +8 tests (456). FLAGGED for ear-check: stealth AI catch-dynamics (decoy bait,
+foam-corridor audibility) reasoned not tested.
+- **6B Companion voice** still building (agent `ab599eb6…`, game/companion.ts + main.ts +
+  onboardingStore companion flag) — held until done. Then 6C settings/mix.
