@@ -42,3 +42,15 @@ Next: synthesis meeting → roadmap → first build.
 - Likely early builds: (1) expand material palette + add to material-ID trainer drill;
   (2) onboarding/accessibility quick wins; (3) editor feature backlog; (4) adaptive
   distance ladder + daily challenge. Final order set at the synthesis meeting.
+
+**Cycle 1 — Discovery COMPLETE.** All 3 research docs in; synthesis meeting held
+(`meetings/2026-06-29-cycle1-synthesis.md`); roadmap set. Committed.
+
+### Cycle 2 — Build (in progress, 2 parallel engineering agents)
+- **#1 Accessibility + game feel** (agent `a56c898f…`): keyboard turning (THE gate —
+  game was uncompletable without a mouse drag), continuous "getting warmer" beacon cue,
+  win chime, "how to play" key. Touches main.ts/game.ts/beaconSounds.ts.
+- **#2 Materials + material-ID drill** (agent `a9e836c4…`): merge 20 cited materials,
+  reconcile water/marble, separable-7 material-ID set. Touches materials.ts/exercises.ts.
+- Disjoint files → safe in parallel. Gate each on tsc + tests, commit separately.
+- Next meeting: "playtest review" after #1+#2 land → pick from #3 editor / #4 trainer / #5 daily.
