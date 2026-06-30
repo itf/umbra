@@ -114,5 +114,9 @@ export default defineConfig({
   test: {
     pool: 'forks',
     poolOptions: { forks: { maxForks: 4, minForks: 1 } },
+    // The Playwright e2e specs live in e2e/ and must NOT be collected by vitest
+    // (they call Playwright's test(), which throws under the vitest runner). They
+    // run via `npm run e2e` instead.
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
   },
 });

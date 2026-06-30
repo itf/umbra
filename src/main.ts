@@ -361,6 +361,19 @@ startButton.addEventListener('click', async () => {
     // dynamically imported so it costs nothing on the normal path.
     if (new URLSearchParams(location.search).get('debug') === '1') {
       void import('./debug/debugOverlay').then(({ DebugOverlay }) => new DebugOverlay(game));
+      // E2E TEST HOOK (debug-only): expose read-only game state + a deterministic
+      // step driver so the Playwright smoke harness can drive the keyboard-completion
+      // path with explicit timestamps (the normal step clock is the audio context,
+      // which doesn't advance reliably headless). NEVER attached on the normal path —
+      // gated behind ?debug=1, identical to the overlay above, so it never ships in play.
+      (window as unknown as { __ps?: unknown }).__ps = {
+        debugState: () => game.debugState(),
+        // Step with an explicit monotonic timestamp so alternation/cadence rules are
+        // satisfied deterministically (no real-time flakiness). Mirrors a key press.
+        step: (foot: 'L' | 'R', nowMs: number) => { if (!ended) game.step(foot, nowMs); },
+        won: () => outcome === 'won',
+        outcome: () => outcome,
+      };
     }
 
     // --- Turn control: the compass dial AND keyboard arrows (both drive the same

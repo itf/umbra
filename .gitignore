@@ -26,3 +26,7 @@ assets/hrtf/*.sofa
 
 # Generated HRTF worklet bundle (built by scripts/build-worklet.mjs on dev/build)
 public/hrtf-worklet.js
+
+# Playwright e2e artifacts
+test-results/
+playwright-report/
