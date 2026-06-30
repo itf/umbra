@@ -250,7 +250,9 @@ function roomSize(rng: Rng, d: Difficulty): { width: number; depth: number; heig
 }
 
 const FREQS = [262, 294, 330, 349, 392, 440, 494, 523, 587, 659];
-const BEACON_SOUNDS = ['tone', 'bell', 'musicbox', 'hum', 'pulse', 'drip'] as const;
+// Seeded navigate-to-beacon sound: the two pleasant, easy-to-localize navigator
+// voices only (bell / music box) — not the full preset grab-bag.
+const BEACON_SOUNDS = ['bell', 'musicbox'] as const;
 
 /**
  * BEACON mode: navigate to a goal tone across the room. Difficulty adds baffle
