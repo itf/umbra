@@ -137,3 +137,8 @@ shareable score, spoken. +26 tests +2 e2e (417 unit, 13 e2e).
   decoyBudget + monster clarity + lint; closes the 4B authorability gap. Owns editor/*.
 - Disjoint → parallel. Then **5C** a11y polish (compass widget, cardinal detents, custom-
   audio warmer cue) after 5A.
+
+**5B Editor stealth authoring SHIPPED** (`b609ee2`): goal=escape selector, exit tool,
+decoy-budget field, monster labels + sound preview, lint, lossless round-trip. +12 tests (436).
+- **5A Guided onboarding** still building (agent `abdb7b14…`, src/ui/* + main onboarding
+  gate + per-mode primers) — held until done. Then 5C a11y polish.
