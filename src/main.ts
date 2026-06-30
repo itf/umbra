@@ -738,7 +738,7 @@ startButton.addEventListener('click', async () => {
     // --- Turn control: the compass dial AND keyboard arrows (both drive the same
     // slewed heading, so audio + dial stay in sync). `turnBy` lets the keydown
     // handler nudge the heading; it announces the new heading via the live region. ---
-    const turnBy = setupTurning(game, teardowns);
+    const { setTurnDir } = setupTurning(game, teardowns);
 
     // --- Step buttons ---
     const stepLeft = document.getElementById('step-left') as HTMLButtonElement;
@@ -773,11 +773,14 @@ startButton.addEventListener('click', async () => {
       if (settingsPanel?.isOpen()) return;
       // TURN: Left/Right and Up/Down arrows (up=left, down=right), plus Q (left) / E
       // (right). keyTurnDelta returns 0 for non-turn keys, so a single check covers all.
+      // HOLD to rotate at constant speed; RELEASE stops at once (see keyup). The SIGN
+      // of keyTurnDelta is the turn direction; it returns 0 for non-turn keys.
       const turnDelta = keyTurnDelta(e.key, e.shiftKey);
       if (turnDelta !== 0) {
-        // Prevent the page from scrolling (arrows), and let key-repeat keep turning.
+        // Prevent the page from scrolling (arrows). Ignore auto-repeat — the hold is
+        // driven continuously in the slew loop, not by repeated keydowns.
         e.preventDefault();
-        if (!ended) turnBy(turnDelta);
+        if (!ended && !e.repeat) setTurnDir(Math.sign(turnDelta));
         return;
       }
       if (e.repeat) return;
@@ -796,6 +799,19 @@ startButton.addEventListener('click', async () => {
     };
     window.addEventListener('keydown', onKeyDown);
     teardowns.push(() => window.removeEventListener('keydown', onKeyDown));
+
+    // HOLD-TO-ROTATE: releasing a turn key stops the rotation immediately. Stop on ANY
+    // turn-key release (holding left+right at once isn't expected); a stray keyup also
+    // safely halts the turn if a dialog stole focus mid-hold.
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (keyTurnDelta(e.key, e.shiftKey) !== 0) setTurnDir(0);
+    };
+    window.addEventListener('keyup', onKeyUp);
+    teardowns.push(() => window.removeEventListener('keyup', onKeyUp));
+    // Safety: if focus leaves the window mid-hold, the keyup may never fire — stop then.
+    const onBlur = () => setTurnDir(0);
+    window.addEventListener('blur', onBlur);
+    teardowns.push(() => window.removeEventListener('blur', onBlur));
 
     // In-game "back to level select" button (also reachable via the B key). Visible
     // + focusable so it works for pointer and keyboard alike.
@@ -896,7 +912,10 @@ function updateFootHints(distance: number) {
  * audio and the visible dial always agree. Keyboard turns are announced (debounced)
  * via the live region so an eyes-free user hears their new heading.
  */
-function setupTurning(game: Game, teardowns: Array<() => void>): (delta: number) => void {
+function setupTurning(
+  game: Game,
+  teardowns: Array<() => void>,
+): { turnBy: (delta: number) => void; setTurnDir: (dir: number) => void } {
   const turnPad = document.getElementById('turn-pad')!;
   // Clear any compass left by a previous run, so returning to a level doesn't stack
   // dials in the turn pad.
@@ -932,9 +951,17 @@ function setupTurning(game: Game, teardowns: Array<() => void>): (delta: number)
   let lastT = performance.now();
   let lastDetentSpokenAt = 0;
   let slewRaf: number | null = null;
+  // HOLD-TO-ROTATE (keyboard): while a turn key is held, `turnDir` is -1 (left) /
+  // +1 (right) and we advance the TARGET by maxRate·dir·dt each frame, so the slewed
+  // heading tracks at full speed. On key release `setTurnDir(0)` snaps the target to
+  // the current value, stopping instantly with no coast. 0 ⇒ idle (dial/other input).
+  let turnDir = 0;
   const loop = (now: number) => {
     const dt = Math.min(0.05, (now - lastT) / 1000);
     lastT = now;
+    // Drive a held keyboard turn at constant angular speed (the same cap the slew
+    // uses), by walking the target ahead of the value each frame.
+    if (turnDir !== 0) heading.setTarget(heading.desired + turnDir * heading.maxRate * dt);
     const prev = heading.current;
     if (heading.tick(dt)) {
       game.setYaw(heading.current);
@@ -960,13 +987,27 @@ function setupTurning(game: Game, teardowns: Array<() => void>): (delta: number)
   // region (it speaks once the turn settles). The settle read-out NAMES the nearest
   // compass direction (G2), e.g. "Turned 45 degrees right, facing north-east."
   let announceTimer: ReturnType<typeof setTimeout> | null = null;
-  return (delta: number) => {
+  const turnBy = (delta: number) => {
     if (delta === 0) return;
     heading.setTarget(heading.desired + delta);
     compass.setHeading(heading.desired);
     if (announceTimer != null) clearTimeout(announceTimer);
     announceTimer = setTimeout(() => say(announceHeadingWithDirection(heading.desired)), 250);
   };
+  // HOLD-TO-ROTATE: dir -1 = left, +1 = right, 0 = stop. Setting a non-zero dir starts
+  // a constant-speed turn (driven in the slew loop); setting 0 stops it IMMEDIATELY by
+  // snapping the target to where the heading currently is (no coasting), then announces
+  // the settled heading once.
+  const setTurnDir = (dir: number) => {
+    if (dir === turnDir) return;
+    turnDir = dir;
+    if (dir === 0) {
+      heading.setTarget(heading.current); // stop here, don't coast to a stale target
+      if (announceTimer != null) clearTimeout(announceTimer);
+      announceTimer = setTimeout(() => say(announceHeadingWithDirection(heading.current)), 150);
+    }
+  };
+  return { turnBy, setTurnDir };
 }
 
 /**
