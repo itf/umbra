@@ -22,6 +22,7 @@ import { Compass } from '../game/compass';
 import { Heading } from '../game/heading';
 import { Player } from '../game/player';
 import { TutorialMachine, LESSON_GOAL } from './tutorialMachine';
+import { renderControlsSpeech } from '../game/controls';
 import type { OnboardingStore } from './onboardingStore';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
@@ -114,9 +115,9 @@ export function mountTutorial(root: HTMLElement, deps: TutorialDeps) {
   function intro() {
     deps.say(
       'A short tutorial. First you learn to hear where a sound is — left, right, or ahead — ' +
-      'then turning, walking, and clapping. The controls: Left and Right arrows turn, ' +
-      'A steps left and L steps right, the Echo button claps, T throws a decoy, and ' +
-      'question mark or H repeats the controls at any time. Press Start to enable sound.',
+      'then turning, walking, and clapping. ' +
+      renderControlsSpeech() +
+      ' Press Start to enable sound.',
     );
     controls.append(btn('Start (enable sound)', onStart, true), btn('Skip tutorial', () => { machine.skipAll(); finish(true); }));
     focusFirst();
@@ -343,8 +344,7 @@ export function mountTutorial(root: HTMLElement, deps: TutorialDeps) {
     deps.alert(
       skipped
         ? 'Tutorial skipped.'
-        : 'Tutorial complete. Remember: arrows turn, A and L step, Echo claps, ' +
-          'T throws a decoy, and question mark or H repeats the controls. Have fun.',
+        : 'Tutorial complete. ' + renderControlsSpeech() + ' Have fun.',
     );
     deps.onDone();
   }

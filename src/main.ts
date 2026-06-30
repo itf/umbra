@@ -31,6 +31,7 @@ import { mountSettings, type SettingsPanel } from './ui/settings';
 import { TrainerStore } from './trainer/trainerStore';
 import { DailyStreakStore } from './trainer/dailyStreakStore';
 import { companionLine, modeForLevel, type CompanionEvent, type CompanionContext } from './game/companion';
+import { renderControlsSpeech } from './game/controls';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
@@ -779,14 +780,7 @@ function maybeShowModePrimer(): boolean {
 
 /** Speak the keyboard control scheme via the live region (the ? / H help key). */
 function speakControls() {
-  say(
-    'Controls: Left and Right arrows turn; hold Shift to turn farther. ' +
-    'A steps with your left foot, L with your right — alternate them and do not rush. ' +
-    'Echo button or the Listen control claps to hear the room. ' +
-    'T throws a sound decoy to lure a monster away from you. ' +
-    'S opens Settings — volume, companion voice, cues, and reset progress. ' +
-    'Press question mark or H to hear this again.',
-  );
+  say(renderControlsSpeech());
 }
 
 /**
@@ -857,9 +851,15 @@ function setupClap(
   // assertive `alert` region, not `say` — the status region is overwritten by the
   // "Walk to the beacon…" intro right after setupClap returns, so a `say` here would
   // never be heard.
+  //
+  // CLOBBER FIX (7B): on a sonar level's FIRST encounter the sonar primer fires its
+  // own `alert` synchronously right after setupClap returns, which would overwrite
+  // this budget intro in the same assertive region. Delay the intro slightly so it
+  // lands AFTER the primer/objective block instead of being clobbered by it. On
+  // return runs (no primer) the small delay is harmless.
   if (budget.isManaged() && budget.hasBudget()) {
-    alert(budgetIntroAnnouncement(budget.remaining()));
     refreshClapUi();
+    setTimeout(() => alert(budgetIntroAnnouncement(budget.remaining())), 1800);
   }
 
   listenBtn?.addEventListener('click', () => {
