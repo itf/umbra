@@ -177,3 +177,19 @@ deterministic variety, rate-limited, sequenced after critical cues, ?companion=o
 - **6C Settings/mix** (agent `a8064e4b…`): spoken settings panel — master volume,
   companion toggle, warmer-cue toggle, L/R swap / re-calibrate, reset progress. Persisted +
   applied on load. Then Cycle-6 review.
+
+### Cycle 6 — Build COMPLETE
+- **6A Level pack** (`2e7979e`), **6B Companion voice** (`e1168b0`), **6C Settings**
+  (`04a1b21`). 486 unit + 23 e2e. Product is feature-rich: 4 modes, 27 levels, trainer +
+  daily, onboarding, companion, settings, full a11y.
+- Cycle-6 review (`meetings/2026-06-29-cycle6-review.md`): after 18 builds, HARDEN before
+  widening. Risks: unverified-by-ear tuning (stealth AI, levels, mix) + cohesion drift.
+
+### Cycle 7 — Consolidate & verify (in progress, 2 parallel agents)
+- **7A Stealth-AI sim verification** (agent `a786eaf4…`): headless monster-AI simulation
+  turning "reasoned not tested" stealth tuning into real tests; tune failing levels.
+- **7C PWA/docs/release-readiness** (agent `a4e852bf…`): FIX broken PWA icons (manifest
+  references nonexistent assets/icons/*), add public/_headers (COOP/COEP for deployed Steam
+  path), refresh TECHNICAL/PRODUCT/DEPLOY docs. Closes items open since session start.
+- Then **7B cohesion** (controls source-of-truth, announcement-phrasing audit).
+- Authored `NEEDS-PLAYTEST.md` — the honest list of what only a human ear can confirm.
