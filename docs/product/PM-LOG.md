@@ -279,3 +279,18 @@ runtime-cached not precached. +6 tests (588). Live in-browser SOFA localization 
 - **11A** (agent `ae32344d…`): surface/copy the current sandbox seed + enter a seed/share
   string to reproduce an exact level. Finishes 8C (the pure share helpers exist; UI gap).
   Deferred: online leaderboard (needs backend), narrative (large scope → user direction).
+
+**11A Sandbox seed-share SHIPPED** (`71b9c2f`): see/copy seed + share code, replay any
+seed/code to reproduce an exact level; round-trip determinism proven. +10 tests (598 unit,
+28 e2e). Sandbox feature COMPLETE.
+
+### Backlog state (honest)
+Self-contained, loop-completable items are now largely DONE. Remaining backlog is net-new
+scope better with USER DIRECTION:
+- Online leaderboard — needs a backend/server (out of scope for a local PWA).
+- Narrative/campaign layer — large; tone/story is a creative-direction call.
+- Multiplayer — large; needs networking + design.
+- More materials/levels — possible but diminishing marginal value vs the 26 + infinite sandbox.
+The product is release-ready (598 unit + 28 e2e, PWA, docs, SESSION-HANDOFF/NEEDS-PLAYTEST).
+Next loop ticks will pick the lowest-risk remaining item (e.g. a small content/polish pass)
+but the high-value path now is USER PLAYTEST + DIRECTION.
