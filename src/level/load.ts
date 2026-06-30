@@ -35,6 +35,9 @@ export interface LoadedLevel {
   speedOfSound?: number;
 }
 
+/** Default win radius (m) for a `winPoint` with no explicit `winRadius`/beacon. */
+export const DEFAULT_WIN_RADIUS = 0.9;
+
 /** Forward only a finite, sensible speed of sound; else undefined (⇒ 343). */
 export function sanitizeLevelSpeed(c: number | undefined): number | undefined {
   return c != null && Number.isFinite(c) && c > 1 ? c : undefined;
@@ -439,21 +442,23 @@ export function loadLevel(level: Level, clutterOverride?: number): LoadedLevel {
   const speedOfSound = sanitizeLevelSpeed(level.speedOfSound);
   const clutter = sanitizeClutter(clutterOverride ?? level.clutter);
   // Map ALL beacons to uniform specs; `beacon` mirrors the first (back-compat).
+  // A level may have ZERO beacons (a silent corridor): we do NOT synthesize one.
+  // `beacon` then carries a non-audible placeholder ONLY for legacy field readers
+  // (debug overlay / the winTarget default); `beacons` stays empty, so nothing
+  // sounds. The win is the `winPoint` area, decoupled from any beacon.
+  const winFallback = level.winPoint ?? { x: level.room.width / 2, z: 1 };
   const beacon = first
     ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
-    : { x: level.room.width / 2, z: 1, freq: 440 };
-  // A level with no beacons still gets one audible source (the synthesized fallback),
-  // matching the legacy single-beacon path exactly.
-  const beacons = level.beacons.length > 0
-    ? level.beacons.map((b) => ({ x: b.x, z: b.z, freq: b.freq, sound: b.sound, soundUrl: b.soundUrl }))
-    : [beacon];
+    : { x: winFallback.x, z: winFallback.z, freq: 440 };
+  const beacons = level.beacons.map((b) => ({ x: b.x, z: b.z, freq: b.freq, sound: b.sound, soundUrl: b.soundUrl }));
   const game: GameLevel = {
     start: { x: level.start.x, z: level.start.z, yaw: level.start.yaw },
     beacon,
     beacons,
     // Decoupled win point: an explicit `winPoint` else the first beacon's position.
     winTarget: level.winPoint ?? { x: beacon.x, z: beacon.z },
-    goalRadius: first?.goalRadius ?? 0.8,
+    // Win radius: explicit `winRadius`, else the first beacon's goalRadius, else 0.9.
+    goalRadius: level.winRadius ?? first?.goalRadius ?? DEFAULT_WIN_RADIUS,
     headHeight: 1.6,
     floorMaterial: level.floorMaterial,
     floors: level.floors.map((f) => ({ x: f.x, z: f.z, w: f.w, d: f.d, material: f.material })),

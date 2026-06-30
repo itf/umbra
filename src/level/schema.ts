@@ -250,6 +250,13 @@ export interface Level {
    */
   winPoint?: Vec2;
   /**
+   * Win radius (metres) around `winPoint` — reach within this to win. Absent ⇒
+   * the first beacon's `goalRadius` (if any) else `DEFAULT_WIN_RADIUS` (0.9). Lets a
+   * beacon-less level (silent corridor) still specify how close "close enough" is.
+   * Ignored in 'absorber'/'escape' modes (those keep their own radii via goalRadius).
+   */
+  winRadius?: number;
+  /**
    * Throw-a-sound decoy budget (stealth verb). Number of decoys the player may
    * throw this level. Absent/undefined ⇒ unlimited. See game.ts `throwDecoy`.
    */

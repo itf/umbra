@@ -59,6 +59,28 @@ describe('loadLevel multi-beacon + win-target mapping', () => {
     // The beacon position is unchanged (win is decoupled from it).
     expect(game.winTarget).not.toEqual({ x: game.beacon.x, z: game.beacon.z });
   });
+
+  it('ZERO beacons: no beacon is synthesized (silent level)', () => {
+    const lvl: Level = {
+      ...emptyLevel('silent'),
+      beacons: [],
+      winPoint: { x: 3, z: 3 },
+      winRadius: 1.2,
+    };
+    const { game } = loadLevel(lvl);
+    // No audible sources — beacons[] stays empty (no legacy fallback beacon).
+    expect(game.beacons).toHaveLength(0);
+    // The win is the area, not a beacon.
+    expect(game.winTarget).toEqual({ x: 3, z: 3 });
+    expect(game.goalRadius).toBe(1.2);
+  });
+
+  it('winRadius falls back to the first beacon goalRadius, then to 0.9', () => {
+    const withBeacon = loadLevel(emptyLevel('b')); // beacon goalRadius 0.8
+    expect(withBeacon.game.goalRadius).toBe(0.8);
+    const silent: Level = { ...emptyLevel('s'), beacons: [], winPoint: { x: 1, z: 1 } };
+    expect(loadLevel(silent).game.goalRadius).toBe(0.9);
+  });
 });
 
 // ---- real-Game construction (OfflineAudioContext) --------------------------
