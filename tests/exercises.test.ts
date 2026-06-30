@@ -14,6 +14,7 @@ import {
   bearingToDirection,
   AB_TYPES,
   ALL_TYPES,
+  MATERIAL_LADDER,
   type Question,
 } from '../src/trainer/exercises';
 import type { Scene } from '../src/debug/scenes';
@@ -106,6 +107,49 @@ describe('brick: fairness (only material differs) + correctness', () => {
       expect(Object.values(correctScene(q).materials!)).toContain('brick');
       expect(Object.values(otherScene(q).materials!)).toContain('concrete');
       expect(Object.values(otherScene(q).materials!)).not.toContain('brick');
+    }
+  });
+});
+
+describe('material: fairness (only material differs) + correct target + difficulty ladder', () => {
+  it('identical geometry; correct room has the ladder TARGET material, foil has the foil', () => {
+    for (const seed of SEEDS) {
+      for (const difficulty of [0, 0.5, 1]) {
+        const q = makeQuestion('material', seed, { difficulty });
+        expect(dims(q.sceneA)).toEqual(dims(q.sceneB!)); // same geometry
+        const idx = Math.min(
+          MATERIAL_LADDER.length - 1,
+          Math.floor(Math.max(0, Math.min(1, difficulty)) * MATERIAL_LADDER.length),
+        );
+        const pair = MATERIAL_LADDER[idx];
+        expect(Object.values(correctScene(q).materials!)).toContain(pair.target);
+        expect(Object.values(otherScene(q).materials!)).toContain(pair.foil);
+      }
+    }
+  });
+
+  it('easy difficulty uses a far-apart pair; hard uses a same-cluster pair', () => {
+    const easy = makeQuestion('material', 42, { difficulty: 0 });
+    const hard = makeQuestion('material', 42, { difficulty: 1 });
+    // Easy rung pairs marble (bright) with drapes (soft/dead) — opposite corners.
+    const easyMats = new Set(Object.values(easy.sceneA.materials!).concat(Object.values(easy.sceneB!.materials!)));
+    expect(easyMats.has('marble')).toBe(true);
+    expect(easyMats.has('drapes_heavy')).toBe(true);
+    // Hard rung pairs two broadband dead absorbers — same cluster.
+    const hardMats = new Set(Object.values(hard.sceneA.materials!).concat(Object.values(hard.sceneB!.materials!)));
+    expect(hardMats.has('panel_fabric_rockwool')).toBe(true);
+    expect(hardMats.has('acoustic_foam')).toBe(true);
+  });
+});
+
+describe('metal: fairness (only material differs) + correctness', () => {
+  it('identical geometry; correct room is the perforated metal absorber, other is carpet', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('metal', seed);
+      expect(dims(q.sceneA)).toEqual(dims(q.sceneB!));
+      expect(Object.values(correctScene(q).materials!)).toContain('perforated_metal_absorber');
+      expect(Object.values(otherScene(q).materials!)).toContain('carpet');
+      expect(Object.values(otherScene(q).materials!)).not.toContain('perforated_metal_absorber');
     }
   });
 });

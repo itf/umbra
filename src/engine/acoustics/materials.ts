@@ -45,7 +45,8 @@ export const MATERIALS_FULL: Record<string, MaterialProps> = {
   concrete: { absorption: [0.01, 0.01, 0.02, 0.02, 0.02, 0.03, 0.05, 0.05], scattering: scatterCurve(0.05) },
   tile: { absorption: [0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.02], scattering: scatterCurve(0.05) },
   glass: { absorption: [0.18, 0.18, 0.06, 0.04, 0.03, 0.02, 0.02, 0.02], scattering: scatterCurve(0.05) },
-  marble: { absorption: [0.01, 0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02], scattering: scatterCurve(0.05) },
+  // marble: pra marble_floor + acoustic_supplies "marble or glazed tile"; hardest reflector.
+  marble: { absorption: [0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.02], scattering: scatterCurve(0.04) },
 
   // --- Brick: standard unglazed/rough. Real ISO 17497-1 scattering ~0.3–0.5. ---
   brick: { absorption: [0.05, 0.05, 0.04, 0.02, 0.04, 0.05, 0.05, 0.05], scattering: scatterCurve(0.4) },
@@ -69,7 +70,64 @@ export const MATERIALS_FULL: Record<string, MaterialProps> = {
   asphalt: { absorption: [0.02, 0.02, 0.02, 0.03, 0.03, 0.03, 0.04, 0.04], scattering: scatterCurve(0.07) },
   gravel: { absorption: [0.05, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.5], scattering: scatterCurve(0.5) },
   grass: { absorption: [0.1, 0.1, 0.2, 0.35, 0.5, 0.6, 0.65, 0.65], scattering: scatterCurve(0.3) },
-  water: { absorption: [0.01, 0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02], scattering: scatterCurve(0.05) },
+  // water: acoustic_supplies water surface (measured; refines former estimate). Near-perfect mirror.
+  water: { absorption: [0.008, 0.008, 0.008, 0.013, 0.015, 0.020, 0.025, 0.025], scattering: scatterCurve(0.05) },
+
+  // ===========================================================================
+  // EXPANDED LIBRARY — researched, cited rows (see docs/product/materials-*).
+  // Bands [63,125,250,500,1k,2k,4k,8k]; 63≈125 and 8k≈4k unless source measured.
+  // ===========================================================================
+
+  // --- Wood family ---
+  // pra wood_1.6cm: panel resonance lifts 63-250 Hz. Warm, slightly bass-shy.
+  wood_panel: { absorption: [0.18, 0.18, 0.12, 0.10, 0.09, 0.08, 0.07, 0.07], scattering: scatterCurve(0.1) },
+  // pra plywood_thin: strong bass-trap (0.42@125) → boomy/drum-like. Distinct LF cue.
+  plywood_thin: { absorption: [0.42, 0.42, 0.21, 0.10, 0.08, 0.06, 0.06, 0.06], scattering: scatterCurve(0.1) },
+  // pra wooden_door: solid, fairly reflective, nearly flat.
+  wooden_door: { absorption: [0.14, 0.14, 0.10, 0.06, 0.08, 0.10, 0.10, 0.10], scattering: scatterCurve(0.08) },
+
+  // --- Metal ---
+  // cssbi bare metal deck: very bright near-mirror, slight 125 Hz panel ring. Tinny.
+  sheet_metal: { absorption: [0.13, 0.13, 0.09, 0.09, 0.09, 0.11, 0.11, 0.11], scattering: scatterCurve(0.05) },
+  // commercial_acoustics perforated metal deck (75mm batts): kills lows-mids but
+  // REFLECTS highs — inverted tilt vs carpet/foam. Unusual bright-but-dead cue.
+  perforated_metal_absorber: { absorption: [0.73, 0.73, 0.99, 0.99, 0.89, 0.52, 0.31, 0.31], scattering: scatterCurve(0.1) },
+
+  // --- Hard masonry-like ---
+  // pra ceramic_tiles: acoustically indistinguishable from marble.
+  ceramic_tile: { absorption: [0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.02], scattering: scatterCurve(0.05) },
+
+  // --- Plaster / drywall family ---
+  // acoustic_supplies plaster on masonry: hard, very slight HF absorption.
+  plaster_smooth: { absorption: [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.05], scattering: scatterCurve(0.04) },
+  // acoustic_supplies plasterboard 12mm on studs: panel resonance eats bass. Hollow-wall.
+  plasterboard: { absorption: [0.29, 0.29, 0.10, 0.06, 0.05, 0.04, 0.04, 0.04], scattering: scatterCurve(0.04) },
+  // pra gypsum_board (perforated, mineral-fibre backing): broadband, mid-heavy dead.
+  gypsum_acoustic_perforated: { absorption: [0.30, 0.30, 0.69, 1.0, 0.81, 0.66, 0.62, 0.62], scattering: scatterCurve(0.1) },
+  // pra acoustical_plaster_25mm: looks hard but is broadband-absorptive. Deceptive.
+  acoustical_plaster: { absorption: [0.17, 0.17, 0.36, 0.66, 0.65, 0.62, 0.68, 0.68], scattering: scatterCurve(0.06) },
+
+  // --- Fabrics / soft absorbers ---
+  // acoustic_supplies drapery 18oz pleated 50%: high scatter (folds) + mid/HF kill. Fuzzy.
+  drapes_heavy: { absorption: [0.14, 0.14, 0.35, 0.53, 0.75, 0.70, 0.60, 0.60], scattering: scatterCurve(0.4) },
+  // pra curtains_velvet: lighter absorber than drapes_heavy; passes more bass.
+  curtains_velvet: { absorption: [0.05, 0.05, 0.12, 0.35, 0.45, 0.38, 0.36, 0.36], scattering: scatterCurve(0.4) },
+  // pra panel_fabric_covered_6pcf: near-total broadband kill — the "deadest" surface.
+  panel_fabric_rockwool: { absorption: [0.46, 0.46, 0.93, 1.0, 1.0, 1.0, 1.0, 1.0], scattering: scatterCurve(0.2) },
+  // acoustic_supplies fiberglass board 50mm: like foam but passes more bass.
+  fiberglass_board: { absorption: [0.18, 0.18, 0.76, 0.99, 0.99, 0.99, 0.99, 0.99], scattering: scatterCurve(0.15) },
+
+  // --- Rooms full of people / ceilings ---
+  // pra audience_2_m2: highly absorptive + highly diffuse (people as rough surface).
+  audience_seated: { absorption: [0.26, 0.26, 0.46, 0.87, 0.99, 0.99, 0.99, 0.99], scattering: scatterCurve(0.6) },
+  // pra ceiling_fissured_tile: suspended ceiling, rising-with-freq absorption. Office cue.
+  ceiling_tile_fissured: { absorption: [0.49, 0.49, 0.53, 0.53, 0.75, 0.92, 0.99, 0.99], scattering: scatterCurve(0.15) },
+
+  // --- Outdoor (flagged estimates — see materials-research.md) ---
+  // snow lit. (estimated — see materials-research.md): porous absorber, "silent after snowfall".
+  snow_fresh: { absorption: [0.15, 0.15, 0.25, 0.40, 0.65, 0.85, 0.90, 0.90], scattering: scatterCurve(0.4) },
+  // iso9613 analogy (estimated — see materials-research.md): leafy hedges, very high scatter.
+  vegetation_dense: { absorption: [0.10, 0.10, 0.20, 0.40, 0.60, 0.70, 0.75, 0.75], scattering: scatterCurve(0.5) },
 };
 
 /** Back-compat: absorption-only view, as the old code expected. */

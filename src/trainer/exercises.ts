@@ -40,9 +40,9 @@ export function makeRng(seed: number): Rng {
 
 export type ExerciseType =
   | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector'
-  | 'distance' | 'gap';
+  | 'distance' | 'gap' | 'material' | 'metal';
 
-export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector', 'distance'];
+export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector', 'distance', 'material', 'metal'];
 export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction', 'gap'];
 
 export type Direction = 'forward' | 'behind' | 'left' | 'right';
@@ -212,6 +212,89 @@ function genBrick(rng: Rng, _difficulty: number): Question {
     correctAnswer: aBrick ? 'Room A' : 'Room B',
     sceneA: clapScene('brick-a', 'Room A', size, matA),
     sceneB: clapScene('brick-b', 'Room B', size, matB),
+  };
+}
+
+// --- Material identification (maximally-separable set) ------------------------
+
+/**
+ * MATERIAL-ID drill. Two identical rooms differ ONLY in wall material; the player
+ * picks which room is the named TARGET material. The pairs are drawn from the
+ * research's "maximally-separable" starter set (marble, sheet_metal, plywood_thin,
+ * carpet, drapes_heavy, perforated_metal_absorber, panel_fabric_rockwool), each
+ * occupying a distinct corner of brightness × spectral-tilt × diffuseness space —
+ * so the drill teaches genuinely distinguishable cues rather than near-identical
+ * "mirror" materials (marble≈tile≈water, foam≈rockwool≈fiberglass).
+ *
+ * DIFFICULTY ladders easy→hard by how far apart the two materials are:
+ *   - easy: target vs a far-apart foil (e.g. marble bright/sharp vs drapes soft/dead)
+ *   - hard: target vs a same-cluster near-mirror (e.g. marble vs concrete, or two
+ *     dead absorbers) — these share a timbre and demand fine discrimination.
+ * Each rung is a fair A/B: identical geometry, only the material differs.
+ */
+interface MatPair {
+  /** The TARGET material the player is asked to find. */
+  target: keyof typeof MATERIALS;
+  /** The other ("foil") room's material. */
+  foil: keyof typeof MATERIALS;
+  /** Short label for the target used in the prompt. */
+  label: string;
+}
+
+/** Pairs ordered easy (far-apart) → hard (same perceptual cluster). */
+export const MATERIAL_LADDER: MatPair[] = [
+  // EASY: opposite corners — bright/sharp vs soft/dead.
+  { target: 'marble', foil: 'drapes_heavy', label: 'MARBLE (bright, sharp echo)' },
+  { target: 'panel_fabric_rockwool', foil: 'marble', label: 'a DEAD wall (almost no echo)' },
+  // MEDIUM: distinct tilt vs a bright reflector.
+  { target: 'carpet', foil: 'sheet_metal', label: 'CARPET (highs killed, dull)' },
+  { target: 'plywood_thin', foil: 'marble', label: 'a BASS-EATING panel (hollow, boomy)' },
+  // HARD: same perceptual cluster — fine discrimination.
+  { target: 'marble', foil: 'concrete', label: 'MARBLE (vs hard concrete)' },
+  { target: 'panel_fabric_rockwool', foil: 'acoustic_foam', label: 'ROCKWOOL (vs acoustic foam)' },
+];
+
+function genMaterial(rng: Rng, difficulty: number): Question {
+  const b = baseDims(rng);
+  const size: [number, number, number] = [b.x, b.y, b.z];
+  // Walk the ladder by difficulty (0 → easiest pair, 1 → hardest pair).
+  const idx = Math.min(MATERIAL_LADDER.length - 1, Math.floor(clamp01(difficulty) * MATERIAL_LADDER.length));
+  const pair = MATERIAL_LADDER[idx];
+  const aIsTarget = rng() < 0.5;
+  const matA = aIsTarget ? allMat(pair.target) : allMat(pair.foil);
+  const matB = aIsTarget ? allMat(pair.foil) : allMat(pair.target);
+  return {
+    type: 'material',
+    id: '',
+    prompt: `Which room has ${pair.label} walls?`,
+    choices: ['Room A', 'Room B'],
+    correctAnswer: aIsTarget ? 'Room A' : 'Room B',
+    sceneA: clapScene('material-a', 'Room A', size, matA),
+    sceneB: clapScene('material-b', 'Room B', size, matB),
+  };
+}
+
+/**
+ * "WHICH WALL IS METAL" drill: perforated_metal_absorber has the rare INVERTED
+ * spectral tilt — it swallows low-mids but REFLECTS highs, the opposite of carpet/
+ * foam. The foil is carpet (the canonical HF-killing absorber), so the two share
+ * "absorptive overall" but differ in which end of the spectrum survives — a
+ * genuinely unusual, learnable timbre. Identical geometry; only material differs.
+ */
+function genMetal(rng: Rng, _difficulty: number): Question {
+  const b = baseDims(rng);
+  const size: [number, number, number] = [b.x, b.y, b.z];
+  const aMetal = rng() < 0.5;
+  const matA = aMetal ? allMat('perforated_metal_absorber') : allMat('carpet');
+  const matB = aMetal ? allMat('carpet') : allMat('perforated_metal_absorber');
+  return {
+    type: 'metal',
+    id: '',
+    prompt: 'Which room has the METAL absorber (keeps the bright highs, kills lows) vs carpet (kills highs)?',
+    choices: ['Room A', 'Room B'],
+    correctAnswer: aMetal ? 'Room A' : 'Room B',
+    sceneA: clapScene('metal-a', 'Room A', size, matA),
+    sceneB: clapScene('metal-b', 'Room B', size, matB),
   };
 }
 
@@ -509,6 +592,8 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Questio
   reflector: genReflector,
   distance: genDistance,
   gap: genGap,
+  material: genMaterial,
+  metal: genMetal,
 };
 
 /** Single-scene exercises (one room, play once) rather than A/B. */
