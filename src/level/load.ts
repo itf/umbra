@@ -469,6 +469,11 @@ export function loadLevel(level: Level, clutterOverride?: number): LoadedLevel {
       ...(level.open ? [] : perimeterSegments(level)),
     ],
     monsters: level.monsters.map((m) => ({ x: m.x, z: m.z, speed: m.speed, sound: m.sound, soundUrl: m.soundUrl })),
+    // Ambient (non-goal) positioned sources — spatialized like beacons, never goals.
+    ambience: (level.ambience ?? []).map((a) => ({
+      id: a.id, x: a.x, z: a.z, freq: a.freq ?? 220,
+      sound: a.sound, gain: a.gain ?? 1, soundUrl: a.soundUrl,
+    })),
     // Sonar budget: thread through verbatim. Absent ⇒ undefined ⇒ unlimited clap
     // (today's behaviour), so old levels and the default room are unchanged.
     clapBudget: level.clapBudget,

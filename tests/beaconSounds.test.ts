@@ -47,7 +47,11 @@ describe('beacon preset recipes', () => {
 
   it('exposes all presets and their timing', () => {
     const names = beaconPresetNames();
-    expect(names).toEqual(['tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum']);
+    expect(names).toEqual([
+      'tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum', 'fountain', 'brownnoise',
+    ]);
+    expect(beaconTiming('fountain').loop).toBe(0); // continuous ambience
+    expect(beaconTiming('brownnoise').loop).toBe(0);
     expect(beaconTiming('hum').loop).toBe(0);      // continuous
     expect(beaconTiming('flat').loop).toBe(0);     // continuous, no tremolo
     expect(beaconTiming('bell').loop).toBeGreaterThan(0); // pulsed

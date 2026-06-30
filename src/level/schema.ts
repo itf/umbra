@@ -155,6 +155,27 @@ export interface WallPatch {
 }
 
 /**
+ * An AMBIENT (non-goal) positioned sound source — a fountain, an AC unit, etc.
+ * Spatialized exactly like a beacon (its own voice through the active engine), but
+ * it is NEVER a win target and never fades on win. `sound` reuses a BeaconPreset
+ * (e.g. the continuous 'fountain'/'brownnoise'/'hum'/'drip'). `id` lets a reaction
+ * EVENT (Part C) name the source it occludes/leaks.
+ */
+export interface AmbientSource {
+  id: string;
+  x: number;
+  z: number;
+  /** Continuous preset to synthesize (default 'hum'). */
+  sound: BeaconPreset;
+  /** Tuning frequency for pitched presets (default 220). */
+  freq?: number;
+  /** Steady level multiplier (0..1, default 1). */
+  gain?: number;
+  /** Optional custom audio file looped through this source (falls back to `sound`). */
+  soundUrl?: string;
+}
+
+/**
  * A monster placement. PLACE-ONLY for now: saved in the level with its props, but
  * the game does not yet run chase AI. The fields anticipate that future feature.
  */
@@ -262,6 +283,12 @@ export interface Level {
    */
   decoyBudget?: number;
 
+  /**
+   * AMBIENT (non-goal) positioned sound sources — fountains, AC units. Spatialized
+   * like beacons but never win targets. Absent ⇒ none (back-compat). See game.ts.
+   */
+  ambience?: AmbientSource[];
+
   start: StartPoint;
   beacons: BeaconObj[];
   walls: WallObj[];
@@ -301,6 +328,7 @@ export function isLevel(v: unknown): v is Level {
   if (typeof l.ceilingMaterial !== 'string') l.ceilingMaterial = l.roomMaterial ?? 'concrete';
   if (!Array.isArray(l.ceilings)) l.ceilings = [];
   if (!Array.isArray(l.absorbers)) l.absorbers = [];
+  if (!Array.isArray(l.ambience)) l.ambience = [];
   // Back-fill beacon sound preset: beacons with no `sound` get DEFAULT_BEACON_PRESET.
   if (Array.isArray(l.beacons)) {
     for (const b of l.beacons as BeaconObj[]) {

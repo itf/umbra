@@ -196,4 +196,25 @@ d('Game multi-beacon construction (OfflineAudioContext)', () => {
     }
     game.destroy();
   });
+
+  it('ambient sources spawn a started voice and are NOT win targets', () => {
+    const { graph, renderer } = makeGraph();
+    const lvl: Level = {
+      ...emptyLevel('amb'),
+      beacons: [],
+      winPoint: { x: 6, z: 2 },
+      ambience: [{ id: 'fountain', x: 3, z: 5, sound: 'fountain', gain: 0.8 }],
+    };
+    const game = new Game(graph, renderer, loadLevel(lvl).game);
+    const amb = (game as any).ambience as any[];
+    expect(amb).toHaveLength(1);
+    expect(amb[0].voice).not.toBeNull();
+    expect((amb[0].voice as any).running).toBe(true);
+    // No beacons exist (silent except the ambience).
+    expect((game as any).beacons).toHaveLength(0);
+    // setAmbientModulation targets the named source's duck gain + lowpass.
+    game.setAmbientModulation('fountain', 0.4, 600);
+    game.setAmbientModulation('nope', 0.4, 600); // unknown id is a no-op (no throw)
+    game.destroy();
+  });
 });

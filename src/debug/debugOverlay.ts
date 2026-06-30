@@ -71,6 +71,7 @@ export class DebugOverlay {
     ext(s.goalTarget.x, s.goalTarget.z);
     ext(s.player.x, s.player.z);
     for (const m of s.monsters) ext(m.x, m.z);
+    for (const a of s.ambience) ext(a.x, a.z);
     for (const f of s.floors) { ext(f.x, f.z); ext(f.x + f.w, f.z + f.d); }
     if (!isFinite(minX)) { minX = 0; maxX = 10; minZ = 0; maxZ = 10; }
     return { minX, maxX, minZ, maxZ };
@@ -156,6 +157,12 @@ export class DebugOverlay {
     ctx.fillStyle = '#f44';
     for (const m of s.monsters) {
       ctx.beginPath(); ctx.arc(sx(m.x), sz(m.z), 4, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ambient (non-goal) sources (blue)
+    ctx.fillStyle = '#48f';
+    for (const a of s.ambience) {
+      ctx.beginPath(); ctx.arc(sx(a.x), sz(a.z), 4, 0, Math.PI * 2); ctx.fill();
     }
 
     const deg = ((s.player.yaw * 180 / Math.PI) % 360 + 360) % 360;

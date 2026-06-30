@@ -49,6 +49,12 @@ export interface BeaconSpec {
   x: number; z: number; freq: number; sound?: BeaconPreset; soundUrl?: string;
 }
 
+/** One AMBIENT (non-goal) positioned source: spatialized like a beacon, never a goal. */
+export interface AmbientSpec {
+  id: string;
+  x: number; z: number; freq: number; sound: BeaconPreset; gain: number; soundUrl?: string;
+}
+
 export interface GameLevel {
   start: { x: number; z: number; yaw: number };
   /**
@@ -63,6 +69,13 @@ export interface GameLevel {
    * byte-identically to the legacy single-beacon path. `beacon` mirrors `beacons[0]`.
    */
   beacons: BeaconSpec[];
+  /**
+   * AMBIENT (non-goal) positioned sources. Each gets its own spatializer + voice,
+   * exactly like a beacon, but is NEVER a win target and never fades on win. Empty
+   * (and zero cost) when the level has none. Exposed for the reaction mechanic so an
+   * event can occlude/leak a named source. See Part B/C.
+   */
+  ambience?: AmbientSpec[];
   /**
    * DECOUPLED WIN TARGET — the place to reach to win in normal ('beacon') mode,
    * independent of any beacon. Absent ⇒ defaults to `beacons[0]` (today's
@@ -265,6 +278,24 @@ export class Game {
     /** Looping custom-audio source, when this monster's `soundUrl` loaded. */
     custom: AudioBufferSourceNode | null;
   }[] = [];
+  /**
+   * Live AMBIENT (non-goal) sources — fountains, AC units. Each is a positioned voice
+   * through the active engine plus a per-source DUCK chain (a gain + lowpass between
+   * the dry voice and the spatializer) so a reaction EVENT (Part C) can occlude
+   * (attenuate + muffle) or LEAK (boost + brighten) it. Keyed by id for events.
+   */
+  private ambience: {
+    spec: AmbientSpec;
+    src: PositionedVoice;
+    voice: BeaconVoice | null;
+    custom: AudioBufferSourceNode | null;
+    /** Steady level (spec.gain) — the base the duck/leak multiplies. */
+    baseGain: number;
+    /** Duck/leak gain node (1 = normal). */
+    duck: GainNode;
+    /** Duck/leak lowpass (high cutoff = normal/bright; low = muffled). */
+    lp: BiquadFilterNode;
+  }[] = [];
   /** True once the game has ended, to veto late-arriving custom-audio loops. */
   private get ended() { return this.won || this.caught; }
   /** ms timestamp of the previous tick, for per-frame dt. */
@@ -361,6 +392,39 @@ export class Game {
           m.soundUrl,
           () => { /* keep the synth growl/hum already running */ },
           { shouldStart: () => !this.ended && entry.custom == null },
+        ).then((handle) => {
+          if (!handle.source) return;
+          entry.voice?.stop();
+          entry.voice = null;
+          entry.custom = handle.source;
+        });
+      }
+    }
+
+    // Ambient (non-goal) sources: a positioned voice through the active engine, with
+    // a duck/leak chain (gain + lowpass) the reaction events modulate. Never a goal,
+    // never fades on win. No-op when the level has none.
+    for (const spec of level.ambience ?? []) {
+      const src = this.makePositionedSource();
+      const duck = this.graph.ctx.createGain();
+      duck.gain.value = 1;
+      const lp = this.graph.ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 18000; // wide open = unmuffled by default
+      // dry voice → duck → lowpass → spatializer input.
+      duck.connect(lp).connect(src.input);
+      src.setPosition(spec.x, this.headHeight, spec.z);
+      const baseGain = Math.max(0, spec.gain);
+      duck.gain.value = baseGain;
+      const voice = new BeaconVoice(this.graph.ctx, duck, resolveBeaconPreset(spec.sound), spec.freq);
+      voice.start();
+      const entry: (typeof this.ambience)[number] = { spec, src, voice, custom: null, baseGain, duck, lp };
+      this.ambience.push(entry);
+      if (spec.soundUrl) {
+        void attachCustomLoop(
+          this.graph.ctx, duck, spec.soundUrl,
+          () => { /* keep the synth ambience already running */ },
+          { shouldStart: () => entry.custom == null },
         ).then((handle) => {
           if (!handle.source) return;
           entry.voice?.stop();
@@ -513,6 +577,22 @@ export class Game {
     }
     // Modeled beacons: re-solve the room for the new listener pose (throttled).
     if (anyModeled) this.refreshBeacon(pose.x, pose.z);
+    // Ambient sources track the listener exactly like beacons (straight-line spatial).
+    for (const a of this.ambience) a.src.setPosition(a.spec.x, this.headHeight, a.spec.z);
+  }
+
+  /**
+   * Apply a reaction-event modulation to a NAMED ambient source: a multiplicative
+   * gain `factor` (0..N) on top of its steady level and a lowpass cutoff `cutoffHz`
+   * (low ⇒ muffled/occluded; high ⇒ bright/leaking). Smoothed so it doesn't click.
+   * No-op for an unknown id. Used by Part C's event loop (occlusion dip / door leak).
+   */
+  setAmbientModulation(id: string, factor: number, cutoffHz: number) {
+    const a = this.ambience.find((e) => e.spec.id === id);
+    if (!a) return;
+    const t = this.graph.ctx.currentTime;
+    a.duck.gain.setTargetAtTime(Math.max(0, a.baseGain * factor), t, 0.08);
+    a.lp.frequency.setTargetAtTime(Math.max(80, cutoffHz), t, 0.08);
   }
 
   /**
@@ -613,6 +693,7 @@ export class Game {
       reflections: this.beacons.flatMap((u) => u.modeled?.debugReflections() ?? []),
       decoysLeft: this.decoysLeft,
       monsters: this.monsters.map((m) => ({ x: m.state.x, z: m.state.z })),
+      ambience: this.ambience.map((a) => ({ id: a.spec.id, x: a.spec.x, z: a.spec.z })),
       floors: this.level.floors ?? [],
     };
   }
@@ -1066,6 +1147,17 @@ export class Game {
       m.src.teardown();
     }
     this.monsters = [];
+    for (const a of this.ambience) {
+      a.voice?.stop();
+      if (a.custom) {
+        try { a.custom.stop(); } catch { /* already stopped */ }
+        a.custom = null;
+      }
+      try { a.duck.disconnect(); } catch { /* noop */ }
+      try { a.lp.disconnect(); } catch { /* noop */ }
+      a.src.teardown();
+    }
+    this.ambience = [];
   }
 }
 

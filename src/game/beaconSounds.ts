@@ -18,14 +18,21 @@
 /** The available beacon preset names. `tone` is the legacy pulsed sine; `flat` is a
  *  pure continuous sine (no tremolo) — useful for hearing directional/level cues
  *  cleanly, with no amplitude modulation of its own to mask them. */
-export type BeaconPreset = 'tone' | 'flat' | 'pulse' | 'bell' | 'musicbox' | 'drip' | 'hum';
+export type BeaconPreset =
+  | 'tone' | 'flat' | 'pulse' | 'bell' | 'musicbox' | 'drip' | 'hum'
+  // Continuous AMBIENCE presets (Part B): positioned non-goal sources.
+  //  - 'fountain'   — gentle continuous filtered water (layered bandpassed noise).
+  //  - 'brownnoise' — a steady AC / brown-noise machine (low-passed brown noise).
+  | 'fountain' | 'brownnoise';
 
 /** The default beacon preset — the music box, the friendliest navigator sound — used
  *  for any beacon with no explicit `sound` (the built-in navigator beacon,
  *  sandbox-generated levels, and back-fill for older saved levels / unknown names). */
 export const DEFAULT_BEACON_PRESET: BeaconPreset = 'musicbox';
 
-const PRESET_NAMES: readonly BeaconPreset[] = ['tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum'];
+const PRESET_NAMES: readonly BeaconPreset[] = [
+  'tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum', 'fountain', 'brownnoise',
+];
 
 /** Whether a string is a known preset name. */
 export function isBeaconPreset(name: unknown): name is BeaconPreset {
@@ -94,6 +101,8 @@ const TIMING: Record<BeaconPreset, BeaconTiming> = {
   musicbox: { loop: 0.42 }, // one note per step of the motif
   drip: { loop: 1.1 },   // irregular-ish drips
   hum: { loop: 0 },      // continuous drone
+  fountain: { loop: 0 }, // continuous filtered water
+  brownnoise: { loop: 0 }, // continuous AC / brown-noise machine
 };
 
 export function beaconTiming(preset: BeaconPreset): BeaconTiming {
@@ -118,6 +127,8 @@ export class BeaconVoice {
   private out: GainNode;
   /** Long-lived oscillators (continuous presets) to stop on teardown. */
   private oscillators: OscillatorNode[] = [];
+  /** Long-lived looping buffer sources (noise ambience presets) to stop on teardown. */
+  private sources: AudioBufferSourceNode[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private motifIndex = 0;
   private running = false;
@@ -137,6 +148,8 @@ export class BeaconVoice {
     if (this.preset === 'tone' || this.preset === 'pulse') return this.startTone();
     if (this.preset === 'flat') return this.startFlat();
     if (this.preset === 'hum') return this.startHum();
+    if (this.preset === 'fountain') return this.startFountain();
+    if (this.preset === 'brownnoise') return this.startBrownNoise();
     // Pulsed presets: trigger once immediately, then on an interval.
     const period = beaconTiming(this.preset).loop;
     this.trigger();
@@ -151,6 +164,10 @@ export class BeaconVoice {
       try { o.stop(t + 0.05); } catch { /* already stopped */ }
     }
     this.oscillators = [];
+    for (const s of this.sources) {
+      try { s.stop(t + 0.05); } catch { /* already stopped */ }
+    }
+    this.sources = [];
     try { this.out.disconnect(); } catch { /* noop */ }
   }
 
@@ -225,6 +242,96 @@ export class BeaconVoice {
       this.oscillators.push(osc);
     }
     mix.connect(this.out);
+  }
+
+  /** A 2 s looping white-noise buffer (the raw source for the ambience presets). */
+  private whiteNoiseSource(): AudioBufferSourceNode {
+    const ctx = this.ctx;
+    const n = Math.floor(ctx.sampleRate * 2);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    return src;
+  }
+
+  /**
+   * A gentle fountain: looping white noise split through TWO bandpass bands (a low
+   * "burble" + a high "splash trickle"), each with a slow gain LFO so the water
+   * shimmers rather than sounding like a static hiss. Continuous, easy to localize.
+   */
+  private startFountain() {
+    const ctx = this.ctx;
+    const src = this.whiteNoiseSource();
+    const mix = ctx.createGain();
+    mix.gain.value = 0.35;
+    // Two filtered streams that together read as "running water".
+    const bands: [number, number, number][] = [
+      // centre Hz, Q, gain
+      [520, 1.2, 0.7],   // low burble
+      [2600, 2.0, 0.5],  // high trickle/splash
+    ];
+    for (const [freq, q, g] of bands) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = freq;
+      bp.Q.value = q;
+      const bg = ctx.createGain();
+      bg.gain.value = g;
+      // Slow shimmer LFO on this band's gain.
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 0.3 + Math.random() * 0.4;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = g * 0.4;
+      lfo.connect(lfoGain).connect(bg.gain);
+      lfo.start();
+      this.oscillators.push(lfo);
+      src.connect(bp).connect(bg).connect(mix);
+    }
+    mix.connect(this.out);
+    src.start();
+    this.sources.push(src);
+  }
+
+  /**
+   * An AC / brown-noise machine: white noise integrated toward BROWN (a one-pole
+   * leaky integrator), low-passed, with a faint steady hum partial — a constant,
+   * unobtrusive "machine running" bed that LEAKS more when a door opens (Part C).
+   */
+  private startBrownNoise() {
+    const ctx = this.ctx;
+    const n = Math.floor(ctx.sampleRate * 2);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < n; i++) {
+      const w = Math.random() * 2 - 1;
+      // Leaky integrator → brown noise; rescale to keep it in range.
+      last = (last + 0.02 * w) / 1.02;
+      data[i] = last * 3.5;
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900;
+    const g = ctx.createGain();
+    g.gain.value = 0.4;
+    src.connect(lp).connect(g).connect(this.out);
+    src.start();
+    this.sources.push(src);
+    // A faint mains-hum partial gives the machine a tonal "presence".
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = 120;
+    const og = ctx.createGain();
+    og.gain.value = 0.04;
+    osc.connect(og).connect(this.out);
+    osc.start();
+    this.oscillators.push(osc);
   }
 
   // --- pulsed presets ---
