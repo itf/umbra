@@ -40,7 +40,7 @@ describe('beacon preset recipes', () => {
     expect(resolveBeaconPreset('bell')).toBe('bell');
     expect(resolveBeaconPreset('nope')).toBe(DEFAULT_BEACON_PRESET);
     expect(resolveBeaconPreset(undefined)).toBe(DEFAULT_BEACON_PRESET);
-    expect(DEFAULT_BEACON_PRESET).toBe('tone');
+    expect(DEFAULT_BEACON_PRESET).toBe('musicbox');
     expect(isBeaconPreset('drip')).toBe(true);
     expect(isBeaconPreset('xyz')).toBe(false);
   });
@@ -55,18 +55,18 @@ describe('beacon preset recipes', () => {
 });
 
 describe('beacon schema back-compat', () => {
-  it('an old beacon without `sound` validates and defaults to tone', () => {
+  it('an old beacon without `sound` validates and defaults to the default preset', () => {
     const lvl = emptyLevel();
     delete (lvl.beacons[0] as { sound?: unknown }).sound;
     expect(isLevel(lvl)).toBe(true);
-    expect(lvl.beacons[0].sound).toBe('tone');
+    expect(lvl.beacons[0].sound).toBe('musicbox');
   });
 
   it('an unknown `sound` is normalized to the default on validate', () => {
     const lvl = JSON.parse(JSON.stringify(emptyLevel())) as Level;
     (lvl.beacons[0] as { sound?: unknown }).sound = 'bogus';
     expect(isLevel(lvl)).toBe(true);
-    expect(lvl.beacons[0].sound).toBe('tone');
+    expect(lvl.beacons[0].sound).toBe('musicbox');
   });
 
   it('a beacon with sound + soundUrl round-trips through JSON', () => {

@@ -20,9 +20,10 @@
  *  cleanly, with no amplitude modulation of its own to mask them. */
 export type BeaconPreset = 'tone' | 'flat' | 'pulse' | 'bell' | 'musicbox' | 'drip' | 'hum';
 
-/** The default preset for old levels / unknown names (byte-identical to the
- *  original pulsed sine). */
-export const DEFAULT_BEACON_PRESET: BeaconPreset = 'tone';
+/** The default beacon preset — the music box, the friendliest navigator sound — used
+ *  for any beacon with no explicit `sound` (the built-in navigator beacon,
+ *  sandbox-generated levels, and back-fill for older saved levels / unknown names). */
+export const DEFAULT_BEACON_PRESET: BeaconPreset = 'musicbox';
 
 const PRESET_NAMES: readonly BeaconPreset[] = ['tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum'];
 

@@ -39,14 +39,14 @@ export interface BeaconObj {
   /** Win radius in metres. */
   goalRadius: number;
   /**
-   * Synthesized beacon sound preset. Absent ⇒ the legacy pulsed sine ('tone'),
-   * so old levels are byte-identical. See src/game/beaconSounds.ts.
+   * Synthesized beacon sound preset. Absent ⇒ the default preset
+   * (DEFAULT_BEACON_PRESET = 'musicbox'). See src/game/beaconSounds.ts.
    */
   sound?: BeaconPreset;
   /**
    * Optional custom audio file. If set and it loads, it's looped through the
-   * beacon's HRTF source instead of the synth (falling back to `sound`/'tone'
-   * if the fetch fails).
+   * beacon's HRTF source instead of the synth (falling back to `sound`/the default
+   * preset if the fetch fails).
    */
   soundUrl?: string;
 }
@@ -283,7 +283,7 @@ export function isLevel(v: unknown): v is Level {
   if (typeof l.ceilingMaterial !== 'string') l.ceilingMaterial = l.roomMaterial ?? 'concrete';
   if (!Array.isArray(l.ceilings)) l.ceilings = [];
   if (!Array.isArray(l.absorbers)) l.absorbers = [];
-  // Back-fill beacon sound preset: old beacons (no `sound`) default to 'tone'.
+  // Back-fill beacon sound preset: beacons with no `sound` get DEFAULT_BEACON_PRESET.
   if (Array.isArray(l.beacons)) {
     for (const b of l.beacons as BeaconObj[]) {
       if (b && typeof b === 'object') b.sound = resolveBeaconPreset(b.sound);

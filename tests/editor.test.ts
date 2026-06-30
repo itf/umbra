@@ -222,8 +222,8 @@ describe('lintLevel', () => {
 describe('absorber + objective fields round-trip through export/import', () => {
   it('a find-the-foam style level is lossless (absorbers, goal, clap budget)', () => {
     const lvl = emptyLevel('Foam round-trip');
-    // import backfills beacon.sound='tone'; set it so the deep-equality holds.
-    lvl.beacons = [{ id: 'b1', x: 6, z: 8, freq: 440, goalRadius: 1.5, sound: 'tone' }];
+    // import backfills the default beacon.sound; set it so the deep-equality holds.
+    lvl.beacons = [{ id: 'b1', x: 6, z: 8, freq: 440, goalRadius: 1.5, sound: 'musicbox' }];
     lvl.goal = 'absorber';
     lvl.clapBudget = 5;
     lvl.clapCooldownMs = 600;
@@ -246,7 +246,7 @@ describe('escape-mode authoring', () => {
     lvl.goal = 'escape';
     lvl.exit = { x: 2.5, z: 1.5 };
     lvl.decoyBudget = 3;
-    lvl.beacons = [{ id: 'exit', x: 2.5, z: 1.5, freq: 330, goalRadius: 1, sound: 'tone' }];
+    lvl.beacons = [{ id: 'exit', x: 2.5, z: 1.5, freq: 330, goalRadius: 1, sound: 'musicbox' }];
     lvl.monsters = [{ id: 'm1', x: 8, z: 11, speed: 0.6, sound: 'growl' }];
     return lvl;
   }
