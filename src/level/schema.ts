@@ -328,6 +328,7 @@ export function emptyLevel(name = 'Untitled'): Level {
     ceilings: [],
     monsters: [],
     absorbers: [],
+    ambience: [],
   };
 }
 

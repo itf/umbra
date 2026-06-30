@@ -47,6 +47,7 @@ export const PICKER_GROUPS: Array<{ category: BuiltinCategory | 'saved'; heading
   { category: 'absorber', heading: 'Absorber — find the dead spot' },
   { category: 'sonar', heading: 'Sonar — clap on a budget' },
   { category: 'stealth', heading: 'Stealth — escape the hunter' },
+  { category: 'reaction', heading: 'Reaction — press when you detect an event' },
   { category: 'saved', heading: 'Your saved levels' },
 ];
 

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "Find the Door",
+  "open": false,
+  "room": { "width": 8, "depth": 16, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 2, "z": 14.5, "yaw": 0 },
+  "winPoint": { "x": 5.4, "z": 5.6 },
+  "winRadius": 0.9,
+  "beacons": [],
+  "walls": [
+    {
+      "id": "divider-near",
+      "ax": 4, "az": 16, "bx": 4, "bz": 6.4,
+      "material": "concrete"
+    },
+    {
+      "id": "divider-far",
+      "ax": 4, "az": 4.8, "bx": 4, "bz": 0,
+      "material": "concrete"
+    }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

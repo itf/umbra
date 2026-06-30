@@ -74,11 +74,16 @@ describe('showcase feature coverage', () => {
     expect(max).toBeGreaterThan(min * 4); // at least a 4× volume spread
   });
 
-  it('every builtin has a reachable first beacon with a goalRadius', () => {
+  it('every builtin is winnable: a first beacon with a goalRadius, OR a winPoint (silent levels)', () => {
     for (const l of levels()) {
       const b = l.beacons[0];
-      expect(b).toBeDefined();
-      expect(b.goalRadius).toBeGreaterThan(0);
+      if (b) {
+        // Beacon-bearing level: the first beacon's goalRadius must be valid.
+        expect(b.goalRadius).toBeGreaterThan(0);
+      } else {
+        // SILENT level (no beacons): it must declare an explicit win area instead.
+        expect(l.winPoint, `${l.name} has no beacon and no winPoint`).toBeDefined();
+      }
     }
   });
 });

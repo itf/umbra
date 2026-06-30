@@ -38,13 +38,21 @@ import sonarTight from './sonar-tight.json';
 import sonarLabyrinth from './sonar-labyrinth.json';
 import stealthTwinWardens from './stealth-twin-wardens.json';
 import stealthChokepoint from './stealth-chokepoint.json';
+// Levels feature pack — silent find-the-door, reaction levels, material clap-trainers.
+import findTheDoor from './find-the-door.json';
+import fountainCrossing from './fountain-crossing.json';
+import doorAcCorridor from './door-in-the-ac-corridor.json';
+import findTheCarpet from './find-the-carpet.json';
+import findTheCarpetHalf from './find-the-carpet-half.json';
+import findTheHardWall from './find-the-hard-wall.json';
+import findTheMetalHalf from './find-the-metal-half.json';
 
 /**
  * Coarse grouping used by the picker to list levels under mode/showcase
  * headings. `showcase` = the original acoustics-tour levels; the four mode
  * categories cluster each game mode's difficulty arc.
  */
-export type BuiltinCategory = 'showcase' | 'beacon' | 'absorber' | 'sonar' | 'stealth';
+export type BuiltinCategory = 'showcase' | 'beacon' | 'absorber' | 'sonar' | 'stealth' | 'reaction';
 
 export interface BuiltinEntry {
   id: string;
@@ -253,5 +261,64 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     description: 'HARD stealth. A single warden sits squarely in the only gateway. Throw a decoy (T) to one side to lure it off the gap, then slip through on the quiet spine.',
     category: 'stealth',
     json: stealthChokepoint,
+  },
+
+  // ===========================================================================
+  // Levels feature pack — decoupled win-areas, ambient sources + the reaction
+  // mechanic, and a material clap-trainer ramp.
+  // ===========================================================================
+
+  // --- SILENT navigation: no beacon, win is an area at a side doorway ---
+  {
+    id: 'find-the-door',
+    name: 'Find the Door',
+    description: 'NO beacon, total silence. A bare concrete corridor with one off-centre doorway in the RIGHT-hand wall. Clap and listen to your own footsteps echo down the hall and through the gap to find the opening, then step through to the area beyond.',
+    json: findTheDoor,
+  },
+
+  // --- REACTION: press when you detect a timed acoustic event ---
+  {
+    id: 'fountain-crossing',
+    name: 'Fountain Crossing',
+    description: 'A fountain burbles ahead. Three times, someone walks between you and it — the water briefly DUCKS and muffles as they pass (with a faint swoosh). Press React (R) each time you hear a crossing, then walk up to the fountain. React to at least two to win.',
+    category: 'reaction',
+    json: fountainCrossing,
+  },
+  {
+    id: 'door-in-the-ac-corridor',
+    name: 'Door in the AC Corridor',
+    description: 'An AC unit hums steadily at the end of the hall. A door down the corridor opens and closes three times; while it is OPEN the AC LEAKS louder and brighter (with a click at open and close). Press React (R) when you hear the door open, then reach the far end. React to at least two to win.',
+    category: 'reaction',
+    json: doorAcCorridor,
+  },
+
+  // --- MATERIAL clap-trainer ramp (win = area in front of the odd-one-out wall) ---
+  {
+    id: 'find-the-carpet',
+    name: 'Find the Carpet Wall',
+    description: 'EASY material-find. A bright concrete room where ONE whole wall is dead carpet. Clap, hear which wall swallows the echo, and walk to the area in front of it. No beacon.',
+    category: 'absorber',
+    json: findTheCarpet,
+  },
+  {
+    id: 'find-the-carpet-half',
+    name: 'Find the Half-Carpet Wall',
+    description: 'MEDIUM material-find. Only HALF of one concrete wall is carpet — a narrower dead spot to localise. Clap, find the deadened half, and walk to the area in front of it.',
+    category: 'absorber',
+    json: findTheCarpetHalf,
+  },
+  {
+    id: 'find-the-hard-wall',
+    name: 'Find the Hard Wall',
+    description: 'MEDIUM material-find (inverted). A soft, dead carpet room with ONE bright sheet-metal wall — hunt the RINGING one this time. Clap, find the live wall, and walk to the area in front of it.',
+    category: 'absorber',
+    json: findTheHardWall,
+  },
+  {
+    id: 'find-the-metal-half',
+    name: 'Find the Half-Metal Wall',
+    description: 'HARD material-find. A dead acoustic-foam room with only HALF of one wall in bright sheet metal — the smallest, hardest live spot to pin down. Clap, find the ringing half, walk to the area in front of it.',
+    category: 'absorber',
+    json: findTheMetalHalf,
   },
 ];

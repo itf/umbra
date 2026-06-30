@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "Find the Half-Metal Wall",
+  "open": false,
+  "room": { "width": 10, "depth": 10, "height": 3 },
+  "roomMaterial": "acoustic_foam",
+  "floorMaterial": "carpet",
+  "hasCeiling": true,
+  "ceilingMaterial": "acoustic_foam",
+  "start": { "x": 5, "z": 5, "yaw": 0 },
+  "winPoint": { "x": 9.0, "z": 2.5 },
+  "winRadius": 1.0,
+  "beacons": [],
+  "absorbers": [
+    { "id": "metal-half", "wall": "+x", "u0": 0, "v0": 0, "uSize": 5, "vSize": 3, "material": "sheet_metal" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

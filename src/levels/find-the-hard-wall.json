@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "Find the Hard Wall",
+  "open": false,
+  "room": { "width": 10, "depth": 10, "height": 3 },
+  "roomMaterial": "carpet",
+  "floorMaterial": "carpet",
+  "hasCeiling": true,
+  "ceilingMaterial": "carpet",
+  "start": { "x": 5, "z": 5, "yaw": 0 },
+  "winPoint": { "x": 9.0, "z": 5 },
+  "winRadius": 1.1,
+  "beacons": [],
+  "absorbers": [
+    { "id": "hard-wall", "wall": "+x", "u0": 0, "v0": 0, "uSize": 10, "vSize": 3, "material": "sheet_metal" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

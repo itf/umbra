@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "Find the Half-Carpet Wall",
+  "open": false,
+  "room": { "width": 10, "depth": 10, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 5, "z": 5, "yaw": 0 },
+  "winPoint": { "x": 7.5, "z": 1.0 },
+  "winRadius": 1.0,
+  "beacons": [],
+  "absorbers": [
+    { "id": "carpet-half", "wall": "-z", "u0": 5, "v0": 0, "uSize": 5, "vSize": 3, "material": "carpet" }
+  ],
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

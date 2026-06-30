@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "Door in the AC Corridor",
+  "open": false,
+  "room": { "width": 4, "depth": 18, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 2, "z": 16.5, "yaw": 0 },
+  "winPoint": { "x": 2, "z": 2.0 },
+  "winRadius": 1.0,
+  "beacons": [],
+  "ambience": [
+    { "id": "ac", "x": 2, "z": 1.0, "sound": "brownnoise", "gain": 0.9 }
+  ],
+  "events": [
+    { "id": "door-1", "type": "door", "sourceId": "ac", "start": 6, "end": 8.5 },
+    { "id": "door-2", "type": "door", "sourceId": "ac", "start": 14, "end": 16.5 },
+    { "id": "door-3", "type": "door", "sourceId": "ac", "start": 23, "end": 25.5 }
+  ],
+  "requiredReactions": 2,
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

@@ -33,7 +33,10 @@ function beaconReachable(game: GameLevel, roomSize: [number, number, number]): b
   const key = (x: number, z: number) => `${x.toFixed(2)},${z.toFixed(2)}`;
   const snap = (v: number) => Math.round((v - step / 2) / step) * step + step / 2;
   const start: [number, number] = [snap(game.start.x), snap(game.start.z)];
-  const goal = key(snap(game.beacon.x), snap(game.beacon.z));
+  // The reachability goal is the WIN target (decoupled from any beacon): silent
+  // levels have no beacon, so use winTarget (which falls back to the beacon).
+  const win = game.winTarget ?? { x: game.beacon.x, z: game.beacon.z };
+  const goal = key(snap(win.x), snap(win.z));
 
   const seen = new Set<string>([key(...start)]);
   const queue: Array<[number, number]> = [start];
@@ -65,6 +68,9 @@ describe('maze demo levels are solvable (beacon reachable from start)', () => {
     'sonar-labyrinth',
     'stealth-twin-wardens',
     'stealth-chokepoint',
+    // Silent side-doorway level: the win AREA (not a beacon) must be reachable
+    // through the doorway gap from the start.
+    'find-the-door',
   ]) {
     it(`${id}: the beacon is reachable from the start`, () => {
       const level = getBuiltin(id);
