@@ -47,6 +47,18 @@ export class DebugOverlay {
 
   dispose() { cancelAnimationFrame(this.raf); }
 
+  /** Map a floor material name → a translucent fill so zones read apart at a glance. */
+  private floorColor(mat: string): string {
+    const m = mat.toLowerCase();
+    if (/carpet|foam|drapes|rockwool/.test(m)) return 'rgba(120,150,180,0.25)'; // dead
+    if (/gravel/.test(m)) return 'rgba(200,170,110,0.25)';                       // tan
+    if (/tile|glass|marble|ceramic/.test(m)) return 'rgba(80,220,230,0.25)';     // live
+    if (/concrete|brick|stone|wood/.test(m)) return 'rgba(150,150,150,0.25)';    // mid grey
+    if (/water/.test(m)) return 'rgba(60,170,170,0.25)';                         // teal
+    if (/metal/.test(m)) return 'rgba(150,170,190,0.25)';                        // steel
+    return 'rgba(120,120,120,0.2)';
+  }
+
   /** Fit the room's xz bounds (walls + beacon + player) into the canvas. */
   private bounds(s: DebugState) {
     let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -57,6 +69,8 @@ export class DebugOverlay {
     for (const w of s.walls) for (const v of w.verts) ext(v[0], v[2]);
     ext(s.beacon.x, s.beacon.z);
     ext(s.player.x, s.player.z);
+    for (const m of s.monsters) ext(m.x, m.z);
+    for (const f of s.floors) { ext(f.x, f.z); ext(f.x + f.w, f.z + f.d); }
     if (!isFinite(minX)) { minX = 0; maxX = 10; minZ = 0; maxZ = 10; }
     return { minX, maxX, minZ, maxZ };
   }
@@ -74,6 +88,12 @@ export class DebugOverlay {
     const sz = (z: number) => M + (z - b.minZ) * scale;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // floor-material zones (under walls/markers): translucent fills by material
+    for (const f of s.floors) {
+      ctx.fillStyle = this.floorColor(f.material);
+      ctx.fillRect(sx(f.x), sz(f.z), f.w * scale, f.d * scale);
+    }
 
     // walls
     ctx.strokeStyle = '#5a8'; ctx.lineWidth = 1.5;
@@ -115,6 +135,12 @@ export class DebugOverlay {
     const hx = Math.sin(s.player.yaw), hz = -Math.cos(s.player.yaw); // forward dir in world xz
     ctx.strokeStyle = '#3cf'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(px, pz); ctx.lineTo(px + hx * 12, pz + hz * 12); ctx.stroke();
+
+    // monsters (red)
+    ctx.fillStyle = '#f44';
+    for (const m of s.monsters) {
+      ctx.beginPath(); ctx.arc(sx(m.x), sz(m.z), 4, 0, Math.PI * 2); ctx.fill();
+    }
 
     const deg = ((s.player.yaw * 180 / Math.PI) % 360 + 360) % 360;
     this.readout.textContent =

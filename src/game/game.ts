@@ -541,9 +541,8 @@ export class Game {
       engine: this.steam ? 'steam' : this.interpRenderer ? 'interp' : 'legacy',
       reflections: this.modeledBeacon?.debugReflections() ?? [],
       decoysLeft: this.decoysLeft,
-      monster: this.monsters[0]
-        ? { x: this.monsters[0].state.x, z: this.monsters[0].state.z }
-        : null,
+      monsters: this.monsters.map((m) => ({ x: m.state.x, z: m.state.z })),
+      floors: this.level.floors ?? [],
     };
   }
 
