@@ -32,7 +32,9 @@
           <button class="tool" data-tool="floor">Floor zone</button>
           <button class="tool" data-tool="ceiling">Ceiling zone</button>
           <button class="tool" data-tool="monster">Monster</button>
-          <button class="tool" data-tool="absorber">Absorber patch</button>
+          <button class="tool" data-tool="absorber">Material patch</button>
+          <button class="tool" data-tool="ambience">Ambient source</button>
+          <button class="tool" data-tool="win">Win area</button>
           <button class="tool" data-tool="exit">Exit (escape)</button>
         </div>
 
@@ -50,6 +52,7 @@
         <label>Ceiling height <input id="ceil-h" type="number" min="2" max="20" step="0.5" /></label>
         <label>Ceiling material <select id="ceil-mat" aria-label="Default ceiling material"></select></label>
         <label>Speed of sound (m/s) <input id="room-sos" type="number" min="100" max="700" step="1" placeholder="343" aria-label="Speed of sound in metres per second (blank = default 343)" /></label>
+        <label>Clutter (0–1) <input id="room-clutter" type="number" min="0" max="1" step="0.05" placeholder="0" aria-label="Clutter 0 to 1: raises absorption + scattering to tame a fluttery room (blank = 0)" /></label>
 
         <h2>Objective</h2>
         <label>Goal mode
@@ -63,6 +66,11 @@
         <label>Clap budget <input id="clap-budget" type="number" min="0" step="1" placeholder="∞" aria-label="Max claps for the level (blank or 0 = unlimited)" /></label>
         <label>Clap cooldown (ms) <input id="clap-cooldown" type="number" min="0" step="50" placeholder="0" aria-label="Minimum milliseconds between claps (blank or 0 = none)" /></label>
 
+        <h2>Reaction events</h2>
+        <label>Required reactions <input id="required-reactions" type="number" min="0" step="1" placeholder="0" aria-label="Minimum reaction hits needed to win, in addition to reaching the win area (blank or 0 = ungated)" /></label>
+        <div id="events-editor" aria-label="Reaction events"></div>
+        <button id="btn-add-event" type="button">+ Add reaction event</button>
+
         <h2 id="props-title">Selection</h2>
         <div id="props"><p class="hint">Nothing selected.</p></div>
 
@@ -74,7 +82,7 @@
 
       <main id="canvas-wrap">
         <canvas id="canvas" tabindex="0" aria-label="Level map. Click to place, drag to move."></canvas>
-        <div id="statusbar"><span id="coords">—</span> · <span id="hint">Pick a tool, then click the map.</span></div>
+        <div id="statusbar"><span id="coords">—</span> · <span id="hint" role="status" aria-live="polite">Pick a tool, then click the map.</span></div>
       </main>
     </div>
 

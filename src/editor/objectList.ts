@@ -9,7 +9,9 @@
 import type { Level } from '../level/schema';
 
 /** The selectable object kinds in the editor. */
-export type SelKind = 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber' | 'exit';
+export type SelKind =
+  | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber' | 'exit'
+  | 'ambience' | 'win';
 
 /** Human-readable heading for a selected object's kind. */
 export function kindLabel(kind: SelKind): string {
@@ -20,8 +22,10 @@ export function kindLabel(kind: SelKind): string {
     case 'floor': return 'Floor zone';
     case 'ceiling': return 'Ceiling zone';
     case 'monster': return 'Monster';
-    case 'absorber': return 'Absorber patch';
+    case 'absorber': return 'Wall material patch';
     case 'exit': return 'Escape exit';
+    case 'ambience': return 'Ambient source';
+    case 'win': return 'Win area';
   }
 }
 
@@ -63,6 +67,13 @@ export function objectListModel(level: Level): ObjectListEntry[] {
   }
   (level.absorbers ?? []).forEach((p, i) =>
     out.push({ id: p.id, kind: 'absorber',
-      label: `Absorber ${p.id} (${p.wall}, ${p.material})${level.goal === 'absorber' && i === 0 ? ' (goal)' : ''}` }));
+      label: `Patch ${p.id} (${p.wall}, ${p.material})${level.goal === 'absorber' && i === 0 ? ' (goal)' : ''}` }));
+  for (const a of level.ambience ?? []) {
+    out.push({ id: a.id, kind: 'ambience', label: `Ambience ${a.id} (${a.sound})` });
+  }
+  if (level.winPoint) {
+    out.push({ id: '__win', kind: 'win',
+      label: `Win area (${level.winPoint.x}, ${level.winPoint.z})${(level.goal ?? 'beacon') === 'beacon' ? ' (goal)' : ''}` });
+  }
   return out;
 }

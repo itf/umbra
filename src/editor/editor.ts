@@ -6,7 +6,7 @@
 import {
   emptyLevel, type Level, type MaterialName,
   type WallObj, type BeaconObj, type FloorZone, type MonsterObj, type CeilingZone,
-  type WallPatch,
+  type WallPatch, type AmbientSource,
 } from '../level/schema';
 import {
   saveLevel, loadLevel, deleteLevel, listLevels, exportLevel, importLevel,
@@ -17,13 +17,20 @@ import {
 } from './view';
 import { beaconPresetNames, resolveBeaconPreset, BeaconVoice, type BeaconPreset } from '../game/beaconSounds';
 import { MONSTER_PRESETS, resolveMonsterPreset, MonsterVoice } from '../game/monsterSounds';
-import { applyWallMotion, applyAbsorberProp, defaultAbsorber, lintLevel } from './apply';
+import {
+  applyWallMotion, applyAbsorberProp, defaultAbsorber, lintLevel,
+  applyAmbienceProp, defaultAmbience, applyEventProp, defaultEvent,
+} from './apply';
 import { kindLabel, objectListModel } from './objectList';
 
-type Tool = 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster' | 'absorber' | 'exit';
+type Tool =
+  | 'select' | 'start' | 'beacon' | 'wall' | 'floor' | 'ceiling' | 'monster'
+  | 'absorber' | 'exit' | 'ambience' | 'win';
 
 /** Selection id used for the level's escape `exit` Vec2 (no real object id). */
 const EXIT_ID = '__exit';
+/** Selection id used for the level's decoupled win point (no real object id). */
+const WIN_ID = '__win';
 
 /** Perimeter face extents (u = in-plane horizontal axis, v = height) for patches. */
 function faceExtents(level: Level, wall: WallPatch['wall']): { uMax: number; vMax: number } {
@@ -108,6 +115,8 @@ function worldAt(e: PointerEvent): [number, number] {
 function hitTest(wx: number, wz: number): string | null {
   const near = 0.5;
   if (level.exit && Math.hypot(level.exit.x - wx, level.exit.z - wz) < near) return EXIT_ID;
+  if (level.winPoint && Math.hypot(level.winPoint.x - wx, level.winPoint.z - wz) < near) return WIN_ID;
+  for (const a of level.ambience ?? []) if (Math.hypot(a.x - wx, a.z - wz) < near) return a.id;
   for (const m of level.monsters) if (Math.hypot(m.x - wx, m.z - wz) < near) return m.id;
   for (const b of level.beacons) if (Math.hypot(b.x - wx, b.z - wz) < near) return b.id;
   if (Math.hypot(level.start.x - wx, level.start.z - wz) < near) return 'start';
@@ -148,6 +157,8 @@ function distToSeg(px: number, pz: number, ax: number, az: number, bx: number, b
 function findObj(id: string): StartLike | null {
   if (id === 'start') return { kind: 'start', ref: level.start };
   if (id === EXIT_ID && level.exit) return { kind: 'exit', ref: level.exit };
+  if (id === WIN_ID && level.winPoint) return { kind: 'win', ref: level.winPoint };
+  const a = level.ambience?.find((o) => o.id === id); if (a) return { kind: 'ambience', ref: a };
   const b = level.beacons.find((o) => o.id === id); if (b) return { kind: 'beacon', ref: b };
   const w = level.walls.find((o) => o.id === id); if (w) return { kind: 'wall', ref: w };
   const f = level.floors.find((o) => o.id === id); if (f) return { kind: 'floor', ref: f };
@@ -164,7 +175,9 @@ type StartLike =
   | { kind: 'ceiling'; ref: CeilingZone }
   | { kind: 'monster'; ref: MonsterObj }
   | { kind: 'absorber'; ref: WallPatch }
-  | { kind: 'exit'; ref: NonNullable<Level['exit']> };
+  | { kind: 'exit'; ref: NonNullable<Level['exit']> }
+  | { kind: 'ambience'; ref: AmbientSource }
+  | { kind: 'win'; ref: NonNullable<Level['winPoint']> };
 
 // ---------- pointer interaction ----------
 canvas.addEventListener('pointerdown', (e) => {
@@ -191,6 +204,16 @@ canvas.addEventListener('pointerdown', (e) => {
   if (tool === 'monster') {
     const m: MonsterObj = { id: genId('monster'), x: wx, z: wz, speed: 1.2, sound: 'growl' };
     level.monsters.push(m); selectedId = m.id; renderProps(); render(); return;
+  }
+  if (tool === 'ambience') {
+    const a = defaultAmbience(genId('amb'), wx, wz);
+    (level.ambience ??= []).push(a);
+    selectedId = a.id; renderProps(); render(); return;
+  }
+  if (tool === 'win') {
+    level.winPoint = { x: wx, z: wz };
+    if (level.winRadius == null) level.winRadius = 0.9;
+    selectedId = WIN_ID; renderProps(); render(); return;
   }
   if (tool === 'absorber') {
     // Place a default patch on the perimeter face nearest the click point; the author
@@ -359,6 +382,19 @@ function renderProps() {
       ).join('')}</select></label>`,
       `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`,
       '<button class="row-btn" id="preview-monster">Preview sound</button>');
+  } else if (o.kind === 'ambience') {
+    const acur = resolveBeaconPreset(o.ref.sound);
+    rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
+      numRow('freq', 'freq', o.ref.freq ?? 220, 10),
+      numRow('gain', 'gain', o.ref.gain ?? 1, 0.1),
+      `<label>sound<select data-k="sound">${beaconPresetNames().map(
+        (p) => `<option ${p === acur ? 'selected' : ''}>${p}</option>`,
+      ).join('')}</select></label>`,
+      `<label>custom url<input data-k="soundUrl" value="${o.ref.soundUrl ?? ''}"></label>`,
+      '<button class="row-btn" id="preview-ambience">Preview sound</button>');
+  } else if (o.kind === 'win') {
+    rows.push(numRow('x', 'x', o.ref.x), numRow('z', 'z', o.ref.z),
+      numRow('win radius', 'winRadius', level.winRadius ?? 0.9, 0.1));
   } else if (o.kind === 'absorber') {
     rows.push(
       `<label>wall<select data-k="wall">${
@@ -385,6 +421,12 @@ function renderProps() {
   }
   if (o.kind === 'monster') {
     $('preview-monster')?.addEventListener('click', () => previewMonster(o.ref as MonsterObj));
+  }
+  if (o.kind === 'ambience') {
+    $('preview-ambience')?.addEventListener('click', () => {
+      const a = o.ref as AmbientSource;
+      previewBeacon({ id: a.id, x: a.x, z: a.z, freq: a.freq ?? 220, goalRadius: 0, sound: a.sound });
+    });
   }
 }
 
@@ -429,6 +471,17 @@ function applyProp(o: StartLike, key: string, raw: string) {
       return;
     }
   }
+  if (o.kind === 'ambience') {
+    if (applyAmbienceProp(o.ref, key, raw, num)) { render(); return; }
+  }
+  if (o.kind === 'win') {
+    // The win point's x/z live on level.winPoint (o.ref); winRadius is a Level field.
+    if (key === 'winRadius') {
+      if (!Number.isNaN(num) && num > 0) level.winRadius = num;
+      render(); return;
+    }
+    if ((key === 'x' || key === 'z') && !Number.isNaN(num)) { r[key] = num; render(); return; }
+  }
   if (key === 'yawDeg') { (level.start.yaw as number) = (num * Math.PI) / 180; }
   else if (key === 'material' || key === 'sound' || key === 'soundUrl') {
     if (key === 'soundUrl' && raw === '') delete r.soundUrl;
@@ -447,6 +500,10 @@ function applyProp(o: StartLike, key: string, raw: string) {
 function deleteSelected() {
   if (!selectedId || selectedId === 'start') return;
   if (selectedId === EXIT_ID) { delete level.exit; selectedId = null; renderProps(); render(); return; }
+  if (selectedId === WIN_ID) {
+    delete level.winPoint; delete level.winRadius; selectedId = null; renderProps(); render(); return;
+  }
+  if (level.ambience) level.ambience = level.ambience.filter((o) => o.id !== selectedId);
   level.beacons = level.beacons.filter((o) => o.id !== selectedId);
   level.walls = level.walls.filter((o) => o.id !== selectedId);
   level.floors = level.floors.filter((o) => o.id !== selectedId);
@@ -465,8 +522,10 @@ function setTool(t: Tool) {
     t === 'select' ? 'Click an object to select; drag to move.'
     : t === 'wall' ? 'Drag to draw a wall.'
     : t === 'floor' ? 'Drag to draw a floor zone.'
-    : t === 'absorber' ? 'Click near a perimeter wall to place an absorber patch, then size it in the panel.'
+    : t === 'absorber' ? 'Click near a perimeter wall to place a material patch, then size it in the panel.'
     : t === 'exit' ? 'Click to place the escape exit (the win target in escape mode).'
+    : t === 'ambience' ? 'Click to place an ambient (non-goal) sound source, then pick its preset in the panel.'
+    : t === 'win' ? 'Click to set the win area (winPoint). Set its radius in the panel. Works with zero beacons.'
     : `Click to place a ${t}.`;
 }
 document.querySelectorAll<HTMLButtonElement>('.tool').forEach((b) =>
@@ -565,6 +624,75 @@ function bindClapField(id: string, key: 'clapBudget' | 'clapCooldownMs') {
 }
 bindClapField('clap-budget', 'clapBudget');
 bindClapField('clap-cooldown', 'clapCooldownMs');
+
+// Clutter (0..1): empty/0 ⇒ field unset (bare room). Mirrors the budget pattern.
+const clutterEl = $('room-clutter') as HTMLInputElement;
+clutterEl.value = level.clutter != null ? String(level.clutter) : '';
+clutterEl.addEventListener('input', () => {
+  const n = parseFloat(clutterEl.value);
+  if (clutterEl.value.trim() !== '' && Number.isFinite(n) && n > 0) level.clutter = Math.min(1, n);
+  else delete level.clutter;
+  markDirty();
+});
+
+// Required reactions (reaction-mode win gate). Empty/0 ⇒ field unset (ungated).
+const reqRxEl = $('required-reactions') as HTMLInputElement;
+reqRxEl.value = level.requiredReactions != null ? String(level.requiredReactions) : '';
+reqRxEl.addEventListener('input', () => {
+  const n = parseFloat(reqRxEl.value);
+  if (reqRxEl.value.trim() !== '' && Number.isFinite(n) && n > 0) level.requiredReactions = Math.floor(n);
+  else delete level.requiredReactions;
+  markDirty();
+});
+
+// --- Reaction events editor (level-global; each event names an ambient source) ---
+function renderEvents() {
+  const host = $('events-editor');
+  const events = level.events ?? [];
+  const ambOpts = (level.ambience ?? []).map((a) => a.id);
+  if (events.length === 0) {
+    host.innerHTML = '<p class="hint">No reaction events. Add one (needs an ambient source).</p>';
+    return;
+  }
+  host.innerHTML = events.map((e, i) => {
+    const srcOpts = (ambOpts.length ? ambOpts : [e.sourceId]).map(
+      (id) => `<option ${id === e.sourceId ? 'selected' : ''}>${id}</option>`,
+    ).join('');
+    return `<fieldset class="event-row" data-i="${i}">
+      <legend>${e.id}</legend>
+      <label>type<select data-ek="type">${
+        ['crossing', 'door'].map((t) => `<option ${t === e.type ? 'selected' : ''}>${t}</option>`).join('')
+      }</select></label>
+      <label>source<select data-ek="sourceId">${srcOpts}</select></label>
+      <label>start s<input data-ek="start" type="number" step="0.5" value="${e.start}"></label>
+      <label>end s<input data-ek="end" type="number" step="0.5" value="${e.end}"></label>
+      <button class="row-btn" data-del-event="${i}">Delete event</button>
+    </fieldset>`;
+  }).join('');
+  host.querySelectorAll<HTMLElement>('.event-row').forEach((row) => {
+    const i = Number(row.dataset.i);
+    row.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-ek]').forEach((el) => {
+      el.addEventListener('input', () => {
+        const ev = (level.events ?? [])[i];
+        if (!ev) return;
+        applyEventProp(ev, el.dataset.ek!, el.value, parseFloat(el.value));
+        markDirty();
+        renderEvents(); // re-clamp the window display
+      });
+    });
+    row.querySelector('[data-del-event]')?.addEventListener('click', () => {
+      level.events?.splice(i, 1);
+      if (level.events && level.events.length === 0) delete level.events;
+      markDirty(); renderEvents(); render();
+    });
+  });
+}
+$('btn-add-event').addEventListener('click', () => {
+  const firstAmb = (level.ambience ?? [])[0]?.id ?? '';
+  if (!firstAmb) { flashHint('Add an ambient source first — events target one.'); return; }
+  (level.events ??= []).push(defaultEvent(genId('event'), firstAmb));
+  markDirty(); renderEvents();
+});
 
 // Name.
 const nameEl = $('level-name') as HTMLInputElement;
@@ -668,6 +796,11 @@ function syncRoomInputs() {
     level.clapBudget != null ? String(level.clapBudget) : '';
   ($('clap-cooldown') as HTMLInputElement).value =
     level.clapCooldownMs != null ? String(level.clapCooldownMs) : '';
+  ($('room-clutter') as HTMLInputElement).value =
+    level.clutter != null ? String(level.clutter) : '';
+  ($('required-reactions') as HTMLInputElement).value =
+    level.requiredReactions != null ? String(level.requiredReactions) : '';
+  renderEvents();
 }
 // ---------- autosave + unsaved-changes guard ----------
 // Debounced autosave to the "current" slot (what the game's ?level=current reads),
@@ -713,5 +846,6 @@ window.addEventListener('resize', resize);
 setTool('select');
 resize();
 renderProps();
+renderEvents();
 refreshLevelList();
 booted = true; // boot renders done; subsequent renders are real edits (autosave on)

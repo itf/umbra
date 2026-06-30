@@ -4,7 +4,9 @@
  * here (separate from editor.ts, which is all DOM wiring) lets them be unit-tested
  * without a browser, and keeps the apply-logic in one auditable place.
  */
-import type { Level, WallObj, WallMotion, WallPatch, MaterialName } from '../level/schema';
+import type { Level, WallObj, WallMotion, WallPatch, MaterialName, AmbientSource } from '../level/schema';
+import type { ReactionEvent, ReactionEventType } from '../game/events';
+import type { BeaconPreset } from '../game/beaconSounds';
 
 /** Default motion params seeded when a kind is first chosen in the editor. */
 export const DEFAULT_TRANSLATE: Extract<WallMotion, { kind: 'translate' }> = {
@@ -84,6 +86,56 @@ export function applyAbsorberProp(p: WallPatch, key: string, raw: string, num: n
   return false;
 }
 
+/** A default ambient source at a map point (continuous hum, full gain). */
+export function defaultAmbience(id: string, x: number, z: number): AmbientSource {
+  return { id, x, z, sound: 'hum', freq: 220, gain: 1 };
+}
+
+/**
+ * Edit an ambient source from a properties-panel field. Handles position (x/z),
+ * `sound` (preset), `freq`, `gain` (clamped 0..2), and `soundUrl` (empty clears).
+ * Returns true if it handled the key.
+ */
+export function applyAmbienceProp(a: AmbientSource, key: string, raw: string, num: number): boolean {
+  if (key === 'sound') { a.sound = raw as BeaconPreset; return true; }
+  if (key === 'soundUrl') {
+    if (raw === '') delete a.soundUrl; else a.soundUrl = raw;
+    return true;
+  }
+  if (key === 'x' || key === 'z' || key === 'freq' || key === 'gain') {
+    if (Number.isNaN(num)) return true;
+    if (key === 'gain') a.gain = Math.max(0, Math.min(2, num));
+    else a[key] = num;
+    return true;
+  }
+  return false;
+}
+
+/** A default reaction event over a named source (a 2.5 s crossing window). */
+export function defaultEvent(id: string, sourceId: string, start = 5): ReactionEvent {
+  return { id, type: 'crossing', sourceId, start, end: start + 2.5 };
+}
+
+/**
+ * Edit a reaction event from a field. Handles `type` ('crossing'|'door'),
+ * `sourceId`, and the numeric `start`/`end` window (kept ordered: end > start).
+ * Returns true if it handled the key.
+ */
+export function applyEventProp(e: ReactionEvent, key: string, raw: string, num: number): boolean {
+  if (key === 'type') {
+    if (raw === 'crossing' || raw === 'door') e.type = raw as ReactionEventType;
+    return true;
+  }
+  if (key === 'sourceId') { e.sourceId = raw; return true; }
+  if (key === 'start' || key === 'end') {
+    if (Number.isNaN(num) || num < 0) return true;
+    e[key] = num;
+    if (e.end <= e.start) e.end = e.start + 0.5; // keep a positive window
+    return true;
+  }
+  return false;
+}
+
 /**
  * Non-blocking save-time lint: return human-readable WARNINGS (not errors) about a
  * level that's probably mis-authored. Surfaced via the editor's status/hint channel.
@@ -95,8 +147,19 @@ export function lintLevel(level: Level): string[] {
   if (level.goal === 'absorber' && (level.absorbers?.length ?? 0) === 0) {
     warnings.push('Goal is "absorber" but the level has no absorber patches.');
   }
-  if ((level.goal ?? 'beacon') === 'beacon' && level.beacons.length === 0) {
-    warnings.push('Goal is "beacon" but the level has no beacons.');
+  if ((level.goal ?? 'beacon') === 'beacon' && level.beacons.length === 0 && !level.winPoint) {
+    warnings.push('No beacons and no win area — set a win point (or add a beacon) so the level is winnable.');
+  }
+  // Reaction events must name an existing ambient source.
+  const ambIds = new Set((level.ambience ?? []).map((a) => a.id));
+  for (const e of level.events ?? []) {
+    if (!ambIds.has(e.sourceId)) {
+      warnings.push(`Event "${e.id}" targets ambient source "${e.sourceId}" which doesn't exist.`);
+    }
+    if (e.end <= e.start) warnings.push(`Event "${e.id}" has a non-positive active window.`);
+  }
+  if ((level.requiredReactions ?? 0) > (level.events?.length ?? 0)) {
+    warnings.push('requiredReactions is larger than the number of events — the level can never be won.');
   }
   if (level.goal === 'escape') {
     if (!level.exit) {

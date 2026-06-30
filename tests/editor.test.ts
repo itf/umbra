@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   applyWallMotion, DEFAULT_TRANSLATE, DEFAULT_SLIDE,
   applyAbsorberProp, defaultAbsorber, lintLevel,
+  applyAmbienceProp, defaultAmbience, applyEventProp, defaultEvent,
 } from '../src/editor/apply';
 import { emptyLevel, type Level, type WallObj, type WallPatch } from '../src/level/schema';
 import { exportLevel, importLevel } from '../src/level/storage';
@@ -85,8 +86,10 @@ describe('kindLabel', () => {
       floor: 'Floor zone',
       ceiling: 'Ceiling zone',
       monster: 'Monster',
-      absorber: 'Absorber patch',
+      absorber: 'Wall material patch',
       exit: 'Escape exit',
+      ambience: 'Ambient source',
+      win: 'Win area',
     };
     for (const [kind, label] of Object.entries(expected)) {
       expect(kindLabel(kind as SelKind)).toBe(label);
@@ -374,5 +377,72 @@ describe('full-feature level round-trips through export/import', () => {
     lvl.walls = [w];
     const round = importLevel(exportLevel(lvl));
     expect('motion' in round.walls[0]).toBe(false);
+  });
+});
+
+describe('ambient sources, win-areas, clutter + reaction events (Part B/C editor support)', () => {
+  it('applyAmbienceProp edits position / preset / freq / gain (clamped) / url', () => {
+    const a = defaultAmbience('a1', 2, 3);
+    expect(a).toEqual({ id: 'a1', x: 2, z: 3, sound: 'hum', freq: 220, gain: 1 });
+    applyAmbienceProp(a, 'sound', 'fountain', NaN);
+    applyAmbienceProp(a, 'freq', '440', 440);
+    applyAmbienceProp(a, 'gain', '5', 5);     // clamped to 2
+    applyAmbienceProp(a, 'x', '7', 7);
+    applyAmbienceProp(a, 'soundUrl', 'x.mp3', NaN);
+    expect(a).toMatchObject({ sound: 'fountain', freq: 440, gain: 2, x: 7, soundUrl: 'x.mp3' });
+    applyAmbienceProp(a, 'soundUrl', '', NaN); // empty clears
+    expect('soundUrl' in a).toBe(false);
+  });
+
+  it('applyEventProp edits type / source / window and keeps end > start', () => {
+    const e = defaultEvent('e1', 'fountain', 5);
+    expect(e).toEqual({ id: 'e1', type: 'crossing', sourceId: 'fountain', start: 5, end: 7.5 });
+    applyEventProp(e, 'type', 'door', NaN);
+    applyEventProp(e, 'sourceId', 'ac', NaN);
+    applyEventProp(e, 'start', '10', 10); // end (7.5) now <= start → bumped
+    expect(e.type).toBe('door');
+    expect(e.sourceId).toBe('ac');
+    expect(e.start).toBe(10);
+    expect(e.end).toBeGreaterThan(e.start);
+  });
+
+  it('lint warns on a silent level with no win point, dangling event source, and an impossible gate', () => {
+    const lvl = emptyLevel('Bad');
+    lvl.beacons = [];
+    delete (lvl as Partial<Level>).winPoint;
+    lvl.ambience = [{ id: 'fountain', x: 1, z: 1, sound: 'fountain', gain: 1 }];
+    lvl.events = [{ id: 'e1', type: 'crossing', sourceId: 'nope', start: 1, end: 3 }];
+    lvl.requiredReactions = 9;
+    const w = lintLevel(lvl);
+    expect(w.some((s) => /win area|win point/i.test(s))).toBe(true);
+    expect(w.some((s) => s.includes('nope'))).toBe(true);
+    expect(w.some((s) => /requiredReactions/.test(s))).toBe(true);
+  });
+
+  it('a reaction level (ambience + events + win + clutter) round-trips losslessly', () => {
+    const lvl = emptyLevel('Reaction round-trip');
+    lvl.beacons = [];
+    lvl.winPoint = { x: 5, z: 2 };
+    lvl.winRadius = 1.1;
+    lvl.clutter = 0.3;
+    lvl.requiredReactions = 2;
+    lvl.ambience = [
+      { id: 'fountain', x: 5, z: 1.5, sound: 'fountain', freq: 220, gain: 0.8 },
+    ];
+    lvl.events = [
+      { id: 'c1', type: 'crossing', sourceId: 'fountain', start: 5, end: 7.5 },
+      { id: 'c2', type: 'crossing', sourceId: 'fountain', start: 12, end: 14.5 },
+    ];
+    const round = importLevel(exportLevel(lvl));
+    expect(round).toEqual(lvl);
+  });
+
+  it('objectListModel lists ambient sources and the win area', () => {
+    const lvl = emptyLevel('L');
+    lvl.ambience = [{ id: 'ac', x: 1, z: 1, sound: 'brownnoise', gain: 1 }];
+    lvl.winPoint = { x: 2, z: 2 };
+    const model = objectListModel(lvl);
+    expect(model.some((e) => e.kind === 'ambience' && e.id === 'ac')).toBe(true);
+    expect(model.some((e) => e.kind === 'win' && e.id === '__win')).toBe(true);
   });
 });

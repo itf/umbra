@@ -34,3 +34,6 @@ public/hrtf-worklet.js
 # Playwright e2e artifacts
 test-results/
 playwright-report/
+
+# Autonomous-run scratch/handoff notes (not a project artifact)
+AUTONOMOUS-RUN-STATE.md

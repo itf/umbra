@@ -157,6 +157,29 @@ export function draw(
     label(ctx, (ax + bx) / 2, (ay + by) / 2 - 10, `▥ ${p.material}`);
   }
 
+  // Ambient (non-goal) sources — distinct blue dots so they don't read as goals.
+  for (const a of level.ambience ?? []) {
+    const [ax, ay] = worldToScreen(v, a.x, a.z);
+    dot(ctx, ax, ay, a.id === opts.selectedId ? '#fff' : '#4f8fff', 8);
+    const snd = a.soundUrl ? 'file' : a.sound;
+    label(ctx, ax, ay - 14, `≋ ${snd}`);
+  }
+
+  // Win area (the decoupled winPoint + winRadius): a green target ring, distinct
+  // from a beacon's amber goal ring. Drawn even with zero beacons (silent levels).
+  if (level.winPoint) {
+    const [wx, wy] = worldToScreen(v, level.winPoint.x, level.winPoint.z);
+    const r = (level.winRadius ?? 0.9) * v.scale;
+    ctx.save();
+    ctx.strokeStyle = opts.selectedId === '__win' ? '#fff' : '#6ee787';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    dot(ctx, wx, wy, opts.selectedId === '__win' ? '#fff' : '#6ee787', 5);
+    label(ctx, wx, wy - 12, '◎ WIN');
+  }
+
   // Beacons.
   for (const b of level.beacons) {
     const [bx, by] = worldToScreen(v, b.x, b.z);
