@@ -561,12 +561,20 @@ startButton.addEventListener('click', async () => {
         // API (needs the SOFA-capable three-steam-audio fork as the resolved dependency).
         // Plain ?engine=steam uses Steam's generic HRTF — works against the published pkg.
         const wantSofa = new URLSearchParams(location.search).get('engine') === 'steam-sofa';
+        // Head-tracked Ambisonic reflections: ON for the steam path now that the
+        // SOFA+head-tracked fork is the vendored dependency (vendor/three-steam-audio).
+        // This rotates the reflected field with the listener so it no longer masks the
+        // direct path, which lets backend.ts raise reflections to material-driven
+        // strength (the maze-navigation fix). Gated like sofaHrtf: the backend only
+        // passes `reflections.headTracked` to createWorld when this is true, so it can't
+        // confuse the published package if it were ever swapped back in.
         steam = await SteamAudioBackend.create(ctx, graph.master, {
           hrtf: true,
           scattering: SCATTER,
           sofaHrtf: wantSofa,
+          headTrackedReflections: true,
         });
-        console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}).`);
+        console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true).`);
       } catch (e) {
         console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
         steam = null;

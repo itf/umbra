@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 dev-dist/
+# ...but the vendored prebuilt three-steam-audio package (fork: SOFA + head-tracked
+# reflections) IS committed — its dist/ is the shipped artifact (see vendor/README).
+!vendor/three-steam-audio/dist/
+!vendor/three-steam-audio/dist/**
 
 # Generated WASM (build with `npm run wasm`)
 src/engine/acoustics/wasm/

@@ -29,6 +29,6 @@
   },
   "dependencies": {
     "three": "^0.180.0",
-    "three-steam-audio": "^0.1.0-beta.1"
+    "three-steam-audio": "file:vendor/three-steam-audio"
   }
 }

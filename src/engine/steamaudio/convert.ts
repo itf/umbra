@@ -49,8 +49,12 @@ export interface SteamMaterial {
 }
 
 /** Default through-wall transmission (3-band) — small, so walls leak a little but
- *  occlusion still dominates. Our `WallDef` has no transmission data of its own. */
-export const DEFAULT_TRANSMISSION: [number, number, number] = [0.02, 0.015, 0.01];
+ *  occlusion still dominates. Our `WallDef` has no transmission data of its own.
+ *  Lowered ~5x from [0.02,0.015,0.01]: the prior value let the direct beacon bleed
+ *  audibly THROUGH interior maze partitions, so the beacon's apparent direction pointed
+ *  at the goal through the wall instead of at the opening (a maze-killer, per the audio
+ *  regression investigation). Kept non-zero so a thin wall isn't acoustically invisible. */
+export const DEFAULT_TRANSMISSION: [number, number, number] = [0.004, 0.003, 0.002];
 
 /** Thickness (m) of the extruded box used for double-sided / interior walls. */
 export const THIN_WALL_THICKNESS = 0.1;

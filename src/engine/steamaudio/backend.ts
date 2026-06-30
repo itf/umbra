@@ -51,6 +51,20 @@ export interface SteamBackendOpts {
    * support it and may reject it, so this is OPT-IN (off by default).
    */
   sofaHrtf?: boolean;
+  /**
+   * Render the reflected/reverberant field as a HEAD-TRACKED Ambisonic decode
+   * (order-1, `irTaps`-tap convolution) instead of the published wrapper's
+   * mono-duplicated, dead-center parametric reverb. With this on, reflections rotate
+   * with the listener so a stronger reflected field no longer masks the head-tracked
+   * DIRECT path — which is what lets us raise reflection level back toward
+   * material-driven strength (the maze-navigation fix).
+   *
+   * Requires the head-tracked `three-steam-audio` fork (feat/sofa-hrtf @ b3838eb,
+   * vendored under vendor/three-steam-audio) as the resolved dependency. The published
+   * package ignores/doesn't understand `reflections.headTracked`, so this is OPT-IN
+   * (off by default) and only enabled once the fork is the dep — mirrors `sofaHrtf`.
+   */
+  headTrackedReflections?: boolean;
 }
 
 /** URL of OUR measured SADIE SOFA (48 kHz), served from the copied assets tree. */
@@ -90,6 +104,7 @@ export class SteamAudioBackend {
   private meshHandles: unknown[] = [];
   private scattering: number;
   private useHrtf: boolean;
+  private headTracked: boolean;
 
   private constructor(world: any, three: any, master: AudioNode, opts: SteamBackendOpts) {
     this.world = world;
@@ -97,6 +112,7 @@ export class SteamAudioBackend {
     this.master = master;
     this.scattering = opts.scattering ?? 0.1;
     this.useHrtf = opts.hrtf ?? true;
+    this.headTracked = opts.headTrackedReflections ?? false;
   }
 
   /**
@@ -133,14 +149,24 @@ export class SteamAudioBackend {
     // `?engine=steam-sofa`) only when the SOFA-capable fork is the resolved dependency.
     // Even then it's best-effort: a failed fetch falls back to the generic HRTF.
     const hrtf = opts.sofaHrtf ? await loadSofaHrtf() : null;
+    // Head-tracked Ambisonic reflections (fork-only). Spread in only when opted in so an
+    // unknown `headTracked`/`irTaps` can't reach (and confuse) the published package on
+    // the non-opt-in path — same gating discipline as `sofaHrtf`. With `maxOrder:1` the
+    // world build uses order-1 ambisonics; the worklet convolves an `irTaps`-tap IR.
+    const headTracked = opts.headTrackedReflections
+      ? { headTracked: true as const, irTaps: 512 }
+      : {};
     const world = await createWorld({
       audioContext,
       ...(hrtf ? { hrtf } : {}),
       reflections: {
         maxDuration: r.maxDuration ?? 1.0,
-        maxOrder: r.maxOrder ?? 2,
+        // Head-tracked decode is order-1 (`maxOrder:1`); the parametric path keeps the
+        // prior default of 2.
+        maxOrder: r.maxOrder ?? (opts.headTrackedReflections ? 1 : 2),
         maxRays: r.maxRays ?? 4096,
         diffuseSamples: r.diffuseSamples ?? 1024,
+        ...headTracked,
       },
     });
     const backend = new SteamAudioBackend(world, three, master, opts);
@@ -184,6 +210,22 @@ export class SteamAudioBackend {
    * shared reflection + reverb buses for ray-traced reflections + listener reverb.
    */
   createSource(): SteamSourceHandle {
+    // Reflection levels depend on whether the field is HEAD-TRACKED:
+    //
+    //  - head-tracked (fork): the reflected field is an order-1 Ambisonic decode that
+    //    ROTATES with the listener, so it no longer masks the (also head-tracked) direct
+    //    path. We can therefore restore material-driven strength — these undo the global
+    //    2ce7589 suppression and go back toward the original full-strength values
+    //    (wet 0.25→0.7, reflect send 0.35→1.0, reverb send 0.2→0.4) so mazes get real
+    //    geometry echo cues.
+    //
+    //  - NOT head-tracked (published/parametric path): the field is mono-duplicated and
+    //    dead-center, so a loud reflected field reads "always in front" and masks the
+    //    head-tracked direct path. Keep the suppressed values so the directional cue you
+    //    navigate by dominates.
+    const refl = this.headTracked
+      ? { wet: 0.7, reflectSend: 1.0, reverbSend: 0.4 }
+      : { wet: 0.25, reflectSend: 0.35, reverbSend: 0.2 };
     const source = this.world.createSource({
       hrtf: this.useHrtf,
       distanceAttenuation: true,
@@ -193,13 +235,7 @@ export class SteamAudioBackend {
         airAbsorption: true,
         transmission: { type: 'frequency-dependent' },
       },
-      // Keep the diffuse reflected field WELL BELOW the binaurally-panned direct
-      // path. With a loud, head-locked reverberant field (the reflection/reverb
-      // buses are a largely frontal/diffuse decode, not re-panned per-source with
-      // head yaw), the beacon reads as "in front" no matter which way you turn — the
-      // direct HRTF direction (which DOES track yaw) gets masked. A modest wet keeps
-      // the room cue without drowning out the directional cue you navigate by.
-      reflections: { wet: 0.25 },
+      reflections: { wet: refl.wet },
     });
     const node = this.world.createNode(source);
     const input = this.master.context.createGain();
@@ -207,10 +243,8 @@ export class SteamAudioBackend {
     input.connect(node);
     node.connect(output);
     output.connect(this.master);
-    // Bus sends well under unity so the binaural DIRECT path dominates the mix and
-    // head-turns are clearly localizable (see the reflections.wet note above).
-    if (node.connectReflections) node.connectReflections(this.reflectionBus, { gain: 0.35 });
-    if (node.connectReverb) node.connectReverb(this.reverbBus, { gain: 0.2 });
+    if (node.connectReflections) node.connectReflections(this.reflectionBus, { gain: refl.reflectSend });
+    if (node.connectReverb) node.connectReverb(this.reverbBus, { gain: refl.reverbSend });
 
     return {
       input,
