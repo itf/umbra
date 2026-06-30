@@ -41,6 +41,22 @@ export const STEAM_REVERB_BUS_KEY = 'ps.settings.steamReverbBus';
  *  hard, fluttery room (more scattering + absorption). Default 0 (no extra). */
 export const CLUTTER_KEY = 'ps.settings.clutter';
 
+/**
+ * Per-user multi-band LOUDNESS-EQ correction curve (a utility, not a game): an
+ * array of {freq, gainDb} produced by the equal-loudness calibration, applied to the
+ * master bus so the user's headphones/ears sound flat. VERSIONED so a future band/
+ * format change can be detected and discarded rather than mis-applied.
+ */
+export const LOUDNESS_EQ_KEY = 'ps.settings.loudnessEq';
+export const LOUDNESS_EQ_VERSION = 1;
+
+/** A single EQ correction point (mirrors loudnessEq.EqBand; kept local to avoid a
+ *  store→ui import cycle). */
+export interface LoudnessEqBand {
+  freq: number;
+  gainDb: number;
+}
+
 /** Default master volume (full scale). */
 export const DEFAULT_MASTER_VOLUME = 1;
 
@@ -288,5 +304,50 @@ export class SettingsStore {
   }
   setClutter(v: number) {
     this.write(CLUTTER_KEY, String(clampLevel(v, 0)));
+  }
+
+  /**
+   * The stored per-user LOUDNESS-EQ correction curve, or null when never calibrated
+   * or the stored payload is corrupt / a stale version. Each entry's gainDb is
+   * defensively clamped to ±24 dB (a sane far-outer bound; the calibration itself
+   * clamps tighter) so corrupt data can never produce an extreme filter.
+   */
+  loudnessEq(): LoudnessEqBand[] | null {
+    const raw = this.read(LOUDNESS_EQ_KEY);
+    if (raw == null) return null;
+    try {
+      const parsed = JSON.parse(raw) as { version?: number; bands?: unknown };
+      if (parsed.version !== LOUDNESS_EQ_VERSION || !Array.isArray(parsed.bands)) return null;
+      const bands: LoudnessEqBand[] = [];
+      for (const b of parsed.bands as unknown[]) {
+        const rec = b as { freq?: unknown; gainDb?: unknown };
+        const freq = Number(rec.freq);
+        const gainDb = Number(rec.gainDb);
+        if (!Number.isFinite(freq) || freq <= 0 || !Number.isFinite(gainDb)) continue;
+        bands.push({ freq, gainDb: Math.max(-24, Math.min(24, gainDb)) });
+      }
+      return bands.length ? bands : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persist the loudness-EQ curve (versioned). Empty/absent ⇒ clears it. */
+  setLoudnessEq(bands: LoudnessEqBand[] | null) {
+    if (!bands || bands.length === 0) {
+      this.clearLoudnessEq();
+      return;
+    }
+    this.write(LOUDNESS_EQ_KEY, JSON.stringify({ version: LOUDNESS_EQ_VERSION, bands }));
+  }
+
+  /** Remove the loudness-EQ curve (the "reset EQ" path). */
+  clearLoudnessEq() {
+    this.mem.delete(LOUDNESS_EQ_KEY);
+    try {
+      this.store?.removeItem(LOUDNESS_EQ_KEY);
+    } catch {
+      /* memory already cleared */
+    }
   }
 }

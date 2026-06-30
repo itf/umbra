@@ -81,6 +81,17 @@ export interface SettingsHooks {
   getSwap: () => boolean;
   setSwap: (on: boolean) => void;
 
+  /**
+   * Per-user multi-band LOUDNESS-EQ calibration. `runLoudnessEq` launches the SAME
+   * equal-loudness flow the onboarding calibration uses, standalone, applying +
+   * persisting the result; the panel closes while it runs and the host reopens it.
+   * `hasLoudnessEq`/`clearLoudnessEq` drive the "reset EQ" affordance. OPTIONAL: when
+   * `runLoudnessEq` is absent the whole block is hidden (no live audio graph yet).
+   */
+  runLoudnessEq?: () => void;
+  hasLoudnessEq?: () => boolean;
+  clearLoudnessEq?: () => void;
+
   /** Wipe trainer + streak + onboarding/primer flags; returns after clearing. */
   resetProgress: () => void;
 
@@ -337,6 +348,46 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   });
   dialog.append(swap.row);
 
+  // --- Loudness / hearing EQ calibration (per-user multi-band) ---
+  // Re-runnable equal-loudness check; the same flow runs once during onboarding. The
+  // block is shown only when the host wired a live audio graph (runLoudnessEq).
+  let eqStatus: HTMLElement | null = null;
+  let clearEqBtn: HTMLButtonElement | null = null;
+  const refreshEq = () => {
+    if (!eqStatus) return;
+    const has = hooks.hasLoudnessEq?.() ?? false;
+    eqStatus.textContent = has
+      ? 'A personal loudness correction is active.'
+      : 'No loudness correction yet.';
+    if (clearEqBtn) clearEqBtn.hidden = !has;
+  };
+  if (hooks.runLoudnessEq) {
+    const group = document.createElement('div');
+    group.className = 'settings-eq';
+    eqStatus = document.createElement('p');
+    eqStatus.className = 'settings-eq-status';
+
+    const run = document.createElement('button');
+    run.type = 'button';
+    run.className = 'settings-eq-run';
+    run.textContent = 'Re-run hearing / EQ calibration';
+    run.addEventListener('click', () => hooks.runLoudnessEq?.());
+
+    clearEqBtn = document.createElement('button');
+    clearEqBtn.type = 'button';
+    clearEqBtn.className = 'settings-eq-clear';
+    clearEqBtn.textContent = 'Reset loudness EQ';
+    clearEqBtn.addEventListener('click', () => {
+      hooks.clearLoudnessEq?.();
+      hooks.alert('Loudness EQ reset to flat.');
+      refreshEq();
+    });
+
+    refreshEq();
+    group.append(eqStatus, run, clearEqBtn);
+    dialog.append(group);
+  }
+
   // --- Spoken voice (Web Speech / TTS), 8A ---
   // Shown ONLY when the browser supports speechSynthesis; otherwise omitted entirely
   // so the panel degrades gracefully to live-region-only (no dead controls).
@@ -552,6 +603,7 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       companion.input.checked = hooks.getCompanion();
       engine.input.checked = hooks.getSteamEngine();
       swap.input.checked = hooks.getSwap();
+      refreshEq();
       ttsRefresh?.();
       disarmReset();
       host.hidden = false;

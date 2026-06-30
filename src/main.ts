@@ -41,6 +41,8 @@ import { companionLine, modeForLevel, type CompanionEvent, type CompanionContext
 import { renderControlsSpeech } from './game/controls';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
+import { mountLoudnessEq } from './ui/loudnessEqUi';
+import { buildEqChain, type EqChain } from './ui/loudnessEqAudio';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
 import type { SpatialBackend } from './game/game';
 
@@ -133,23 +135,59 @@ function companionEnabled(): boolean {
 // splitter→merger on the master→limiter path. Applied to the singleton AudioGraph
 // from startAudio(), so calibration and the real game share one swap node.
 let swapNode: { splitter: ChannelSplitterNode; merger: ChannelMergerNode } | null = null;
-function applyChannelSwap(graph: AudioGraph, want: boolean) {
-  if (want && !swapNode) {
+// Per-user loudness-EQ correction chain, spliced at the HEAD of the master path
+// (master → eq → [swap] → limiter), so the swap stage always operates on the node
+// returned by `eqOutNode()` rather than `master` directly.
+let eqChain: EqChain | null = null;
+
+/** The node that feeds the swap/limiter stage: the EQ output if present, else master. */
+function eqOutNode(graph: AudioGraph): AudioNode {
+  return eqChain ? eqChain.output : graph.master;
+}
+
+/**
+ * (Re)build the whole master→limiter path for the current EQ + swap state. Tears down
+ * any existing EQ/swap wiring, splices the loudness-EQ chain (when a stored curve
+ * exists), then routes through the channel-swap if `wantSwap`. Idempotent: safe to
+ * call after a curve change or a swap toggle.
+ */
+function rebuildMasterPath(graph: AudioGraph, wantSwap: boolean) {
+  // Fully detach the current chain.
+  try { graph.master.disconnect(); } catch { /* noop */ }
+  if (swapNode) {
+    swapNode.splitter.disconnect();
+    swapNode.merger.disconnect();
+    swapNode = null;
+  }
+  if (eqChain) { eqChain.dispose(); eqChain = null; }
+
+  // Head: master → (EQ) → tail.
+  eqChain = buildEqChain(graph.ctx, settings.loudnessEq());
+  if (eqChain) graph.master.connect(eqChain.input);
+  const head = eqOutNode(graph);
+
+  // Tail: head → (swap) → limiter.
+  if (wantSwap) {
     const splitter = graph.ctx.createChannelSplitter(2);
     const merger = graph.ctx.createChannelMerger(2);
-    graph.master.disconnect();
-    graph.master.connect(splitter);
+    head.connect(splitter);
     splitter.connect(merger, 0, 1); // left in → right out
     splitter.connect(merger, 1, 0); // right in → left out
     merger.connect(graph.limiter);
     swapNode = { splitter, merger };
-  } else if (!want && swapNode) {
-    graph.master.disconnect();
-    swapNode.splitter.disconnect();
-    swapNode.merger.disconnect();
-    graph.master.connect(graph.limiter);
-    swapNode = null;
+  } else {
+    head.connect(graph.limiter);
   }
+}
+
+/** Apply (or remove) the session L/R channel swap, preserving the EQ chain. */
+function applyChannelSwap(graph: AudioGraph, want: boolean) {
+  rebuildMasterPath(graph, want);
+}
+
+/** Re-apply the master path after the loudness-EQ curve changed, keeping the swap. */
+function applyLoudnessEq(graph: AudioGraph) {
+  rebuildMasterPath(graph, onboarding.swap());
 }
 
 /**
@@ -414,6 +452,7 @@ function runCalibration(after: () => void) {
     say,
     alert,
     applySwap: applyChannelSwap,
+    saveLoudnessEq: (curve) => settings.setLoudnessEq(curve),
     onDone: after,
   });
 }
@@ -1250,6 +1289,35 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     setSwap: (on) => {
       onboarding.setSwap(on);
       applyChannelSwap(graph, on);
+    },
+    // Loudness / hearing EQ — re-run the SAME equal-loudness flow standalone. We close
+    // the panel, host the flow in the settings screen, then on finish persist + apply
+    // the curve LIVE to the running master and reopen settings.
+    runLoudnessEq: () => {
+      settingsPanel?.close();
+      const eqHost = document.getElementById('settings-screen');
+      if (!eqHost) return;
+      eqHost.hidden = false;
+      mountLoudnessEq(eqHost, {
+        ctx: graph.ctx,
+        dest: graph.master,
+        say,
+        alert,
+        saveCurve: (curve) => {
+          settings.setLoudnessEq(curve);
+          applyLoudnessEq(graph); // live: rebuild master → eq → swap → limiter
+        },
+        onDone: () => {
+          // Re-render the panel (host content was replaced) and reopen.
+          setupSettings(graph, []);
+          settingsPanel?.open();
+        },
+      });
+    },
+    hasLoudnessEq: () => settings.loudnessEq() != null,
+    clearLoudnessEq: () => {
+      settings.clearLoudnessEq();
+      applyLoudnessEq(graph); // live: drop the EQ from the master path
     },
     // Spoken-voice (TTS). Each setter persists AND re-pushes into the live Speech
     // wrapper so the change applies immediately (and the test-voice sample uses it).

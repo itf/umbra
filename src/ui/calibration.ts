@@ -15,6 +15,8 @@ import { startAudio, type AudioGraph } from '../engine/audioGraph';
 import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
 import { CalibrationMachine, type Side } from './calibrationMachine';
 import type { OnboardingStore } from './onboardingStore';
+import { mountLoudnessEq } from './loudnessEqUi';
+import type { EqBand } from './loudnessEq';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -29,6 +31,11 @@ export interface CalibrationDeps {
   applySwap: (graph: AudioGraph, want: boolean) => void;
   /** Called when calibration finishes (done or skipped). */
   onDone: () => void;
+  /**
+   * Persist the per-user loudness-EQ correction curve produced by the equal-loudness
+   * step. When omitted, the loudness step is skipped entirely (e.g. older callers).
+   */
+  saveLoudnessEq?: (curve: EqBand[]) => void;
 }
 
 export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
@@ -232,8 +239,27 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
   function finish() {
     stopVolumeTone();
     cleanupProbe();
-    deps.store.setCalibrationDone();
     deps.store.setSwap(machine.swapped);
+    // Equal-loudness EQ step: tune the per-band correction to the user's ears/cans,
+    // then finalize. Skipped (straight to done) when the host didn't wire a saver or
+    // audio failed to start. Reuses the SAME flow the Settings re-run button uses.
+    if (deps.saveLoudnessEq && graph) {
+      deps.say('Headphone check done. Next: a quick loudness calibration.');
+      mountLoudnessEq(root, {
+        ctx: graph.ctx,
+        dest: graph.master,
+        say: deps.say,
+        alert: deps.alert,
+        saveCurve: deps.saveLoudnessEq,
+        onDone: done,
+      });
+      return;
+    }
+    done();
+  }
+
+  function done() {
+    deps.store.setCalibrationDone();
     deps.alert('Calibration complete.');
     deps.onDone();
   }
