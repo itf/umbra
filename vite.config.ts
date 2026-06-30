@@ -31,6 +31,43 @@ function copyAssets(): Plugin {
   };
 }
 
+/**
+ * Make the vendored Steam Audio AudioWorklet's STATIC SIBLING IMPORT resolve in the
+ * production build. The worklet (`steam-audio-processor.js`) begins with a bare
+ * relative ES import:
+ *
+ *     import createSteamAudioModule from './bindings/phonon_bindings.js'
+ *
+ * Vite/Rollup discovers the worklet only through `new URL('./steam-audio-processor.js',
+ * import.meta.url)` + `audioWorklet.addModule(...)`, so it COPIES the worklet verbatim
+ * as a build asset WITHOUT following (and re-emitting) the worklet's own imports. The
+ * worklet therefore ships referencing `/assets/bindings/phonon_bindings.js`, a path that
+ * doesn't exist → the SPA host returns index.html (HTML) → the worklet's module load
+ * fails with `SyntaxError: expected expression, got '<'` at phonon_bindings.js:1:1 → the
+ * `steam-audio-processor` processor never registers → `createWorld` traps with
+ * "indirect call to null", and `?engine=steam` silently falls back to our HRTF engine.
+ * (Curl-verified: GET /assets/bindings/phonon_bindings.js → 200 text/html before this fix.)
+ *
+ * Fix: after the bundle is written, copy the vendored `dist/bindings/` (the standalone
+ * Emscripten glue `phonon_bindings.js`, its `.wasm`, and `.d.ts`) into
+ * `dist/assets/bindings/` so the worklet's hard-coded `./bindings/phonon_bindings.js`
+ * import resolves to real JS. The worklet receives the WASM as an in-memory `wasmBinary`
+ * (no fetch), so only the JS is strictly required — we copy the .wasm too as a harmless
+ * fallback for the glue's `new URL('phonon_bindings.wasm', import.meta.url)` path.
+ */
+function vendorSteamWorkletBindings(): Plugin {
+  return {
+    name: 'vendor-steam-worklet-bindings',
+    apply: 'build',
+    closeBundle() {
+      const src = resolve(__dirname, 'vendor/three-steam-audio/dist/bindings');
+      const out = resolve(__dirname, 'dist/assets/bindings');
+      if (!existsSync(src)) return;
+      cpSync(src, out, { recursive: true });
+    },
+  };
+}
+
 export default defineConfig({
   // AudioWorklet + WASM both need to be served with correct MIME and cross-origin
   // isolation is helpful for high-resolution timers used in acoustics profiling.
@@ -78,6 +115,7 @@ export default defineConfig({
   },
   plugins: [
     copyAssets(),
+    vendorSteamWorkletBindings(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['assets/**/*'],
@@ -111,6 +149,9 @@ export default defineConfig({
         globIgnores: [
           '**/three.module-*.js',
           '**/phonon_bindings*.wasm',
+          // The Emscripten glue copied next to the worklet (assets/bindings/) is part of
+          // the lazy ?engine=steam path too — runtime-cache it, don't precache.
+          '**/bindings/phonon_bindings.js',
           '**/steam-audio-processor-*.js',
           '**/reflection-simulator-worker-*.js',
           '**/world-*.js',
