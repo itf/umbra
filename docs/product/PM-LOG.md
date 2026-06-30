@@ -199,3 +199,10 @@ levels verified as built (careful route survivable, loud route caught, decoy lur
 +7 tests (493). No JSON tuning needed, no AI bugs. Margin note: foam = inaudible (binary).
 - **7C PWA/docs** still building (agent `a4e852bf…`, icons + _headers + DEPLOY/HOWTOPLAY/
   TECHNICAL/PRODUCT docs) — held until verified (needs `npm run build` to confirm icons in dist).
+
+**7C PWA/docs SHIPPED** (`d55ae67`): fixed broken PWA icons (sonar-ping motif, valid
+192/512/maskable PNGs verified in dist) — open since session start; production _headers
+(COOP/COEP); DEPLOY/HOWTOPLAY + refreshed PRODUCT/TECHNICAL docs. Build OK, 493 tests.
+- **7B Cohesion** (agent `a66bf88d…`): single controls/help source of truth (controls.ts
+  consumed by speakControls + tutorial + HOWTOPLAY) + announcement-phrasing/clobbering
+  audit. Behavior-preserving. Then Cycle-7 review.
