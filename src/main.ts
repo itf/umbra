@@ -28,8 +28,11 @@ import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
 import { SettingsStore } from './ui/settingsStore';
 import { mountSettings, type SettingsPanel } from './ui/settings';
+import { Speech } from './ui/speech';
 import { TrainerStore } from './trainer/trainerStore';
 import { DailyStreakStore } from './trainer/dailyStreakStore';
+import { ScoreStore } from './game/scoreStore';
+import { announceCompletion, summarizeBest } from './game/scoreModel';
 import { companionLine, modeForLevel, type CompanionEvent, type CompanionContext } from './game/companion';
 import { renderControlsSpeech } from './game/controls';
 import { mountCalibration } from './ui/calibration';
@@ -61,6 +64,7 @@ const onboarding = new OnboardingStore();
 const settings = new SettingsStore();
 const trainerStore = new TrainerStore();
 const dailyStreakStore = new DailyStreakStore();
+const scoreStore = new ScoreStore();
 // The mounted settings panel (audio mix + prefs). Null until the game starts +
 // setupSettings mounts it; the in-game S key + the ⚙ button drive it.
 let settingsPanel: SettingsPanel | null = null;
@@ -116,11 +120,29 @@ function setMasterVolume(graph: AudioGraph, v: number) {
   graph.master.gain.setTargetAtTime(Math.max(0, Math.min(1, v)), t, 0.03);
 }
 
+// OPTIONAL spoken-voice (Web Speech / TTS) layer. ADDITIVE to the ARIA live
+// regions below — never a replacement. Default OFF (opt-in), so screen-reader
+// users aren't double-spoken by both their AT and our synthesis. A silent no-op
+// when the browser has no speechSynthesis. Seeded from persisted prefs here; the
+// settings panel re-pushes on change via setupSettings.
+const speech = new Speech();
+speech.update({
+  enabled: settings.ttsEnabled(),
+  voiceName: settings.ttsVoice() || undefined,
+  rate: settings.ttsRate(),
+  pitch: settings.ttsPitch(),
+});
+
+// The live regions are ALWAYS written (unchanged whether TTS is on or off). TTS,
+// when enabled, ALSO speaks the same text aloud — polite via #status queues,
+// assertive via #alerts interrupts.
 function say(msg: string) {
   statusEl.textContent = msg;
+  speech.speak(msg, { assertive: false });
 }
 function alert(msg: string) {
   alertsEl.textContent = msg;
+  speech.speak(msg, { assertive: true });
 }
 
 /**
@@ -213,6 +235,8 @@ let LEVEL: GameLevel = {
 // The source level + a moving-walls flag, so the live IR loop can re-derive
 // geometry from the animation clock. Null when running the built-in default room.
 let SRC_LEVEL: Level | null = null;
+/** The picked level's display name — used as the SCORE id (per-level bests). */
+let LEVEL_ID = 'default-room';
 let HAS_MOVING_WALLS = false;
 // Per-level speed of sound (m/s), or undefined ⇒ engine default 343. Threaded
 // into BOTH the clap (echo timing) and the renderer (live propagation + Doppler).
@@ -241,6 +265,7 @@ function applyLevel(level: Level, displayName: string) {
   LEVEL.acousticWalls = WALLS;
   LEVEL.acousticEdges = EDGES;
   LEVEL.acousticScattering = SCATTER;
+  LEVEL_ID = displayName;
   if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
 }
 
@@ -333,6 +358,9 @@ async function mountPicker() {
       // First-run onboarding (calibration → tutorial) runs once, then Begin.
       gateOnboarding(showStartScreen);
     },
+    // Surface each level's stored best ("Best: 42 seconds, 6 claps"). The score is
+    // keyed by the level's display label (the same id applyLevel records under).
+    bestFor: (item) => summarizeBest(scoreStore.best(item.label)) || undefined,
   });
   // Land focus on the first level so the picker is immediately operable eyes-free.
   (host.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
@@ -454,6 +482,10 @@ startButton.addEventListener('click', async () => {
     };
     // Throttle the "You were heard!" cue (loud floors fire it on every step).
     let lastHeardMs = -Infinity;
+    // SCORING: claps consumed this run. Bumped by setupClap on each fired clap and
+    // read back by the game's injected `clapsUsed` getter when it builds the result.
+    let clapsUsed = 0;
+    const levelId = LEVEL_ID; // snapshot the picked level's id for this run's result
     // The OPTIONAL companion-voice adapter for THIS level's mode. A no-op when the
     // companion preference is off (checked per-fire), so the game behaves exactly
     // as before when disabled — it only ever AUGMENTS the existing cues below.
@@ -480,6 +512,16 @@ startButton.addEventListener('click', async () => {
             : 'You reached the beacon. Level complete!');
         // Companion arrival line — sequenced AFTER the win alert (never clobbers it).
         companion.win();
+      },
+      // SCORING (additive, after onWin): persist the completion + announce a new best
+      // or a comparison to the standing best. Never alters the win path above.
+      onComplete: (result) => {
+        const { isBest, previousBest } = scoreStore.record(result);
+        const line = announceCompletion(result, isBest, previousBest);
+        // Sequenced after the win alert + companion arrival line so it doesn't clobber
+        // them; rides the assertive region (and TTS) so the stat isn't lost behind the
+        // polite status chatter (progress/companion lines keep writing #status).
+        setTimeout(() => alert(line), 1500);
       },
       onCaught: () => {
         // The monster physically reached you — a loss, distinct from a win.
@@ -512,7 +554,7 @@ startButton.addEventListener('click', async () => {
         // (deduped to band changes, so it's not per-step). 0=almost…3=far.
         companion.progress(companionBand(d));
       },
-    }, undefined, steam, interpRenderer);
+    }, undefined, steam, interpRenderer, { levelId, clapsUsed: () => clapsUsed });
 
     // Apply the persisted "getting warmer" cue preference to this run.
     game.setWarmerCue(settings.warmerCueEnabled());
@@ -583,7 +625,7 @@ startButton.addEventListener('click', async () => {
     });
 
     // --- Clap to hear the room (echo button) ---
-    setupClap(graph, renderer, game);
+    setupClap(graph, renderer, game, () => { clapsUsed += 1; });
 
     // Foot display loop: only the expected foot shows while walking; after the
     // player settles (idle ~1.4s) BOTH feet appear so either can lead. Polled so
@@ -812,9 +854,38 @@ function setupSettings(graph: AudioGraph, game: Game) {
       onboarding.setSwap(on);
       applyChannelSwap(graph, on);
     },
+    // Spoken-voice (TTS). Each setter persists AND re-pushes into the live Speech
+    // wrapper so the change applies immediately (and the test-voice sample uses it).
+    ttsSupported: () => speech.isSupported(),
+    getTtsEnabled: () => settings.ttsEnabled(),
+    setTtsEnabled: (on) => {
+      settings.setTtsEnabled(on);
+      speech.update({ enabled: on });
+      if (!on) speech.cancel();
+    },
+    availableVoices: () => speech.availableVoices(),
+    getTtsVoice: () => settings.ttsVoice(),
+    setTtsVoice: (name) => {
+      settings.setTtsVoice(name);
+      speech.update({ voiceName: name || undefined });
+    },
+    getTtsRate: () => settings.ttsRate(),
+    setTtsRate: (r) => {
+      settings.setTtsRate(r);
+      speech.update({ rate: settings.ttsRate() });
+    },
+    getTtsPitch: () => settings.ttsPitch(),
+    setTtsPitch: (p) => {
+      settings.setTtsPitch(p);
+      speech.update({ pitch: settings.ttsPitch() });
+    },
+    // Speak a sample line through the CURRENT voice/rate/pitch, bypassing the
+    // enabled gate (the user is auditioning) — but only when an engine exists.
+    testVoice: (line) => speech.speakSample(line),
     resetProgress: () => {
       trainerStore.clear();
       dailyStreakStore.clear();
+      scoreStore.clear();
       onboarding.clearAll();
     },
   });
@@ -825,6 +896,7 @@ function setupClap(
   graph: AudioGraph,
   renderer: HrtfRenderer,
   game: Game,
+  onClap: () => void = () => {},
 ) {
   const clapRoom = new ClapRoom(graph, renderer);
   const listenBtn = document.getElementById('listen') as HTMLButtonElement | null;
@@ -882,6 +954,7 @@ function setupClap(
       speedOfSound: SPEED_OF_SOUND,
     });
     clapRoom.clap();
+    onClap(); // count this fired clap toward the run's score (claps used)
     say('Clap! Listen to the room around you.');
     // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.
     // Use the assertive region for the budget cue so the last-clap warning and the

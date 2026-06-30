@@ -36,6 +36,27 @@ export interface SettingsHooks {
 
   /** Wipe trainer + streak + onboarding/primer flags; returns after clearing. */
   resetProgress: () => void;
+
+  // --- Spoken voice (Web Speech / TTS), 8A. OPTIONAL: when `ttsSupported()` is
+  // false the whole block is hidden (graceful fallback to live-region-only). ---
+  /** Whether a real speech engine exists in this browser. */
+  ttsSupported: () => boolean;
+  /** TTS on/off (default OFF, opt-in). */
+  getTtsEnabled: () => boolean;
+  setTtsEnabled: (on: boolean) => void;
+  /** Voices to offer in the picker (may be empty until the engine loads them). */
+  availableVoices: () => { name: string; lang: string }[];
+  /** Preferred voice name ('' ⇒ auto-pick). */
+  getTtsVoice: () => string;
+  setTtsVoice: (name: string) => void;
+  /** Speech rate (~0.5..2). */
+  getTtsRate: () => number;
+  setTtsRate: (r: number) => void;
+  /** Speech pitch (0..2). */
+  getTtsPitch: () => number;
+  setTtsPitch: (p: number) => void;
+  /** Speak a sample line so the user can audition the voice/rate/pitch. */
+  testVoice: (line: string) => void;
 }
 
 /** Public handle so the opener (a key / button) can toggle the panel. */
@@ -76,6 +97,9 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   dialog.setAttribute('aria-modal', 'true');
   dialog.setAttribute('aria-label', 'Settings');
   dialog.className = 'settings-dialog';
+
+  // Re-sync the TTS controls from prefs on open (set when the TTS block exists).
+  let ttsRefresh: (() => void) | null = null;
 
   const heading = document.createElement('h2');
   heading.textContent = 'Settings';
@@ -127,6 +151,142 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     hooks.say(on ? 'Left and right channels swapped.' : 'Left and right channels normal.');
   });
   dialog.append(swap.row);
+
+  // --- Spoken voice (Web Speech / TTS), 8A ---
+  // Shown ONLY when the browser supports speechSynthesis; otherwise omitted entirely
+  // so the panel degrades gracefully to live-region-only (no dead controls).
+  const SAMPLE = 'This is the spoken voice. You can adjust the rate and pitch.';
+  if (hooks.ttsSupported()) {
+    const ttsGroup = document.createElement('div');
+    ttsGroup.className = 'settings-tts';
+
+    // Voice / rate / pitch sub-controls live in a container that's only shown when
+    // TTS is enabled (keeps the panel quiet when the feature is off).
+    const ttsControls = document.createElement('div');
+    ttsControls.className = 'settings-tts-controls';
+
+    // Voice picker.
+    const voiceWrap = document.createElement('div');
+    voiceWrap.className = 'settings-row';
+    const voiceLabel = document.createElement('label');
+    voiceLabel.htmlFor = 'set-tts-voice';
+    voiceLabel.textContent = 'Voice';
+    const voiceSel = document.createElement('select');
+    voiceSel.id = 'set-tts-voice';
+    voiceSel.setAttribute('aria-label', 'Spoken voice selection');
+    const populateVoices = () => {
+      const current = hooks.getTtsVoice();
+      voiceSel.innerHTML = '';
+      const auto = document.createElement('option');
+      auto.value = '';
+      auto.textContent = 'Automatic (default voice)';
+      voiceSel.append(auto);
+      for (const v of hooks.availableVoices()) {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = `${v.name} (${v.lang})`;
+        voiceSel.append(opt);
+      }
+      voiceSel.value = current;
+    };
+    populateVoices();
+    voiceSel.addEventListener('change', () => {
+      hooks.setTtsVoice(voiceSel.value);
+      hooks.say('Voice changed.');
+      hooks.testVoice(SAMPLE); // audition the new voice
+    });
+    voiceWrap.append(voiceLabel, voiceSel);
+    ttsControls.append(voiceWrap);
+
+    // Rate slider (0.5..2, step 0.1).
+    const rateWrap = document.createElement('div');
+    rateWrap.className = 'settings-row';
+    const rateLabel = document.createElement('label');
+    rateLabel.htmlFor = 'set-tts-rate';
+    rateLabel.textContent = 'Voice speed';
+    const rate = document.createElement('input');
+    rate.type = 'range';
+    rate.id = 'set-tts-rate';
+    rate.min = '0.5';
+    rate.max = '2';
+    rate.step = '0.1';
+    rate.value = String(hooks.getTtsRate());
+    rate.setAttribute('aria-label', 'Voice speed');
+    let rateTimer: ReturnType<typeof setTimeout> | null = null;
+    rate.addEventListener('input', () => {
+      hooks.setTtsRate(Number(rate.value));
+      if (rateTimer != null) clearTimeout(rateTimer);
+      rateTimer = setTimeout(() => {
+        hooks.say(`Voice speed ${rate.value}.`);
+        hooks.testVoice(SAMPLE);
+      }, 250);
+    });
+    rateWrap.append(rateLabel, rate);
+    ttsControls.append(rateWrap);
+
+    // Pitch slider (0..2, step 0.1).
+    const pitchWrap = document.createElement('div');
+    pitchWrap.className = 'settings-row';
+    const pitchLabel = document.createElement('label');
+    pitchLabel.htmlFor = 'set-tts-pitch';
+    pitchLabel.textContent = 'Voice pitch';
+    const pitch = document.createElement('input');
+    pitch.type = 'range';
+    pitch.id = 'set-tts-pitch';
+    pitch.min = '0';
+    pitch.max = '2';
+    pitch.step = '0.1';
+    pitch.value = String(hooks.getTtsPitch());
+    pitch.setAttribute('aria-label', 'Voice pitch');
+    let pitchTimer: ReturnType<typeof setTimeout> | null = null;
+    pitch.addEventListener('input', () => {
+      hooks.setTtsPitch(Number(pitch.value));
+      if (pitchTimer != null) clearTimeout(pitchTimer);
+      pitchTimer = setTimeout(() => {
+        hooks.say(`Voice pitch ${pitch.value}.`);
+        hooks.testVoice(SAMPLE);
+      }, 250);
+    });
+    pitchWrap.append(pitchLabel, pitch);
+    ttsControls.append(pitchWrap);
+
+    // Explicit "test voice" button (in addition to the on-change auditions).
+    const testBtn = document.createElement('button');
+    testBtn.type = 'button';
+    testBtn.className = 'settings-tts-test';
+    testBtn.textContent = 'Test voice';
+    testBtn.addEventListener('click', () => hooks.testVoice(SAMPLE));
+    ttsControls.append(testBtn);
+
+    const reflectTtsControls = (on: boolean) => {
+      ttsControls.hidden = !on;
+    };
+
+    // Enable checkbox (the gate). When on, reveal the sub-controls + speak a sample.
+    const tts = checkboxRow('Spoken voice (text-to-speech)', hooks.getTtsEnabled(), (on) => {
+      hooks.setTtsEnabled(on);
+      reflectTtsControls(on);
+      hooks.say(on ? 'Spoken voice on.' : 'Spoken voice off.');
+      if (on) {
+        // Refresh in case the engine loaded voices late, then audition.
+        populateVoices();
+        hooks.testVoice(SAMPLE);
+      }
+    });
+    reflectTtsControls(hooks.getTtsEnabled());
+
+    ttsGroup.append(tts.row, ttsControls);
+    dialog.append(ttsGroup);
+
+    // Expose a refresh hook so open() can re-sync these controls from prefs.
+    ttsRefresh = () => {
+      tts.input.checked = hooks.getTtsEnabled();
+      populateVoices();
+      rate.value = String(hooks.getTtsRate());
+      pitch.value = String(hooks.getTtsPitch());
+      reflectTtsControls(hooks.getTtsEnabled());
+    };
+  }
 
   // --- Reset progress (two-step, spoken confirm) ---
   let resetArmed = false;
@@ -207,6 +367,7 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       companion.input.checked = hooks.getCompanion();
       warmer.input.checked = hooks.getWarmerCue();
       swap.input.checked = hooks.getSwap();
+      ttsRefresh?.();
       disarmReset();
       host.hidden = false;
       hooks.say('Settings opened.');

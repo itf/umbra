@@ -81,4 +81,37 @@ test('keyboard completion reaches the beacon and announces a win', async ({ page
   await expect
     .poll(async () => (await liveText(page)).toLowerCase())
     .toMatch(/win|reached the beacon|level complete/);
+
+  // SCORING: completing the level announces a spoken completion stat (time + claps),
+  // and the first completion is a new best.
+  await expect
+    .poll(async () => (await liveText(page)).toLowerCase())
+    .toMatch(/completed in .*second/);
+  await expect
+    .poll(async () => (await liveText(page)).toLowerCase())
+    .toMatch(/new best/);
+});
+
+test('replaying a completed level announces a comparison to the stored best', async ({ page }) => {
+  // First run: complete it so a best is stored in localStorage.
+  await beginLevel(page, LEVEL);
+  {
+    const s0 = await debugState(page);
+    await turnToward(page, s0.beacon.x, s0.beacon.z);
+    expect(await walkToTarget(page)).toBe(true);
+    await expect
+      .poll(async () => (await liveText(page)).toLowerCase())
+      .toMatch(/completed in .*second/);
+  }
+
+  // Replay (same page → localStorage persists across the reload).
+  await beginLevel(page, LEVEL);
+  const s1 = await debugState(page);
+  await turnToward(page, s1.beacon.x, s1.beacon.z);
+  expect(await walkToTarget(page)).toBe(true);
+
+  // The second completion references the standing best (new best OR "your best is…").
+  await expect
+    .poll(async () => (await liveText(page)).toLowerCase())
+    .toMatch(/new best|your best is/);
 });

@@ -16,9 +16,35 @@
 
 export const MASTER_VOLUME_KEY = 'ps.settings.masterVolume';
 export const WARMER_CUE_KEY = 'ps.settings.warmerCue';
+// Spoken-voice (Web Speech / TTS) prefs (8A). TTS is OPT-IN: default OFF so a
+// screen-reader user isn't double-spoken by both their AT and our synthesis.
+export const TTS_ENABLED_KEY = 'ps.settings.ttsEnabled';
+export const TTS_VOICE_KEY = 'ps.settings.ttsVoice';
+export const TTS_RATE_KEY = 'ps.settings.ttsRate';
+export const TTS_PITCH_KEY = 'ps.settings.ttsPitch';
 
 /** Default master volume (full scale). */
 export const DEFAULT_MASTER_VOLUME = 1;
+
+/** TTS rate/pitch defaults (mirrors speech.ts neutral values). */
+export const DEFAULT_TTS_RATE = 1;
+export const DEFAULT_TTS_PITCH = 1;
+
+/** PURE: clamp a TTS rate to [0.5, 2]; non-finite ⇒ default. */
+export function clampTtsRate(r: number): number {
+  if (!Number.isFinite(r)) return DEFAULT_TTS_RATE;
+  if (r < 0.5) return 0.5;
+  if (r > 2) return 2;
+  return r;
+}
+
+/** PURE: clamp a TTS pitch to [0, 2]; non-finite ⇒ default. */
+export function clampTtsPitch(p: number): number {
+  if (!Number.isFinite(p)) return DEFAULT_TTS_PITCH;
+  if (p < 0) return 0;
+  if (p > 2) return 2;
+  return p;
+}
 
 /**
  * PURE: clamp a master-volume value to [0,1]. Accepts any number (incl. NaN /
@@ -103,5 +129,46 @@ export class SettingsStore {
   }
   setWarmerCueEnabled(on: boolean) {
     this.write(WARMER_CUE_KEY, on ? '1' : '0');
+  }
+
+  /**
+   * Spoken-voice (TTS) on/off. DEFAULTS TO OFF when never set — the safe
+   * accessibility choice (no double-speak for screen-reader users). Opt-in.
+   */
+  ttsEnabled(): boolean {
+    const v = this.read(TTS_ENABLED_KEY);
+    if (v == null) return false; // unset ⇒ default OFF (opt-in)
+    return v === '1';
+  }
+  setTtsEnabled(on: boolean) {
+    this.write(TTS_ENABLED_KEY, on ? '1' : '0');
+  }
+
+  /** Preferred TTS voice name; empty string when unset (⇒ auto-pick). */
+  ttsVoice(): string {
+    return this.read(TTS_VOICE_KEY) ?? '';
+  }
+  setTtsVoice(name: string) {
+    this.write(TTS_VOICE_KEY, name);
+  }
+
+  /** TTS rate in [0.5, 2]; the default when unset/corrupt. */
+  ttsRate(): number {
+    const raw = this.read(TTS_RATE_KEY);
+    if (raw == null) return DEFAULT_TTS_RATE;
+    return clampTtsRate(Number(raw));
+  }
+  setTtsRate(r: number) {
+    this.write(TTS_RATE_KEY, String(clampTtsRate(r)));
+  }
+
+  /** TTS pitch in [0, 2]; the default when unset/corrupt. */
+  ttsPitch(): number {
+    const raw = this.read(TTS_PITCH_KEY);
+    if (raw == null) return DEFAULT_TTS_PITCH;
+    return clampTtsPitch(Number(raw));
+  }
+  setTtsPitch(p: number) {
+    this.write(TTS_PITCH_KEY, String(clampTtsPitch(p)));
   }
 }

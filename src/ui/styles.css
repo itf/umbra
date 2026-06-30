@@ -104,6 +104,7 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .picker-item:hover { background: #242424; }
 .picker-title { font-weight: 700; font-size: 1.05rem; color: #fff; }
 .picker-desc { font-size: 0.85rem; color: #999; }
+.picker-best { display: block; font-size: 0.8rem; color: var(--accent); font-weight: 600; margin-top: 2px; }
 .start-level { color: var(--accent); font-weight: 700; }
 
 /* When the game is active, let it own the whole viewport (override #app centering

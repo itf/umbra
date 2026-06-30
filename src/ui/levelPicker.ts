@@ -79,6 +79,12 @@ export interface RenderOptions {
   builtins: BuiltinInfo[];
   savedNames: string[];
   onSelect: (sel: PickerSelection) => void;
+  /**
+   * Optional per-level BEST readout ("Best: 42 seconds, 6 claps") keyed by the
+   * level's load id/name — surfaced on each card so the player sees their record to
+   * beat. Returns '' (or undefined) for levels never completed. Purely additive.
+   */
+  bestFor?: (item: PickerItem) => string | undefined;
 }
 
 /**
@@ -114,7 +120,8 @@ export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): 
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'picker-item';
-      btn.setAttribute('aria-label', `${item.label}. ${item.description}`);
+      const best = opts.bestFor?.(item) ?? '';
+      btn.setAttribute('aria-label', `${item.label}. ${item.description}${best ? ` ${best}.` : ''}`);
 
       const title = document.createElement('span');
       title.className = 'picker-title';
@@ -123,6 +130,12 @@ export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): 
       desc.className = 'picker-desc';
       desc.textContent = item.description;
       btn.append(title, desc);
+      if (best) {
+        const bestEl = document.createElement('span');
+        bestEl.className = 'picker-best';
+        bestEl.textContent = best;
+        btn.append(bestEl);
+      }
 
       btn.addEventListener('click', () =>
         opts.onSelect({ source: item.source, ref: item.ref, label: item.label }),

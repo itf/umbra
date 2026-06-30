@@ -25,6 +25,7 @@ import {
 } from './monster';
 import { MonsterVoice, resolveMonsterPreset } from './monsterSounds';
 import { attachCustomLoop } from './customAudio';
+import type { LevelResult } from './scoreModel';
 import type { SteamSourceHandle } from '../engine/steamaudio/backend';
 
 /** A wall segment for collision + material-keyed bump sounds. */
@@ -120,6 +121,13 @@ export interface GameCallbacks {
   onStep?: (foot: Foot, stride: number) => void;
   onStumble?: (reason: string) => void;
   onWin?: () => void;
+  /**
+   * Fired once on a WIN, right after `onWin`, with the scored completion result
+   * (elapsed time, claps used). The host records it + announces a new best. Purely
+   * additive: a host that ignores it sees no behavioural difference. `clapsUsed` is
+   * filled from the injected `clapsUsed` getter (0 when none was provided).
+   */
+  onComplete?: (result: LevelResult) => void;
   /** Fired once when a monster physically reaches the player (lose state). */
   onCaught?: () => void;
   onProgress?: (distance: number) => void;
@@ -195,6 +203,18 @@ export class Game {
   private won = false;
   private caught = false;
   /**
+   * Level identity + run-timing for SCORING. `levelId` labels the result (the host
+   * passes the picked level's id/name); `startMs` is the monotonic level-start
+   * timestamp (audio clock, ms) captured at construction; `clapsUsed` is an injected
+   * getter the host wires to its ClapBudget (returns 0 when omitted, e.g. clap-free
+   * levels). All additive — none of it touches navigation/win/lose behaviour.
+   */
+  private readonly levelId: string;
+  private readonly startMs: number;
+  private readonly clapsUsedFn: () => number;
+  /** The scored result of the completed run, available after a win (else null). */
+  private lastResultValue: LevelResult | null = null;
+  /**
    * "Getting warmer" proximity cue enable flag (6C settings toggle). When ON
    * (default) the beacon's dry loudness scales with closeness via `beaconProxGain`
    * in reportProgress. When OFF the cue is disabled and the beacon is pinned to a
@@ -237,7 +257,14 @@ export class Game {
     stepCfg: StepConfig = DEFAULT_STEP_CONFIG,
     steam: SpatialBackend | null = null,
     interpRenderer: InterpolatingHrtfRenderer | null = null,
+    scoring: { levelId?: string; clapsUsed?: () => number } = {},
   ) {
+    this.levelId = scoring.levelId ?? 'unknown';
+    this.clapsUsedFn = scoring.clapsUsed ?? (() => 0);
+    // Level-start timestamp for the completion timer (monotonic audio clock, ms).
+    // Matches the clock `step()`/`tick()` default, avoiding Date.now() so the timing
+    // is consistent with the rest of the game loop.
+    this.startMs = graph.ctx.currentTime * 1000;
     this.interpRenderer = interpRenderer;
     this.graph = graph;
     this.renderer = renderer;
@@ -799,7 +826,23 @@ export class Game {
       // a win is as audible as the catch roar (it was near-silent before).
       winChime(this.graph.ctx, this.graph.master);
       this.cb.onWin?.();
+      // SCORING (additive): build the completion result off the audio clock + the
+      // injected clap counter, expose it via lastResult(), and hand it to the host
+      // for persistence/announcement. Runs AFTER onWin so it never alters that path.
+      const timeMs = Math.max(0, this.graph.ctx.currentTime * 1000 - this.startMs);
+      this.lastResultValue = {
+        levelId: this.levelId,
+        timeMs,
+        clapsUsed: Math.max(0, Math.floor(this.clapsUsedFn())),
+        won: true,
+      };
+      this.cb.onComplete?.(this.lastResultValue);
     }
+  }
+
+  /** The scored result of the completed run (null until a win). */
+  lastResult(): LevelResult | null {
+    return this.lastResultValue;
   }
 
   destroy() {

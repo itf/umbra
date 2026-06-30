@@ -7,6 +7,12 @@ import {
   DEFAULT_MASTER_VOLUME,
   MASTER_VOLUME_KEY,
   WARMER_CUE_KEY,
+  TTS_ENABLED_KEY,
+  TTS_VOICE_KEY,
+  TTS_RATE_KEY,
+  TTS_PITCH_KEY,
+  clampTtsRate,
+  clampTtsPitch,
 } from './settingsStore';
 
 /** A minimal in-memory Storage stand-in for deterministic, isolated tests. */
@@ -91,6 +97,70 @@ describe('SettingsStore warmer cue', () => {
     expect(new SettingsStore(backing).warmerCueEnabled()).toBe(false);
     s.setWarmerCueEnabled(true);
     expect(s.warmerCueEnabled()).toBe(true);
+  });
+});
+
+describe('SettingsStore TTS (spoken voice, 8A)', () => {
+  it('TTS enabled DEFAULTS OFF (opt-in, no double-speak for SR users)', () => {
+    expect(new SettingsStore(memStorage()).ttsEnabled()).toBe(false);
+  });
+  it('TTS enabled round-trips and persists', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    s.setTtsEnabled(true);
+    expect(s.ttsEnabled()).toBe(true);
+    expect(backing.map.get(TTS_ENABLED_KEY)).toBe('1');
+    expect(new SettingsStore(backing).ttsEnabled()).toBe(true);
+  });
+  it('TTS voice defaults empty (auto-pick) and persists a name', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    expect(s.ttsVoice()).toBe('');
+    s.setTtsVoice('Alice');
+    expect(s.ttsVoice()).toBe('Alice');
+    expect(backing.map.get(TTS_VOICE_KEY)).toBe('Alice');
+  });
+  it('TTS rate defaults to 1, clamps, and persists', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    expect(s.ttsRate()).toBe(1);
+    s.setTtsRate(99);
+    expect(s.ttsRate()).toBe(2);
+    expect(backing.map.get(TTS_RATE_KEY)).toBe('2');
+    s.setTtsRate(0.1);
+    expect(s.ttsRate()).toBe(0.5);
+  });
+  it('TTS pitch defaults to 1, clamps, and persists', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    expect(s.ttsPitch()).toBe(1);
+    s.setTtsPitch(-3);
+    expect(s.ttsPitch()).toBe(0);
+    expect(backing.map.get(TTS_PITCH_KEY)).toBe('0');
+    s.setTtsPitch(9);
+    expect(s.ttsPitch()).toBe(2);
+  });
+  it('returns defaults for corrupt stored rate/pitch', () => {
+    const backing = memStorage();
+    backing.map.set(TTS_RATE_KEY, 'garbage');
+    backing.map.set(TTS_PITCH_KEY, 'nope');
+    const s = new SettingsStore(backing);
+    expect(s.ttsRate()).toBe(1);
+    expect(s.ttsPitch()).toBe(1);
+  });
+});
+
+describe('clampTtsRate / clampTtsPitch (pure)', () => {
+  it('rate to [0.5,2], default on non-finite', () => {
+    expect(clampTtsRate(0.1)).toBe(0.5);
+    expect(clampTtsRate(3)).toBe(2);
+    expect(clampTtsRate(1.2)).toBe(1.2);
+    expect(clampTtsRate(NaN)).toBe(1);
+  });
+  it('pitch to [0,2], default on non-finite', () => {
+    expect(clampTtsPitch(-1)).toBe(0);
+    expect(clampTtsPitch(5)).toBe(2);
+    expect(clampTtsPitch(NaN)).toBe(1);
   });
 });
 
