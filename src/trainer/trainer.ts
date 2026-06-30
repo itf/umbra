@@ -25,6 +25,7 @@ import {
   type ExerciseType,
 } from './exercises';
 import { Staircase, difficultyBand, progressAnnouncement } from './adaptive';
+import { InterleavedScheduler } from './scheduler';
 import { DistanceLadder, ladderAnnouncement } from './distanceLadder';
 import { TrainerStore, summarizeProgress, trendSummary } from './trainerStore';
 import { planReplay, replayAnnouncement, type ReplayPlan } from './replay';
@@ -65,6 +66,17 @@ let answerCursor = -1;
  * discrimination threshold. The manual "Fixed — …" picker overrides it.
  */
 const staircase = new Staircase();
+
+/**
+ * Interleaved scheduler for mixed/'all' mode. Tracks one staircase per exercise
+ * type and transitions from blocked (novice) to interleaved (competent) practice
+ * automatically. Single-type modes bypass this entirely.
+ */
+const scheduler = new InterleavedScheduler();
+/** The exercise type the scheduler returned for the current question. */
+let schedulerLastType: ExerciseType | undefined;
+/** How many consecutive times the scheduler has returned the same type. */
+let schedulerConsecutive = 0;
 
 /**
  * Thaler distance ladder for the `distance` exercise: backs the target away in
@@ -326,9 +338,23 @@ function nextQuestion() {
     renderQuestion(current);
     return;
   }
+  const types = typeFilter();
+  // Mixed/'all' mode: use the interleaved scheduler to pick type + difficulty.
+  // Single-type modes (types has exactly one entry) skip the scheduler entirely.
+  const isMixed = !types || types.length > 1;
+  let questionDifficulty = difficulty();
+  let questionTypes = types;
+  if (isMixed && fixedDifficulty() === null) {
+    const available = (types ?? ALL_TYPES) as ExerciseType[];
+    const nextType = scheduler.nextType(available, schedulerLastType, schedulerConsecutive);
+    schedulerConsecutive = nextType === schedulerLastType ? schedulerConsecutive + 1 : 1;
+    schedulerLastType = nextType;
+    questionDifficulty = scheduler.difficultyFor(nextType);
+    questionTypes = [nextType];
+  }
   current = makeRandomQuestion(seedCounter++, {
-    difficulty: difficulty(),
-    types: typeFilter(),
+    difficulty: questionDifficulty,
+    types: questionTypes,
     // Distance ladder feeds the near-panel distance for the `distance` drill in
     // adaptive mode; ignored by every other exercise.
     nearDistanceM: fixedDifficulty() === null ? distanceLadder.distance() : undefined,
@@ -482,6 +508,13 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   const adaptive = fixedDifficulty() === null;
   const reversalsBefore = staircase.reversals;
   if (adaptive) staircase.record(correct);
+
+  // Mixed-mode: also feed the per-type scheduler staircase so each type's
+  // difficulty and competence tracking stays current.
+  const isMixedMode = !typeFilter() || (typeFilter()?.length ?? 0) > 1;
+  if (adaptive && isMixedMode && schedulerLastType) {
+    scheduler.recordResult(schedulerLastType, correct, staircase.current());
+  }
   const reversal = adaptive && staircase.reversals > reversalsBefore;
 
   // Distance-ladder stepping (Thaler 90%-over-window → step back) for the distance
