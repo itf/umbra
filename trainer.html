@@ -35,6 +35,19 @@
       Everything is announced for screen readers.
     </p>
 
+    <div class="panel" id="daily-panel">
+      <h2 style="font-size:1.05rem;margin:0 0 6px">Daily Challenge</h2>
+      <p id="daily-status" class="hint" style="margin:0 0 10px">One seeded challenge a day. Complete it to build a streak.</p>
+      <button id="daily-begin" class="big">★ Today's challenge</button>
+      <div id="daily-share" hidden style="margin-top:10px">
+        <label style="width:100%">Shareable score
+          <input id="daily-share-text" type="text" readonly aria-label="Shareable daily score"
+                 style="background:#1c1c1c;color:#eee;border:1px solid #333;border-radius:8px;padding:8px;font-size:0.95rem;min-height:44px;width:100%;box-sizing:border-box" />
+        </label>
+        <button id="daily-copy" style="margin-top:8px">Copy score</button>
+      </div>
+    </div>
+
     <div class="panel" id="begin-panel">
       <label>Exercise type
         <select id="type" aria-label="Exercise type">

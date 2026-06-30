@@ -25,6 +25,15 @@ import {
 import { Staircase, difficultyBand, progressAnnouncement } from './adaptive';
 import { DistanceLadder, ladderAnnouncement } from './distanceLadder';
 import { TrainerStore, summarizeProgress } from './trainerStore';
+import {
+  challengeForDate,
+  dailyOpenAnnouncement,
+  dailyResultAnnouncement,
+  shareScoreString,
+  type DailyChallenge,
+  type DateStr,
+} from './daily';
+import { DailyStreakStore } from './dailyStreakStore';
 import { selectBackendFromSearch } from '../engine/steamaudio/toggle';
 import type { SpatialBackend } from '../game/game';
 
@@ -87,6 +96,41 @@ function flushSession() {
 
 function announce(msg: string) {
   ($('live') as HTMLElement).textContent = msg;
+}
+
+// --- Daily Challenge ----------------------------------------------------------
+
+/** Streak persistence for the daily challenge (localStorage; degrades to memory). */
+const dailyStore = new DailyStreakStore();
+/** When in daily mode, the day's fixed challenge; null in normal drill mode. */
+let dailyChallenge: DailyChallenge | null = null;
+/** The day's date string, captured once at the UI layer (browser clock is OK here). */
+let dailyDate: DateStr | null = null;
+
+/**
+ * Today's date as YYYY-MM-DD. Read at the UI layer ONLY (new Date() is allowed in
+ * trainer.ts but forbidden in the pure daily.ts module). Uses LOCAL date parts so
+ * "today" matches the player's wall calendar. A ?date=YYYY-MM-DD override (tests)
+ * lets the daily be exercised deterministically without faking the clock.
+ */
+function todayStr(): DateStr {
+  const override = new URLSearchParams(location.search).get('date');
+  if (override && /^\d{4}-\d{2}-\d{2}$/.test(override)) return override;
+  const d = new Date();
+  const yyyy = d.getFullYear().toString().padStart(4, '0');
+  const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+  const dd = d.getDate().toString().padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/** Refresh the resting daily-panel status line (spoken on open, shown always). */
+function refreshDailyStatus() {
+  const date = todayStr();
+  const challenge = challengeForDate(date);
+  const st = dailyStore.load();
+  const done = dailyStore.isCompletedOn(date);
+  ($('daily-status') as HTMLElement).textContent =
+    dailyOpenAnnouncement({ challenge, currentStreak: st.currentStreak, doneToday: done });
 }
 
 /** Read the difficulty-mode picker: 'adaptive' or a fixed numeric string. */
@@ -167,6 +211,13 @@ function nextQuestion() {
   asked++;
   answered = false;
   loadedRoom = null;
+  // Daily mode: every "Next" replays the SAME seeded challenge (replay-for-fun),
+  // the streak only changing on the first completion (handled in onAnswer).
+  if (dailyChallenge) {
+    current = dailyChallenge.question;
+    renderQuestion(current);
+    return;
+  }
   current = makeRandomQuestion(seedCounter++, {
     difficulty: difficulty(),
     types: typeFilter(),
@@ -241,6 +292,13 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   const correct = choice === current.correctAnswer;
   if (correct) score++;
 
+  // Daily-challenge mode: record (idempotent) the streak and produce the share
+  // string, then short-circuit the normal staircase/persistence path.
+  if (dailyChallenge && dailyDate) {
+    onDailyAnswer(correct, choice, btn);
+    return;
+  }
+
   // Drive the adaptive staircase only in adaptive mode (so fixed practice at a
   // level doesn't perturb the threshold tracker).
   const adaptive = fixedDifficulty() === null;
@@ -308,6 +366,58 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   ($('next') as HTMLButtonElement).focus();
 }
 
+/**
+ * Daily-mode answer handling: mark the chosen/correct buttons, record the streak
+ * (idempotent for the day), speak the result + new streak, and surface a shareable
+ * score string. Replaying after completion is fine — the streak won't double-count.
+ */
+function onDailyAnswer(correct: boolean, _choice: string, btn: HTMLButtonElement) {
+  const challenge = dailyChallenge!;
+  const date = dailyDate!;
+  const alreadyDoneToday = dailyStore.isCompletedOn(date);
+  const { state, transition } = dailyStore.complete(date);
+
+  for (const el of Array.from($('answers').children) as HTMLButtonElement[]) {
+    el.disabled = true;
+    if (el.textContent === challenge.question.correctAnswer) el.classList.add('correct');
+    else if (el === btn) el.classList.add('wrong');
+  }
+
+  const verdict = correct
+    ? 'Correct.'
+    : `Incorrect. The answer was ${challenge.question.correctAnswer}.`;
+  const result = dailyResultAnnouncement({ correct, transition, alreadyDoneToday });
+
+  // A direction/orientation challenge can fold its precise cue (e.g. the bearing)
+  // into the share string for a richer brag; A/B drills just share the verdict.
+  let detail = '';
+  if (challenge.type === 'direction' && challenge.question.bearingDeg != null) {
+    detail = `${Math.abs(Math.round(challenge.question.bearingDeg))}°`;
+  }
+  const share = shareScoreString({
+    date,
+    challenge,
+    correct,
+    currentStreak: state.currentStreak,
+    detail,
+  });
+
+  ($('feedback') as HTMLElement).textContent = verdict;
+  ($('score') as HTMLElement).textContent = `Daily — ${state.currentStreak}-day streak`;
+  ($('next') as HTMLButtonElement).disabled = false;
+
+  // Reveal the share field (back on the daily panel) populated with the score.
+  const shareWrap = document.getElementById('daily-share') as HTMLElement | null;
+  const shareText = document.getElementById('daily-share-text') as HTMLInputElement | null;
+  if (shareWrap && shareText) {
+    shareWrap.hidden = false;
+    shareText.value = share;
+  }
+  refreshDailyStatus();
+  announce(`${verdict} ${result} Your score: ${share}. Press Next to replay.`);
+  ($('next') as HTMLButtonElement).focus();
+}
+
 /** Populate the probe picker and wire the custom URL/file inputs. */
 function setupProbePicker() {
   const sel = $('probe') as HTMLSelectElement;
@@ -370,6 +480,44 @@ function main() {
 
     nextQuestion();
   });
+
+  // Daily challenge: show today's status, and start the seeded daily drill.
+  refreshDailyStatus();
+  $('daily-begin').addEventListener('click', async () => {
+    ($('daily-begin') as HTMLButtonElement).disabled = true;
+    announce('Loading audio…');
+    await ensurePlayer();
+    dailyDate = todayStr();
+    dailyChallenge = challengeForDate(dailyDate);
+    const st = dailyStore.load();
+    const done = dailyStore.isCompletedOn(dailyDate);
+    // Hide the normal Begin panel; reveal the drill UI.
+    ($('begin-panel') as HTMLElement).hidden = true;
+    ($('daily-panel') as HTMLElement).hidden = true;
+    ($('begin') as HTMLElement).hidden = true;
+    ($('drill') as HTMLElement).hidden = false;
+    pendingGreeting = dailyOpenAnnouncement({
+      challenge: dailyChallenge,
+      currentStreak: st.currentStreak,
+      doneToday: done,
+    });
+    nextQuestion();
+  });
+
+  // Copy the shareable score (guarded — clipboard may be unavailable/denied).
+  const copyBtn = document.getElementById('daily-copy');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      const text = (document.getElementById('daily-share-text') as HTMLInputElement | null)?.value ?? '';
+      if (!text) return;
+      try {
+        await navigator.clipboard?.writeText(text);
+        announce('Score copied to clipboard.');
+      } catch {
+        announce('Copy unavailable — select the score text to copy it manually.');
+      }
+    });
+  }
 
   $('play-a').addEventListener('click', () => playRoom('A'));
   $('play-b').addEventListener('click', () => playRoom('B'));
