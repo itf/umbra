@@ -12,7 +12,7 @@ import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
 import { Footsteps } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
-import { BeaconVoice, proximityGain, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
+import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
 import {
   makeMonster,
@@ -192,13 +192,6 @@ export class Game {
   private beaconVoice: BeaconVoice | null = null;
   /** Looping custom-audio source, when `soundUrl` loaded successfully. */
   private beaconCustom: AudioBufferSourceNode | null = null;
-  /**
-   * Shared "getting warmer" proximity gain. BOTH the synth voice and the custom
-   * audio loop feed THIS node (which feeds `beaconInput`), so the proximity cue
-   * (louder as you close in) applies regardless of which voice is live — fixing the
-   * custom-audio beacon getting no warmer cue. Modulated from reportProgress.
-   */
-  private beaconProxGain: GainNode | null = null;
   private headHeight: number;
   private won = false;
   private caught = false;
@@ -214,14 +207,6 @@ export class Game {
   private readonly clapsUsedFn: () => number;
   /** The scored result of the completed run, available after a win (else null). */
   private lastResultValue: LevelResult | null = null;
-  /**
-   * "Getting warmer" proximity cue enable flag (6C settings toggle). When ON
-   * (default) the beacon's dry loudness scales with closeness via `beaconProxGain`
-   * in reportProgress. When OFF the cue is disabled and the beacon is pinned to a
-   * CONSTANT level (unity), so closing in is no longer heard — only narrated. Does
-   * not touch any other behaviour; absorber mode has no beacon either way.
-   */
-  private warmerCueOn = true;
   /**
    * Live monster runtime, one entry per level monster. Each has a PURE AI state
    * (monster.ts) and its own spatialized growl voice through an HrtfSource, so a
@@ -392,13 +377,6 @@ export class Game {
     // "Find the absorber" mode: no beacon voice. The room is revealed by clapping;
     // the goal is the silent dead spot, so we never start a beacon sound.
     if (this.level.goal === 'absorber') return;
-    // Interpose the shared proximity gain between the dry voice(s) and the
-    // spatializer input. Both the synth voice AND the custom audio loop feed THIS
-    // node, so the "getting warmer" cue (reportProgress → proximityGain) reaches
-    // whichever voice is live. It starts at unity (far).
-    this.beaconProxGain = this.graph.ctx.createGain();
-    this.beaconProxGain.gain.value = 1;
-    this.beaconProxGain.connect(this.beaconInput);
     // Always start the synth preset immediately so the beacon is never silent.
     // If a custom `soundUrl` is set, the shared helper loads + loops it through the
     // SAME HrtfSource and we swap to it when it arrives; on failure the synth stays.
@@ -409,7 +387,7 @@ export class Game {
     // shouldStart vetoes a late buffer if the beacon was won (and faded) meanwhile.
     void attachCustomLoop(
       this.graph.ctx,
-      this.beaconProxGain,
+      this.beaconInput,
       url,
       () => { /* keep the synth fallback already running */ },
       { shouldStart: () => !this.won && this.beaconCustom == null },
@@ -426,10 +404,9 @@ export class Game {
   private startSynthBeacon() {
     const preset: BeaconPreset = resolveBeaconPreset(this.level.beacon.sound);
     this.beaconVoice?.stop();
-    // Feed the shared proximity gain (so the warmer cue applies), falling back to the
-    // raw input if it somehow wasn't created (e.g. absorber mode never calls this).
-    const dest = this.beaconProxGain ?? this.beaconInput;
-    this.beaconVoice = new BeaconVoice(this.graph.ctx, dest, preset, this.level.beacon.freq);
+    // The dry voice feeds the spatializer input directly; real 1/r distance
+    // attenuation is modeled downstream in the renderer.
+    this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beaconInput, preset, this.level.beacon.freq);
     this.beaconVoice.start();
   }
 
@@ -507,20 +484,6 @@ export class Game {
   private reportProgress() {
     const t = this.winTarget();
     const d = this.player.distanceTo(t.x, t.z);
-    // Continuous "getting warmer" cue: scale the dry beacon's loudness by proximity
-    // so closing in is HEARD, not just narrated in coarse bands. Modulating the
-    // SHARED proximity gain means the cue reaches BOTH the synth voice and the
-    // custom audio loop (whichever is live) — the custom `soundUrl` beacon now gets
-    // it too. Null only in 'absorber' mode (no beacon). Works for every engine path
-    // since they all share this dry chain feeding the spatializer.
-    if (this.beaconProxGain) {
-      const t = this.graph.ctx.currentTime;
-      // Short time-constant glide so rapid distance updates don't zipper. When the
-      // warmer cue is disabled (settings), pin the beacon to a CONSTANT level (unity)
-      // so closeness is no longer heard — only narrated by onProgress below.
-      const g = this.warmerCueOn ? proximityGain(d) : 1;
-      this.beaconProxGain.gain.setTargetAtTime(g, t, 0.08);
-    }
     this.cb.onProgress?.(d);
   }
 
@@ -617,16 +580,6 @@ export class Game {
   }
 
   /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */
-  /**
-   * Enable/disable the "getting warmer" proximity cue (6C settings). When turned
-   * off mid-run the beacon is immediately re-pinned to a constant level; when
-   * turned back on the next progress report restores the proximity-scaled gain.
-   */
-  setWarmerCue(on: boolean) {
-    this.warmerCueOn = on;
-    this.reportProgress();
-  }
-
   setYaw(yaw: number) {
     this.player.setYaw(yaw);
     this.audioYaw = yaw;
@@ -851,10 +804,6 @@ export class Game {
     if (this.beaconCustom) {
       try { this.beaconCustom.stop(); } catch { /* already stopped */ }
       this.beaconCustom = null;
-    }
-    if (this.beaconProxGain) {
-      try { this.beaconProxGain.disconnect(); } catch { /* noop */ }
-      this.beaconProxGain = null;
     }
     this.beacon?.disconnect();
     this.modeledBeacon?.disconnect();

@@ -99,37 +99,6 @@ export function beaconTiming(preset: BeaconPreset): BeaconTiming {
   return TIMING[preset];
 }
 
-/**
- * Continuous "getting warmer" gain for the dry beacon voice as a function of
- * distance to the beacon (metres). Closer ⇒ louder, so a player can home in by ear
- * without narration. Subtle + bounded: maps `farDist`→1.0 up to `nearDist`→`maxGain`
- * on a smooth curve, clamped outside that range. Pure + unit-tested.
- *
- * `maxGain` is modest (default 1.8) so it complements — not overwhelms — the HRTF
- * distance attenuation and the directional head-shadow cues.
- */
-export function proximityGain(
-  distance: number,
-  nearDist = 0.8,
-  farDist = 8,
-  nearGain = 1.0,
-  farGain = 0.55,
-): number {
-  // The "getting warmer" cue is a DUCK toward `farGain` when far, easing back to
-  // `nearGain` (unity) up close — NOT a boost. An earlier version ramped UP to 1.8×
-  // (+5 dB), which drove the synth beacon (already near full-scale) past unity and
-  // pinned the master limiter into continuous gain-reduction pumping while parked
-  // near the beacon — audible crackle even when stationary. Capping the peak at unity
-  // keeps the same near/far loudness CONTRAST without ever exceeding full-scale.
-  if (!Number.isFinite(distance)) return nearGain;
-  // Normalize 0 (far) → 1 (near) across [nearDist, farDist].
-  const span = Math.max(1e-3, farDist - nearDist);
-  const t = Math.max(0, Math.min(1, (farDist - distance) / span));
-  // Smoothstep for a gentle ramp that accelerates as you close in.
-  const s = t * t * (3 - 2 * t);
-  return farGain + s * (nearGain - farGain);
-}
-
 // ---------------------------------------------------------------------------
 // The voice (needs an AudioContext) — ear-verified, not unit-tested.
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
  * This module owns ONLY the DOM wiring + focus/announce behaviour. Every control
  * is wired to an existing hook passed in by main.ts (the single source of truth
  * for applying + persisting each pref): master volume, companion voice, the
- * "getting warmer" cue, L/R swap, and reset-progress. The pure persistence lives
+ * high-fidelity (Steam Audio) engine choice, L/R swap, and reset-progress. The pure persistence lives
  * in settingsStore.ts / onboardingStore.ts.
  */
 
@@ -26,9 +26,13 @@ export interface SettingsHooks {
   getCompanion: () => boolean;
   setCompanion: (on: boolean) => void;
 
-  /** "Getting warmer" proximity cue on/off. */
-  getWarmerCue: () => boolean;
-  setWarmerCue: (on: boolean) => void;
+  /**
+   * High-fidelity audio (Steam Audio) engine on/off. The setter PERSISTS the
+   * preference; it does not hot-swap the live audio graph (the backend is built at
+   * level start), so the change applies on the next level / restart.
+   */
+  getSteamEngine: () => boolean;
+  setSteamEngine: (on: boolean) => void;
 
   /** L/R channel swap on/off. */
   getSwap: () => boolean;
@@ -138,12 +142,16 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   });
   dialog.append(companion.row);
 
-  // --- Getting-warmer cue ---
-  const warmer = checkboxRow('“Getting warmer” cue', hooks.getWarmerCue(), (on) => {
-    hooks.setWarmerCue(on);
-    hooks.say(on ? 'Getting warmer cue on.' : 'Getting warmer cue off.');
+  // --- High-fidelity audio engine (Steam Audio) ---
+  // Persisted preference, NOT a live hot-swap: the audio backend is constructed at
+  // level start, so we announce that the change applies on the next level/restart.
+  const engine = checkboxRow('High-fidelity audio (Steam Audio)', hooks.getSteamEngine(), (on) => {
+    hooks.setSteamEngine(on);
+    hooks.say(on
+      ? 'High-fidelity audio on. Applies when you start the next level.'
+      : 'High-fidelity audio off. Applies when you start the next level.');
   });
-  dialog.append(warmer.row);
+  dialog.append(engine.row);
 
   // --- L/R channel swap ---
   const swap = checkboxRow('Swap left and right channels', hooks.getSwap(), (on) => {
@@ -314,7 +322,7 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     hooks.resetProgress();
     // Reflect the cleared prefs back into the live controls.
     companion.input.checked = hooks.getCompanion();
-    warmer.input.checked = hooks.getWarmerCue();
+    engine.input.checked = hooks.getSteamEngine();
     swap.input.checked = hooks.getSwap();
     hooks.alert('Progress reset.');
   });
@@ -365,7 +373,7 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       // Refresh control state from the hooks in case prefs changed elsewhere.
       vol.value = String(Math.round(hooks.getMasterVolume() * 100));
       companion.input.checked = hooks.getCompanion();
-      warmer.input.checked = hooks.getWarmerCue();
+      engine.input.checked = hooks.getSteamEngine();
       swap.input.checked = hooks.getSwap();
       ttsRefresh?.();
       disarmReset();

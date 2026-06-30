@@ -59,14 +59,26 @@ const calibrationScreen = document.getElementById('calibration-screen')!;
 const tutorialScreen = document.getElementById('tutorial-screen')!;
 const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
 
-// Initialise the engine toggle from the URL param so ?engine=steam pre-checks it;
-// the checkbox is then the source of truth at Begin (it can override the param).
-if (engineToggle) {
-  engineToggle.checked = selectBackendFromSearch(location.search) === 'steam';
-}
-
 const onboarding = new OnboardingStore();
 const settings = new SettingsStore();
+
+/**
+ * Resolve the effective high-fidelity (Steam Audio) engine preference. A SAVED
+ * Settings preference wins (the user expressed an explicit choice); otherwise the
+ * `?engine=steam` URL param decides. This is the single source of truth read by the
+ * Settings toggle, the Begin-screen checkbox seeding, and the Begin handler.
+ */
+function steamEnginePref(): boolean {
+  if (settings.hasSteamEnginePref()) return settings.steamEngineEnabled();
+  return selectBackendFromSearch(location.search) === 'steam';
+}
+
+// Initialise the Begin-screen engine toggle from the effective preference (saved
+// Settings choice, else ?engine=steam). The checkbox stays the source of truth at
+// Begin (it can override), and the Settings toggle keeps it in sync.
+if (engineToggle) {
+  engineToggle.checked = steamEnginePref();
+}
 const trainerStore = new TrainerStore();
 const dailyStreakStore = new DailyStreakStore();
 const scoreStore = new ScoreStore();
@@ -540,9 +552,7 @@ startButton.addEventListener('click', async () => {
     let steam: SpatialBackend | null = null;
     // The checkbox is the source of truth (pre-seeded from ?engine=steam); if it's
     // absent for any reason, fall back to the URL param.
-    const wantSteam = engineToggle
-      ? engineToggle.checked
-      : selectBackendFromSearch(location.search) === 'steam';
+    const wantSteam = engineToggle ? engineToggle.checked : steamEnginePref();
     if (wantSteam) {
       say('Loading Steam Audio backend…');
       try {
@@ -683,12 +693,9 @@ startButton.addEventListener('click', async () => {
 
     teardowns.push(() => game.destroy());
 
-    // Apply the persisted "getting warmer" cue preference to this run.
-    game.setWarmerCue(settings.warmerCueEnabled());
-
     // --- Settings panel (audio mix + preferences). Opened from the ⚙ button or the
     // S key; every control wired to its existing hook, every change spoken. ---
-    setupSettings(graph, game, teardowns);
+    setupSettings(graph, teardowns);
 
     // DEBUG (?debug=1): top-down minimap + live audio readout overlay. Dev aid only;
     // dynamically imported so it costs nothing on the normal path.
@@ -995,7 +1002,7 @@ function speakControls() {
  * single place that applies + persists each pref. Reset clears trainer + daily
  * streak + onboarding/primer flags so first-run onboarding replays.
  */
-function setupSettings(graph: AudioGraph, game: Game, teardowns: Array<() => void> = []) {
+function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
   const host = document.getElementById('settings-screen');
   if (!host) return;
   settingsPanel = mountSettings(host, {
@@ -1008,10 +1015,15 @@ function setupSettings(graph: AudioGraph, game: Game, teardowns: Array<() => voi
     },
     getCompanion: () => companionEnabled(),
     setCompanion: (on) => setCompanion(on),
-    getWarmerCue: () => settings.warmerCueEnabled(),
-    setWarmerCue: (on) => {
-      settings.setWarmerCueEnabled(on);
-      game.setWarmerCue(on);
+    // High-fidelity (Steam Audio) engine. Persisted only — the backend is built at
+    // Begin, so switching mid-session can't hot-swap the live graph; the next level
+    // start honours the stored choice (see the Begin handler's wantSteam below). The
+    // Begin-screen toggle + ?engine=steam URL stay valid; this is an extra control.
+    getSteamEngine: () => steamEnginePref(),
+    setSteamEngine: (on) => {
+      settings.setSteamEngineEnabled(on);
+      // Keep the Begin-screen checkbox in sync so returning to it shows the choice.
+      if (engineToggle) engineToggle.checked = on;
     },
     getSwap: () => onboarding.swap(),
     setSwap: (on) => {

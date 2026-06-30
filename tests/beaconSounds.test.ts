@@ -2,36 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   bellPartials, musicboxNotes, semitoneToFreq, resolveBeaconPreset,
   isBeaconPreset, beaconPresetNames, beaconTiming, DEFAULT_BEACON_PRESET,
-  MUSICBOX_MOTIF, proximityGain,
+  MUSICBOX_MOTIF,
 } from '../src/game/beaconSounds';
 import { emptyLevel, isLevel, type Level } from '../src/level/schema';
-
-describe('proximityGain ("getting warmer" cue)', () => {
-  it('is louder closer and quieter far away (monotonic)', () => {
-    const near = proximityGain(0.8);
-    const mid = proximityGain(4);
-    const far = proximityGain(8);
-    expect(near).toBeGreaterThan(mid);
-    expect(mid).toBeGreaterThan(far);
-  });
-  it('NEVER exceeds unity — it ducks toward farGain when far, returns to unity up close', () => {
-    // Regression guard: a >1 boost overdrove the master limiter (crackle at rest).
-    expect(proximityGain(0.8)).toBeCloseTo(1.0, 6); // near = unity, not 1.8
-    expect(proximityGain(0)).toBeCloseTo(1.0, 6);
-    expect(proximityGain(8)).toBeCloseTo(0.55, 6); // far = ducked default
-    expect(proximityGain(50)).toBeCloseTo(0.55, 6);
-  });
-  it('honors configured near/far gains', () => {
-    expect(proximityGain(0.8, 0.8, 8, 1.0, 0.4)).toBeCloseTo(1.0, 6);
-    expect(proximityGain(8, 0.8, 8, 1.0, 0.4)).toBeCloseTo(0.4, 6);
-  });
-  it('stays bounded ≤ unity and finite for degenerate input', () => {
-    expect(proximityGain(Infinity)).toBe(1); // nearGain default
-    const g = proximityGain(3);
-    expect(g).toBeGreaterThanOrEqual(0.55);
-    expect(g).toBeLessThanOrEqual(1.0);
-  });
-});
 
 describe('beacon preset recipes', () => {
   it('bell partials scale with base frequency and ring down', () => {

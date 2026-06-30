@@ -2,7 +2,7 @@
  * Settings persistence (6C) — a thin, testable localStorage wrapper for the new
  * audio/preference settings that don't already live in onboardingStore:
  *   - master VOLUME (0..1, stored as a percent-derived float)
- *   - the "getting warmer" proximity CUE on/off
+ *   - the high-fidelity (Steam Audio) ENGINE preference on/off
  *
  * Companion-voice and L/R swap already have homes in onboardingStore (COMPANION_KEY,
  * SWAP_KEY); the settings PANEL wires those through onboardingStore directly. This
@@ -15,7 +15,10 @@
  */
 
 export const MASTER_VOLUME_KEY = 'ps.settings.masterVolume';
-export const WARMER_CUE_KEY = 'ps.settings.warmerCue';
+// High-fidelity (Steam Audio) engine preference. Mirrors the Begin-screen / URL
+// `?engine=steam` choice so the in-game Settings toggle can persist it; honoured by
+// the NEXT level start (the audio backend is constructed at Begin, not hot-swapped).
+export const STEAM_ENGINE_KEY = 'ps.settings.steamEngine';
 // Spoken-voice (Web Speech / TTS) prefs (8A). TTS is OPT-IN: default OFF so a
 // screen-reader user isn't double-spoken by both their AT and our synthesis.
 export const TTS_ENABLED_KEY = 'ps.settings.ttsEnabled';
@@ -119,16 +122,19 @@ export class SettingsStore {
   }
 
   /**
-   * "Getting warmer" cue on/off. DEFAULTS TO ON when never set (the historical
-   * behaviour), and is remembered once toggled.
+   * High-fidelity (Steam Audio) engine on/off. `hasSteamEnginePref()` distinguishes
+   * "never set" from an explicit choice, so a URL `?engine=steam` can still take
+   * precedence at Begin when the user hasn't expressed a Settings preference.
+   * DEFAULTS TO OFF (our own engine) when unset.
    */
-  warmerCueEnabled(): boolean {
-    const v = this.read(WARMER_CUE_KEY);
-    if (v == null) return true; // unset ⇒ default ON
-    return v === '1';
+  hasSteamEnginePref(): boolean {
+    return this.read(STEAM_ENGINE_KEY) != null;
   }
-  setWarmerCueEnabled(on: boolean) {
-    this.write(WARMER_CUE_KEY, on ? '1' : '0');
+  steamEngineEnabled(): boolean {
+    return this.read(STEAM_ENGINE_KEY) === '1';
+  }
+  setSteamEngineEnabled(on: boolean) {
+    this.write(STEAM_ENGINE_KEY, on ? '1' : '0');
   }
 
   /**

@@ -6,7 +6,7 @@ import {
   volumeToPercent,
   DEFAULT_MASTER_VOLUME,
   MASTER_VOLUME_KEY,
-  WARMER_CUE_KEY,
+  STEAM_ENGINE_KEY,
   TTS_ENABLED_KEY,
   TTS_VOICE_KEY,
   TTS_RATE_KEY,
@@ -84,19 +84,23 @@ describe('SettingsStore master volume', () => {
   });
 });
 
-describe('SettingsStore warmer cue', () => {
-  it('defaults ON when unset', () => {
-    expect(new SettingsStore(memStorage()).warmerCueEnabled()).toBe(true);
+describe('SettingsStore steam engine preference', () => {
+  it('defaults OFF and unset when never chosen', () => {
+    const s = new SettingsStore(memStorage());
+    expect(s.steamEngineEnabled()).toBe(false);
+    expect(s.hasSteamEnginePref()).toBe(false);
   });
-  it('get/set round-trips and persists', () => {
+  it('get/set round-trips, persists, and records that a pref exists', () => {
     const backing = memStorage();
     const s = new SettingsStore(backing);
-    s.setWarmerCueEnabled(false);
-    expect(s.warmerCueEnabled()).toBe(false);
-    expect(backing.map.get(WARMER_CUE_KEY)).toBe('0');
-    expect(new SettingsStore(backing).warmerCueEnabled()).toBe(false);
-    s.setWarmerCueEnabled(true);
-    expect(s.warmerCueEnabled()).toBe(true);
+    s.setSteamEngineEnabled(true);
+    expect(s.steamEngineEnabled()).toBe(true);
+    expect(s.hasSteamEnginePref()).toBe(true);
+    expect(backing.map.get(STEAM_ENGINE_KEY)).toBe('1');
+    expect(new SettingsStore(backing).steamEngineEnabled()).toBe(true);
+    s.setSteamEngineEnabled(false);
+    expect(s.steamEngineEnabled()).toBe(false);
+    expect(s.hasSteamEnginePref()).toBe(true); // explicit OFF still counts as a pref
   });
 });
 
@@ -168,8 +172,8 @@ describe('SettingsStore without storage (degrades to memory)', () => {
   it('keeps the session consistent', () => {
     const s = new SettingsStore(null);
     s.setMasterVolume(0.3);
-    s.setWarmerCueEnabled(false);
+    s.setSteamEngineEnabled(true);
     expect(s.masterVolume()).toBe(0.3);
-    expect(s.warmerCueEnabled()).toBe(false);
+    expect(s.steamEngineEnabled()).toBe(true);
   });
 });

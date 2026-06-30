@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { beginLevel, liveText } from './helpers';
-import { MASTER_VOLUME_KEY } from '../src/ui/settingsStore';
+import { MASTER_VOLUME_KEY, STEAM_ENGINE_KEY } from '../src/ui/settingsStore';
 import { COMPANION_KEY } from '../src/ui/onboardingStore';
 
 /**
@@ -33,6 +33,15 @@ test('settings: open, toggle companion off (persists), set volume, reset', async
   await expect
     .poll(() => page.evaluate((k) => localStorage.getItem(k), MASTER_VOLUME_KEY))
     .toBe('0.3');
+
+  // High-fidelity (Steam Audio) engine toggle → persists its preference (applies on
+  // the next level start; this is the in-game mirror of the Begin-screen toggle).
+  const engine = page.getByLabel('High-fidelity audio (Steam Audio)');
+  await expect(engine).not.toBeChecked(); // default OFF (our engine)
+  await engine.check();
+  await expect
+    .poll(() => page.evaluate((k) => localStorage.getItem(k), STEAM_ENGINE_KEY))
+    .toBe('1');
 
   // Reset progress: first click arms (label changes + spoken confirm), second confirms.
   const reset = page.getByRole('button', { name: /reset progress/i });
