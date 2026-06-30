@@ -220,3 +220,10 @@ levels verified as built (careful route survivable, loud route caught, decoy lur
 - **8B Scoring + per-level bests** (agent `a4b33b0b…`): time/claps per level, localStorage
   bests, "New best!" announce; seeds a leaderboard. Owns scoreStore + game.ts instrumentation.
 - Both touch main.ts (different spots) — commit carefully. Then **8C** sandbox generator.
+
+**8A Web Speech TTS** done (agent reported): optional spoken voice, default OFF
+(screen-reader double-speak avoidance), graceful fallback, settings voice/rate/pitch +522
+tests. NOT yet committed — 8A and 8B are ENTANGLED in main.ts/game.ts (8B wove ScoreStore/
+announceCompletion in alongside 8A's Speech). 8B (`a4b33b0b…`) still running. Plan: commit
+8A+8B TOGETHER as one "engagement layer" commit when 8B reports (splitting interwoven hunks
+is error-prone). Tree currently green (522, tsc clean).
