@@ -429,6 +429,7 @@ export function loadLevel(level: Level): LoadedLevel {
     // (today's behaviour), so old levels and the default room are unchanged.
     clapBudget: level.clapBudget,
     clapCooldownMs: level.clapCooldownMs,
+    decoyBudget: level.decoyBudget,
     speedOfSound,
   };
   // "Find the absorber" mode: target the first absorber patch's wall region.
@@ -437,6 +438,13 @@ export function loadLevel(level: Level): LoadedLevel {
     const w = absorberWorldPos(level, firstAbsorber);
     game.goal = 'absorber';
     game.goalTarget = { x: w.x, z: w.z };
+  }
+  // "Stealth / escape" mode: the win target is the exit (reuses the same
+  // goalTarget plumbing as absorber mode). The first beacon stays audible as the
+  // exit's locator sound, so the player can home in on it by ear.
+  if (level.goal === 'escape' && level.exit) {
+    game.goal = 'escape';
+    game.goalTarget = { x: level.exit.x, z: level.exit.z };
   }
   // Open levels have no enclosing box — only the free-standing walls you placed.
   // Built at t=0 (rest pose); for moving-wall levels the live loop re-derives the

@@ -221,11 +221,20 @@ export interface Level {
    * Win objective. Absent or 'beacon' ⇒ today's behaviour (navigate to the first
    * beacon). 'absorber' ⇒ "find the absorber" mode: the goal is the wall region in
    * front of the first `absorbers` patch, and the beacon is silenced (the clap
-   * reveals the room; the dead spot reveals the foam). See game.ts.
+   * reveals the room; the dead spot reveals the foam). 'escape' ⇒ "stealth" mode:
+   * the goal is to reach `exit` UNCAUGHT past the noise-hunting monster(s); the
+   * beacon (if any) acts as the exit's locator sound. See game.ts.
    */
-  goal?: 'beacon' | 'absorber';
+  goal?: 'beacon' | 'absorber' | 'escape';
   /** Absorptive wall patches (optional). The first is the goal in 'absorber' mode. */
   absorbers?: WallPatch[];
+  /** Exit location (used when goal === 'escape'): reach it uncaught to win. */
+  exit?: Vec2;
+  /**
+   * Throw-a-sound decoy budget (stealth verb). Number of decoys the player may
+   * throw this level. Absent/undefined ⇒ unlimited. See game.ts `throwDecoy`.
+   */
+  decoyBudget?: number;
 
   start: StartPoint;
   beacons: BeaconObj[];

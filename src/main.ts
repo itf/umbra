@@ -336,6 +336,8 @@ startButton.addEventListener('click', async () => {
       outcome = result;
       say(outcome === 'won' ? 'You win.' : 'Caught!');
     };
+    // Throttle the "You were heard!" cue (loud floors fire it on every step).
+    let lastHeardMs = -Infinity;
     const game = new Game(graph, renderer, LEVEL, {
       onStep: (foot, stride) =>
         say(`Step ${foot === 'L' ? 'left' : 'right'} (${stride.toFixed(2)} m).`),
@@ -353,12 +355,31 @@ startButton.addEventListener('click', async () => {
         endRun('won');
         alert(LEVEL.goal === 'absorber'
           ? 'You found the absorber. Level complete!'
-          : 'You reached the beacon. Level complete!');
+          : LEVEL.goal === 'escape'
+            ? 'You slipped past — escaped!'
+            : 'You reached the beacon. Level complete!');
       },
       onCaught: () => {
         // The monster physically reached you — a loss, distinct from a win.
         endRun('caught');
         alert('A monster caught you. Press start to try again.');
+      },
+      // Stealth feedback: the player made a noise loud enough to be heard. Assertive
+      // so it cuts through routine step chatter. Throttled so a loud floor doesn't
+      // spam every footfall.
+      onHeard: () => {
+        if (ended) return;
+        const now = performance.now();
+        if (now - lastHeardMs < 1500) return;
+        lastHeardMs = now;
+        alert('You were heard!');
+      },
+      // The decoy verb landed: announce it (eyes-free), with remaining budget when limited.
+      onDecoy: (remaining) => {
+        const left = Number.isFinite(remaining)
+          ? ` ${remaining} ${remaining === 1 ? 'decoy' : 'decoys'} left.`
+          : '';
+        alert(`Decoy thrown.${left}`);
       },
       onProgress: (d) => updateFootHints(d),
     }, undefined, steam, interpRenderer);
@@ -377,6 +398,7 @@ startButton.addEventListener('click', async () => {
         // Step with an explicit monotonic timestamp so alternation/cadence rules are
         // satisfied deterministically (no real-time flakiness). Mirrors a key press.
         step: (foot: 'L' | 'R', nowMs: number) => { if (!ended) game.step(foot, nowMs); },
+        throwDecoy: (nowMs?: number) => game.throwDecoy(nowMs),
         won: () => outcome === 'won',
         outcome: () => outcome,
       };
@@ -411,6 +433,11 @@ startButton.addEventListener('click', async () => {
       if (e.repeat) return;
       if (e.key === 'a' || e.key === 'A') doStep('L');
       else if (e.key === 'l' || e.key === 'L') doStep('R');
+      else if (e.key === 't' || e.key === 'T') {
+        // Throw a sound decoy — pulls the noise-hunter toward where it lands. No-op
+        // (and a spoken cue) when out of decoys; announcement is via onDecoy.
+        if (!ended && !game.throwDecoy()) alert('No decoys left.');
+      }
       else if (e.key === '?' || e.key === 'h' || e.key === 'H') speakControls();
     });
 
@@ -428,7 +455,17 @@ startButton.addEventListener('click', async () => {
       requestAnimationFrame(footLoop);
     };
     footLoop();
-    say('Walk to the beacon ahead. Alternate left and right steps — and don\'t rush.');
+    // Mode-aware objective, spoken (eyes-free). Escape/stealth gets its own brief.
+    if (LEVEL.goal === 'escape') {
+      alert(
+        'Reach the exit without being heard. A monster hunts the noise you make — ' +
+        'tread on carpet to stay quiet, avoid the gravel, and press T to throw a decoy.',
+      );
+    } else if (LEVEL.goal === 'absorber') {
+      say('Clap to hear the room, then walk to the dead spot where the echo is swallowed.');
+    } else {
+      say('Walk to the beacon ahead. Alternate left and right steps — and don\'t rush.');
+    }
   } catch (err) {
     console.error(err);
     alert('Could not start audio: ' + (err as Error).message);
@@ -530,6 +567,7 @@ function speakControls() {
     'Controls: Left and Right arrows turn; hold Shift to turn farther. ' +
     'A steps with your left foot, L with your right — alternate them and do not rush. ' +
     'Echo button or the Listen control claps to hear the room. ' +
+    'T throws a sound decoy to lure a monster away from you. ' +
     'Press question mark or H to hear this again.',
   );
 }

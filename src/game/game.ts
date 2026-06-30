@@ -18,7 +18,9 @@ import {
   makeMonster,
   updateMonster,
   caught as monsterCaught,
+  decayedLoudness,
   DEFAULT_CATCH_RADIUS,
+  DEFAULT_NOISE_THRESHOLD,
   type MonsterState,
 } from './monster';
 import { MonsterVoice, resolveMonsterPreset } from './monsterSounds';
@@ -50,8 +52,8 @@ export interface GameLevel {
    * region in front of an absorber patch) instead of the beacon, and the beacon is
    * silenced. Absent ⇒ normal beacon game (unchanged).
    */
-  goal?: 'beacon' | 'absorber';
-  /** World position of the absorber goal (used when goal === 'absorber'). */
+  goal?: 'beacon' | 'absorber' | 'escape';
+  /** World position of the goal (used when goal === 'absorber' or 'escape'). */
   goalTarget?: { x: number; z: number };
   headHeight?: number;
   /** Default floor material when not standing in any zone. */
@@ -64,6 +66,8 @@ export interface GameLevel {
   monsters?: MonsterSpawn[];
   /** Real-proximity radius (m) at which a monster catches the player. */
   catchRadius?: number;
+  /** Throw-a-sound decoy budget (undefined ⇒ unlimited). */
+  decoyBudget?: number;
   /** Max clap/echo probes for the level (0/undefined ⇒ unlimited). */
   clapBudget?: number;
   /** Minimum ms between consecutive claps (0/undefined ⇒ no cooldown). */
@@ -121,6 +125,14 @@ export interface GameCallbacks {
   onProgress?: (distance: number) => void;
   /** Fired whenever the player makes noise (step/stumble/bump). Foundation for monster AI. */
   onNoise?: (event: NoiseEvent) => void;
+  /**
+   * Fired when the player makes a noise LOUD ENOUGH for a monster to hear (its
+   * decayed loudness clears the attraction threshold) — the "You were heard!" cue.
+   * Only fires when the level actually has monsters. Foundation for stealth feedback.
+   */
+  onHeard?: (event: NoiseEvent) => void;
+  /** Fired when a decoy is thrown (for the spoken "Decoy thrown." cue + budget). */
+  onDecoy?: (remaining: number) => void;
 }
 
 export class Game {
@@ -299,6 +311,7 @@ export class Game {
       }
     }
 
+    this.setDecoyBudget(level.decoyBudget);
     this.syncListener();
     // Solve the modeled beacon once for the start pose so the very first frame of
     // audio is already correct (occluded/diffracted as appropriate), rather than
@@ -466,6 +479,10 @@ export class Game {
       distance: this.player.distanceTo(this.winTarget().x, this.winTarget().z),
       engine: this.steam ? 'steam' : this.interpRenderer ? 'interp' : 'legacy',
       reflections: this.modeledBeacon?.debugReflections() ?? [],
+      decoysLeft: this.decoysLeft,
+      monster: this.monsters[0]
+        ? { x: this.monsters[0].state.x, z: this.monsters[0].state.z }
+        : null,
     };
   }
 
@@ -565,7 +582,7 @@ export class Game {
         this.player.state.z = before.z;
         this.footsteps.bump(hitWall.material);
         // Loud noise spike at the bump position (where the player still stands).
-        this.noise.emit(makeNoiseEvent('bump', before.x, before.z, hitWall.material, nowMs));
+        this.emitNoise(makeNoiseEvent('bump', before.x, before.z, hitWall.material, nowMs));
         this.cb.onStumble?.('wall');
         this.syncListener();
         return;
@@ -576,7 +593,7 @@ export class Game {
       this.footsteps.step(result.outcome.foot, floorMat);
       // Positioned noise at the step's landing point; loudness from the floor
       // material (loud on gravel, near-silent on carpet/foam).
-      this.noise.emit(makeNoiseEvent('step', s.x, s.z, floorMat, nowMs));
+      this.emitNoise(makeNoiseEvent('step', s.x, s.z, floorMat, nowMs));
       this.cb.onStep?.(result.outcome.foot, result.outcome.stride);
       // AUDIO-ONLY glide: sweep the audio listener from where it currently IS
       // (the glide's current pose — so a step landing mid-glide retargets without
@@ -589,9 +606,90 @@ export class Game {
     } else {
       this.footsteps.stumble();
       // Loud noise spike at the player's position (stumbling is loud on any floor).
-      this.noise.emit(makeNoiseEvent('stumble', s.x, s.z, this.floorMaterialAt(s.x, s.z), nowMs));
+      this.emitNoise(makeNoiseEvent('stumble', s.x, s.z, this.floorMaterialAt(s.x, s.z), nowMs));
       this.cb.onStumble?.(result.outcome.reason);
     }
+  }
+
+  /**
+   * Emit a player noise into the tracker AND, when the level has monsters, fire
+   * the `onHeard` cue if this noise is loud enough RIGHT NOW to attract a monster
+   * (its decayed loudness clears the attraction threshold) — the "You were heard!"
+   * stealth feedback. Mirrors the monster's own retarget test so the cue and the
+   * AI agree about what's audible.
+   */
+  private emitNoise(event: NoiseEvent) {
+    this.noise.emit(event);
+    if (this.monsters.length === 0) return;
+    if (decayedLoudness(event, event.tMs) >= DEFAULT_NOISE_THRESHOLD) {
+      this.cb.onHeard?.(event);
+    }
+  }
+
+  /** Remaining decoy throws (Infinity ⇒ unlimited). */
+  private decoysLeft = Infinity;
+  /** Set the decoy budget (number of throws; omit/undefined ⇒ unlimited). */
+  setDecoyBudget(n: number | undefined) {
+    this.decoysLeft = n == null ? Infinity : Math.max(0, n);
+  }
+  /** Decoys still available to throw. */
+  get decoyBudget(): number { return this.decoysLeft; }
+
+  /**
+   * THROW A SOUND DECOY (the stealth verb). Lands a loud one-shot noise a few
+   * metres ahead of the player's facing: emits a `NoiseEvent` at the landing spot
+   * (so the noise-hunting monster investigates THERE instead of the player's trail)
+   * and plays a short spatialized clack at that position. Eyes-free: the caller
+   * announces "Decoy thrown." via `onDecoy`. Returns false (no-op) when the run has
+   * ended or the decoy budget is exhausted.
+   */
+  throwDecoy(nowMs = this.graph.ctx.currentTime * 1000): boolean {
+    if (this.ended) return false;
+    if (this.decoysLeft <= 0) return false;
+    const s = this.player.state;
+    // Land it DECOY_THROW_DIST metres ahead of the player's facing (yaw 0 = -z).
+    const dist = 4;
+    const lx = s.x + Math.sin(s.yaw) * dist;
+    const lz = s.z - Math.cos(s.yaw) * dist;
+    // A loud, fresh noise at the landing point — out-weighting the player's own
+    // (typically quieter, fading) trail so the monster commits to the decoy.
+    this.noise.emit({ x: lx, z: lz, loudness: 1.0, kind: 'bump', tMs: nowMs });
+    // A short spatialized clack at the landing spot through a one-shot HRTF source.
+    this.playClack(lx, lz);
+    if (this.decoysLeft !== Infinity) this.decoysLeft -= 1;
+    this.cb.onDecoy?.(this.decoysLeft);
+    return true;
+  }
+
+  /**
+   * A short pebble-clack played at world (x,z) through a transient positioned voice
+   * (the active engine's spatializer), so the decoy lands audibly out there. The
+   * voice tears itself down once the clack finishes. Ear-cue only (not unit-tested).
+   */
+  private playClack(x: number, z: number) {
+    const ctx = this.graph.ctx;
+    const voice = this.makePositionedSource();
+    voice.setPosition(x, this.headHeight, z);
+    const t = ctx.currentTime;
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.8, t + 0.005);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    // A bright noise burst + a click tone for a pebble "tock".
+    const n = Math.ceil(0.12 * ctx.sampleRate);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 1400;
+    bp.Q.value = 1.2;
+    noise.connect(bp).connect(env).connect(voice.input);
+    noise.start(t);
+    noise.stop(t + 0.2);
+    noise.onended = () => { try { voice.teardown(); } catch { /* noop */ } };
   }
 
   /** Floor material at a point: the topmost matching floor zone, else default. */
@@ -636,9 +734,14 @@ export class Game {
     return { x: s.x, y: this.headHeight, z: s.z, yaw: s.yaw };
   }
 
-  /** The win target: the absorber patch in 'absorber' mode, else the beacon. */
+  /**
+   * The win target: the explicit `goalTarget` in 'absorber' (the patch) or
+   * 'escape' (the exit) modes, else the beacon.
+   */
   private winTarget(): { x: number; z: number } {
-    if (this.level.goal === 'absorber' && this.level.goalTarget) return this.level.goalTarget;
+    if ((this.level.goal === 'absorber' || this.level.goal === 'escape') && this.level.goalTarget) {
+      return this.level.goalTarget;
+    }
     return { x: this.level.beacon.x, z: this.level.beacon.z };
   }
 

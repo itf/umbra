@@ -55,10 +55,12 @@ export async function debugState(page: Page) {
 export interface DebugStateShape {
   player: { x: number; z: number; yaw: number };
   beacon: { x: number; z: number };
-  goal: 'beacon' | 'absorber';
+  goal: 'beacon' | 'absorber' | 'escape';
   goalTarget: { x: number; z: number };
   distance: number;
   engine: string;
+  decoysLeft?: number;
+  monster?: { x: number; z: number } | null;
 }
 
 /** The combined ARIA live-region text (#status polite + #alerts assertive). */

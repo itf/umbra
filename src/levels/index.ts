@@ -25,6 +25,7 @@ import cathedral from './cathedral.json';
 import slowSoundVault from './slow-sound-vault.json';
 import findTheFoam from './find-the-foam.json';
 import sonarVault from './sonar-vault.json';
+import stealthEscape from './stealth-escape.json';
 
 export interface BuiltinEntry {
   id: string;
@@ -131,5 +132,11 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     name: 'Sonar Vault',
     description: 'Sonar-budget survival: a serpentine concrete-and-brick vault with only 6 claps and a long cooldown. Probe at each junction, then navigate from memory to the bell — running out of claps is spoken, not fatal.',
     json: sonarVault,
+  },
+  {
+    id: 'stealth-escape',
+    name: 'Stealth Escape',
+    description: 'Slip past a noise-hunting monster to the exit. Tread the quiet carpet corridor (not the loud gravel), and press T to throw a sound decoy that lures the monster away. Being heard or caught is spoken.',
+    json: stealthEscape,
   },
 ];
