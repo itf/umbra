@@ -106,7 +106,7 @@ export class Compass {
   setHeading(yaw: number) {
     this.yaw = yaw;
     const deg = (yaw * 180) / Math.PI;
-    this.arc.setAttribute('transform', `rotate(${deg} ${this.cx} ${this.cy})`);
+    this.arc.setAttribute('transform', `rotate(${-deg} ${this.cx} ${this.cy})`);
     // Reflect the live heading for assistive tech (a focused screen-reader user
     // hears their heading). aria-valuenow is the absolute compass bearing (0–359°,
     // 0 = start/north); aria-valuetext spells out the relative turn + direction.
@@ -205,13 +205,16 @@ export class Compass {
     });
     this.el.addEventListener('pointermove', (e) => {
       if (!this.dragging || e.pointerId !== this.pointerId) return;
-      // Drag-to-rotate, screen-relative: dragging right turns you right. We only
-      // EMIT the target here — we do NOT rotate the dial ourselves. The owner
-      // slews the heading and calls setHeading() with the actual value, so the
-      // dial always shows the true (catching-up) heading and, on release, stays
-      // exactly where the heading is rather than snapping to the drag point.
+      // Drag-to-rotate, screen-relative. We only EMIT the target yaw here — we do NOT
+      // rotate the dial ourselves. The owner slews the heading and calls setHeading()
+      // with the actual value, so the dial always shows the true (catching-up) heading
+      // and, on release, stays where the heading is rather than snapping to the drag.
       const dx = e.clientX - this.startX;
-      const target = this.startYaw + (dx / this.width) * this.radiansPerWidth;
+      // Drag delta is NEGATED into yaw: a given drag must turn you the opposite way to
+      // the previous (wrong-signed) mapping. The dial still follows the drag because
+      // setHeading rotates with whatever yaw results — only the yaw's SIGN changed.
+      // (Keyboard turning lives in main.ts and is intentionally left as-is.)
+      const target = this.startYaw - (dx / this.width) * this.radiansPerWidth;
       this.onYaw?.(target);
       e.preventDefault();
     });
