@@ -25,6 +25,7 @@ import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
+import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
 import { SettingsStore } from './ui/settingsStore';
 import { mountSettings, type SettingsPanel } from './ui/settings';
@@ -330,9 +331,13 @@ function showPicker() {
   (pickerScreen.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
 }
 
-/** Resolve a picker selection (builtin id or saved name) to a Level. */
+/** Resolve a picker selection (builtin id, saved name, or generated) to a Level. */
 async function resolveSelection(sel: PickerSelection): Promise<Level | undefined> {
   if (sel.source === 'builtin') return getBuiltin(sel.ref);
+  if (sel.source === 'generated' && sel.sandbox) {
+    // Pure, seeded, solvable in-memory level — never throws, always well-formed.
+    return generateLevel(sel.sandbox);
+  }
   return loadSavedLevel(sel.ref);
 }
 

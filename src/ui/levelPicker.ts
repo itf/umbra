@@ -14,6 +14,7 @@
  */
 import type { BuiltinInfo } from '../level/builtins';
 import type { BuiltinCategory } from '../levels';
+import { SANDBOX_MODES, DIFFICULTIES, type SandboxMode, type Difficulty } from '../game/sandbox';
 
 /** One selectable row in the picker. */
 export interface PickerItem {
@@ -70,9 +71,48 @@ export function buildPickerModel(builtins: BuiltinInfo[], savedNames: string[]):
 
 /** What a picker selection asks the host page to load. */
 export interface PickerSelection {
-  source: 'builtin' | 'saved';
+  source: 'builtin' | 'saved' | 'generated';
   ref: string;
   label: string;
+  /** Present when source === 'generated': the seed-driven generator inputs. */
+  sandbox?: { mode: SandboxMode; difficulty: Difficulty; seed: number };
+}
+
+/** Human labels for the sandbox mode dropdown. */
+export const SANDBOX_MODE_LABELS: Record<SandboxMode, string> = {
+  beacon: 'Beacon — navigate to a sound',
+  absorber: 'Absorber — find the dead spot',
+  sonar: 'Sonar — clap on a budget',
+  stealth: 'Stealth — escape the hunter',
+};
+
+/**
+ * PURE: a random-ish but SEED-ONLY new seed for the "Another" button, derived
+ * from a counter the caller advances. Keeps the generator's no-clock contract:
+ * the host passes a fresh integer (e.g. an incrementing counter) and we spread it
+ * across the 32-bit space so consecutive seeds give visibly different levels.
+ */
+export function spreadSeed(n: number): number {
+  return (Math.imul(n >>> 0, 2654435761) ^ 0x9e3779b9) >>> 0;
+}
+
+/**
+ * PURE: build the source:'generated' selection for a sandbox roll. Extracted from
+ * the DOM wiring so the (mode, difficulty, seedCounter) → PickerSelection mapping
+ * is unit-testable without a DOM. `seedCounter` is spread to a 32-bit seed.
+ */
+export function sandboxSelection(
+  mode: SandboxMode,
+  difficulty: Difficulty,
+  seedCounter: number,
+): PickerSelection {
+  const seed = spreadSeed(seedCounter);
+  return {
+    source: 'generated',
+    ref: `${mode}:${difficulty}:${seed}`,
+    label: `Sandbox ${mode} (d${difficulty})`,
+    sandbox: { mode, difficulty, seed },
+  };
 }
 
 export interface RenderOptions {
@@ -98,6 +138,9 @@ export interface RenderOptions {
 export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): PickerItem[] {
   const model = buildPickerModel(opts.builtins, opts.savedNames);
   container.replaceChildren();
+
+  // Sandbox / Freeplay first (the new endless-content entry), if enabled.
+  if (opts.onSelect) renderSandboxSection(container, opts.onSelect);
 
   for (const g of PICKER_GROUPS) {
     const rows = model.filter((m) => m.category === g.category);
@@ -148,4 +191,104 @@ export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): 
   }
 
   return model;
+}
+
+/**
+ * The SANDBOX / FREEPLAY section: a mode dropdown, a difficulty selector, and a
+ * "Generate & play" button plus an "Another" (new seed) button. Accessible —
+ * labeled controls, a live status region announcing the rolled level + seed. The
+ * generation itself is PURE (in src/game/sandbox.ts); this is the thin DOM that
+ * collects (mode, difficulty, seed) and hands them to `onSelect` as a
+ * source:'generated' selection. A starting seed counter advances on "Another".
+ */
+export function renderSandboxSection(
+  container: HTMLElement,
+  onSelect: (sel: PickerSelection) => void,
+): void {
+  const section = document.createElement('section');
+  section.className = 'picker-group sandbox-group';
+  const h = document.createElement('h2');
+  h.textContent = 'Sandbox — endless seeded levels';
+  h.id = 'picker-h-sandbox';
+  section.appendChild(h);
+
+  const p = document.createElement('p');
+  p.className = 'picker-desc';
+  p.textContent = 'Pick a mode and difficulty, then generate a fresh, solvable level. Same seed always replays the same level.';
+  section.appendChild(p);
+
+  const form = document.createElement('div');
+  form.className = 'sandbox-form';
+
+  // Mode dropdown.
+  const modeId = 'sandbox-mode';
+  const modeLabel = document.createElement('label');
+  modeLabel.htmlFor = modeId;
+  modeLabel.textContent = 'Mode';
+  const modeSel = document.createElement('select');
+  modeSel.id = modeId;
+  for (const m of SANDBOX_MODES) {
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = SANDBOX_MODE_LABELS[m];
+    modeSel.appendChild(o);
+  }
+
+  // Difficulty dropdown.
+  const diffId = 'sandbox-difficulty';
+  const diffLabel = document.createElement('label');
+  diffLabel.htmlFor = diffId;
+  diffLabel.textContent = 'Difficulty';
+  const diffSel = document.createElement('select');
+  diffSel.id = diffId;
+  for (const d of DIFFICULTIES) {
+    const o = document.createElement('option');
+    o.value = String(d);
+    o.textContent = `${d} — ${['very easy', 'easy', 'medium', 'hard', 'very hard'][d - 1]}`;
+    if (d === 3) o.selected = true;
+    diffSel.appendChild(o);
+  }
+
+  modeLabel.appendChild(modeSel);
+  diffLabel.appendChild(diffSel);
+  form.append(modeLabel, diffLabel);
+
+  // Seed counter — advanced on each "Another" so the host stays clock-free.
+  let seedCounter = 1;
+  const status = document.createElement('p');
+  status.className = 'sandbox-status';
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+
+  const read = () => ({
+    mode: modeSel.value as SandboxMode,
+    difficulty: Number(diffSel.value) as Difficulty,
+  });
+
+  const play = (newSeed: boolean) => {
+    if (newSeed) seedCounter++;
+    const { mode, difficulty } = read();
+    const sel = sandboxSelection(mode, difficulty, seedCounter);
+    status.textContent = `Generated ${SANDBOX_MODE_LABELS[mode]}, difficulty ${difficulty}, seed ${sel.sandbox!.seed.toString(36)}.`;
+    onSelect(sel);
+  };
+
+  const genBtn = document.createElement('button');
+  genBtn.type = 'button';
+  genBtn.className = 'picker-item sandbox-generate';
+  genBtn.textContent = 'Generate & play';
+  genBtn.addEventListener('click', () => play(false));
+
+  const anotherBtn = document.createElement('button');
+  anotherBtn.type = 'button';
+  anotherBtn.className = 'picker-item sandbox-another';
+  anotherBtn.textContent = 'Another (new seed)';
+  anotherBtn.addEventListener('click', () => play(true));
+
+  const btnRow = document.createElement('div');
+  btnRow.className = 'sandbox-buttons';
+  btnRow.append(genBtn, anotherBtn);
+
+  section.append(form, btnRow, status);
+  container.appendChild(section);
 }
