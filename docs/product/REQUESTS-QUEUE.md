@@ -75,3 +75,13 @@ IN FLIGHT (last item):
 REMAINING MANUAL (only the user can do): browser ear-confirm of near-field ILD, head-tracked
   Steam reflections in a maze (needs ?engine=steam-sofa + COOP/COEP + CPU profile), and the
   general NEEDS-PLAYTEST list. Suite: 622 unit + 37 e2e green.
+
+## ALL ITEMS COMPLETE (629c54a)
+- item 3/5/7 SHIPPED (`629c54a`): fork vendored (npm-install-clean, default bundle lean),
+  head-tracked reflections wired + opt-in, reflection levels raised back to material strength
+  (head-tracking makes it safe), DEFAULT_TRANSMISSION lowered ~5x. Steam maze nav fixed
+  end-to-end (pending the browser/CPU confirm).
+Every requested item is now committed. 622 unit + 37 e2e green; npm install clean; bundle lean.
+The only outstanding work is USER PLAYTEST (see NEEDS-PLAYTEST.md): near-field ILD by ear,
+head-tracked Steam reflections in a maze (?engine=steam-sofa + COOP/COEP + CPU profile),
+navigation/trainer feel, mix.
