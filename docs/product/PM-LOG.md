@@ -149,3 +149,18 @@ HRTF) + controls surfacing + per-mode primers (remembered, never re-wall). +4 te
 - **5C a11y polish** (agent `a2c1dbaa…`): compass aria-valuenow/valuetext, cardinal
   detents/ticks, custom-audio beacon warmer cue. Closes logged G1/G2/compass follow-ups.
 - Then Cycle-5 review → more levels per mode + narrative/companion voice + async-ghost.
+
+### Cycle 5 — Build COMPLETE
+- **5A Onboarding** (`a06ca3e`), **5B Editor stealth authoring** (`b609ee2`), **5C a11y
+  polish** (`491b969`). 448 unit + 20 e2e green. Foundations solid: 4 authorable modes,
+  trainer w/ daily challenge, graduated onboarding, compass a11y.
+- Cycle-5 review (`meetings/2026-06-29-cycle5-review.md`): thinner areas now are CONTENT
+  DEPTH (1-2 levels/mode) and ENGAGEMENT PULL (no narrative/companion voice).
+
+### Cycle 6 — Build (in progress, 2 parallel agents)
+- **6A Level pack** (agent `a9291ccb…`): ~8-10 new levels giving each mode a difficulty
+  arc + picker grouping; all solvability-tested. Owns src/levels/* + index.ts + levelPicker.
+- **6B Companion-voice layer** (agent `ab599eb6…`): optional characterful spoken guide
+  keyed by (mode,event), rate-limited, remembered, ?companion=off. Owns game/companion.ts +
+  main.ts wiring.
+- Then **6C** settings/mix (volume, companion toggle, reset) after 6B.
