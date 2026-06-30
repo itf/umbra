@@ -262,3 +262,9 @@ NEEDS-PLAYTEST. Cycle 9 COMPLETE.
 release-ready. Product: 4 modes, 26 levels + infinite sandbox, trainer + daily, scoring,
 companion+TTS, onboarding, settings, editor authoring, full a11y, PWA. The remaining work
 is ear-dependent (NEEDS-PLAYTEST / SESSION-HANDOFF §4) — the user's call.
+
+### Cycle 10 — Steam-SOFA integration (in progress)
+- **10A** (agent `a38c5cb7…`): wire papasangre's ?engine=steam path to use OUR SADIE SOFA
+  (via the proven `feat/sofa-hrtf` fork) instead of Steam's generic HRTF. Guard: STOP
+  cleanly if consuming the local fork is fragile (don't break the default path/bundle).
+  Completes the Steam-SOFA thread from earlier this session.
