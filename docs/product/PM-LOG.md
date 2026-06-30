@@ -99,3 +99,15 @@ absorber round-trip bug fix, validate-on-save, autosave+guard. +11 tests (350 to
 - Warmer beacon cue doesn't cover custom-audio (soundUrl) beacons — only the synth voice.
 - Editor canvas is pointer-only (screen-reader a11y of the canvas is a separate larger track).
 - Compass widget a11y + cardinal detents (G2) still open.
+
+### Cycle 4 — Build (in progress)
+- **3C e2e harness SHIPPED** (`faacebf`): Playwright, 8/8 green incl. REAL keyboard
+  completion + absorber + editor + a11y. Guards the accessibility win.
+- Cycle-3 review meeting held (`meetings/2026-06-29-cycle3-review.md`) → first new
+  game content.
+- **4A Sonar-budget survival** (agent `ad480127…`): spoken clap-budget feedback +
+  out-of-claps tension + sonar-vault level. (clap mechanic already enforced; this is the
+  experience layer.) Touches game/main + a level.
+- **4C Daily Challenge + streak** (agent `adb19ce8…`): seed-of-the-day + localStorage
+  streak + shareable score, spoken. Pure product layer. Touches trainer + a new daily module.
+- Disjoint → parallel. Then **4B Stealth** (evade noise-hunter + decoy) after 4A frees game.ts.
