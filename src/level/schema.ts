@@ -231,6 +231,14 @@ export interface Level {
   /** Exit location (used when goal === 'escape'): reach it uncaught to win. */
   exit?: Vec2;
   /**
+   * DECOUPLED WIN POINT — the place the player must reach to win, INDEPENDENT of
+   * any beacon. Absent ⇒ the win target defaults to the first beacon (today's
+   * behaviour, byte-identical). Lets a multi-beacon level have several audible
+   * beacons while winning is tied to one specific spot. Ignored in 'absorber' /
+   * 'escape' modes (those keep using `goalTarget`/`exit`).
+   */
+  winPoint?: Vec2;
+  /**
    * Throw-a-sound decoy budget (stealth verb). Number of decoys the player may
    * throw this level. Absent/undefined ⇒ unlimited. See game.ts `throwDecoy`.
    */

@@ -409,11 +409,21 @@ function perimeterSegments(level: Level) {
 export function loadLevel(level: Level): LoadedLevel {
   const first = level.beacons[0];
   const speedOfSound = sanitizeLevelSpeed(level.speedOfSound);
+  // Map ALL beacons to uniform specs; `beacon` mirrors the first (back-compat).
+  const beacon = first
+    ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
+    : { x: level.room.width / 2, z: 1, freq: 440 };
+  // A level with no beacons still gets one audible source (the synthesized fallback),
+  // matching the legacy single-beacon path exactly.
+  const beacons = level.beacons.length > 0
+    ? level.beacons.map((b) => ({ x: b.x, z: b.z, freq: b.freq, sound: b.sound, soundUrl: b.soundUrl }))
+    : [beacon];
   const game: GameLevel = {
     start: { x: level.start.x, z: level.start.z, yaw: level.start.yaw },
-    beacon: first
-      ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
-      : { x: level.room.width / 2, z: 1, freq: 440 },
+    beacon,
+    beacons,
+    // Decoupled win point: an explicit `winPoint` else the first beacon's position.
+    winTarget: level.winPoint ?? { x: beacon.x, z: beacon.z },
     goalRadius: first?.goalRadius ?? 0.8,
     headHeight: 1.6,
     floorMaterial: level.floorMaterial,

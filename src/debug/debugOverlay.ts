@@ -67,7 +67,8 @@ export class DebugOverlay {
       if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
     };
     for (const w of s.walls) for (const v of w.verts) ext(v[0], v[2]);
-    ext(s.beacon.x, s.beacon.z);
+    for (const bn of s.beacons) ext(bn.x, bn.z);
+    ext(s.goalTarget.x, s.goalTarget.z);
     ext(s.player.x, s.player.z);
     for (const m of s.monsters) ext(m.x, m.z);
     for (const f of s.floors) { ext(f.x, f.z); ext(f.x + f.w, f.z + f.d); }
@@ -121,11 +122,26 @@ export class DebugOverlay {
       ctx.arc(sx(s.goalTarget.x), sz(s.goalTarget.z), 5, 0, Math.PI * 2);
       ctx.fill();
     } else {
-      // beacon (green)
+      // ALL beacons (green dots).
       ctx.fillStyle = '#4f4';
-      ctx.beginPath();
-      ctx.arc(sx(s.beacon.x), sz(s.beacon.z), 4, 0, Math.PI * 2);
-      ctx.fill();
+      for (const bn of s.beacons) {
+        ctx.beginPath();
+        ctx.arc(sx(bn.x), sz(bn.z), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // DECOUPLED win target (yellow ring) — drawn only when it isn't sitting on
+      // top of a beacon (i.e. an explicit winPoint distinct from every beacon).
+      const eps = 0.05;
+      const onABeacon = s.beacons.some(
+        (bn) => Math.abs(bn.x - s.goalTarget.x) < eps && Math.abs(bn.z - s.goalTarget.z) < eps,
+      );
+      if (!onABeacon) {
+        ctx.strokeStyle = '#ff4';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(sx(s.goalTarget.x), sz(s.goalTarget.z), 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     // player (cyan) + heading arrow. yaw: 0 faces -z; +yaw turns right (toward +x).

@@ -44,9 +44,31 @@ export interface MonsterSpawn {
   soundUrl?: string;
 }
 
+/** One beacon's placement + voice spec (a positioned, audible source). */
+export interface BeaconSpec {
+  x: number; z: number; freq: number; sound?: BeaconPreset; soundUrl?: string;
+}
+
 export interface GameLevel {
   start: { x: number; z: number; yaw: number };
-  beacon: { x: number; z: number; freq: number; sound?: BeaconPreset; soundUrl?: string };
+  /**
+   * The FIRST beacon (= `beacons[0]`). Kept as a single field for back-compat
+   * readers (tests, the win-target default) — DO NOT remove. The full set the game
+   * spatializes is `beacons` below; for a single-beacon level the two are the same.
+   */
+  beacon: BeaconSpec;
+  /**
+   * ALL beacons in the level. Each gets its own spatializer (chosen by the same
+   * steam/modeled/interp/plain logic) + its own voice. A length-1 array behaves
+   * byte-identically to the legacy single-beacon path. `beacon` mirrors `beacons[0]`.
+   */
+  beacons: BeaconSpec[];
+  /**
+   * DECOUPLED WIN TARGET — the place to reach to win in normal ('beacon') mode,
+   * independent of any beacon. Absent ⇒ defaults to `beacons[0]` (today's
+   * behaviour). 'absorber'/'escape' modes keep using `goalTarget`.
+   */
+  winTarget?: { x: number; z: number };
   /** Win when within this many metres of the beacon. */
   goalRadius: number;
   /**
@@ -118,6 +140,25 @@ export interface PositionedVoice {
   teardown(): void;
 }
 
+/**
+ * One beacon's full audio runtime: the chosen spatializer (exactly one of
+ * plain/interp/modeled/steam, picked by the SAME logic the single beacon used),
+ * the dry-voice `input` + master-bound `output` (the fade target), and its own
+ * synth voice / custom loop. A length-1 array of these reproduces the legacy
+ * single-beacon wiring byte-for-byte.
+ */
+interface BeaconUnit {
+  spec: BeaconSpec;
+  input: GainNode;
+  output: GainNode;
+  voice: BeaconVoice | null;
+  custom: AudioBufferSourceNode | null;
+  plain: HrtfSource | null;
+  interp: InterpolatingHrtfSource | null;
+  modeled: ModeledSource | null;
+  steam: SteamSourceHandle | null;
+}
+
 export interface GameCallbacks {
   onStep?: (foot: Foot, stride: number) => void;
   onStumble?: (reason: string) => void;
@@ -160,40 +201,24 @@ export class Game {
    */
   private noise: NoiseTracker;
   /**
-   * The plain straight-line beacon source — used as a FALLBACK when the level has
-   * no acoustic geometry (`acousticWalls`). When geometry IS present the beacon is
-   * the `modeledBeacon` below instead (occlusion + diffraction), and this is null.
-   */
-  private beacon: HrtfSource | null = null;
-  /**
    * Optional CLICK-FREE interpolating HRTF renderer (?hrtf=interp). When provided
-   * AND the level has no acoustic geometry/steam, the beacon is rendered through the
+   * AND the level has no acoustic geometry/steam, beacons are rendered through the
    * AudioWorklet that continuously interpolates the measured HRIRs (no convolver
-   * swap → no bucket-crossing click). A/B against the dual-convolver beacon above.
+   * swap → no bucket-crossing click). Engine-level (shared by all units).
    */
   private interpRenderer: InterpolatingHrtfRenderer | null = null;
-  private interpBeacon: InterpolatingHrtfSource | null = null;
   /**
-   * The MODELED beacon: the dry voice rendered through the room solver so walls
-   * occlude it and openings let it diffract through. Non-null iff the level has
-   * acoustic geometry. Driven by `refreshBeacon()` on the per-frame throttle.
-   */
-  private modeledBeacon: ModeledSource | null = null;
-  /**
-   * Optional Steam Audio backend (when `?engine=steam`). When set, the beacon is a
-   * `steamBeacon` source driven through it, and both `beacon`/`modeledBeacon` above
-   * are null. Its listener + `step` are driven each frame from `tick`. Null on the
-   * default (our-engine) path.
+   * Optional Steam Audio backend (when `?engine=steam`). When set, each beacon is a
+   * Steam Audio source driven through it. Its listener + `step` are driven each
+   * frame from `tick`. Null on the default (our-engine) path. Engine-level.
    */
   private steam: SpatialBackend | null = null;
-  private steamBeacon: SteamSourceHandle | null = null;
-  /** The dry-voice input node + the master-bound output node, whichever beacon is live. */
-  private beaconInput!: GainNode;
-  private beaconOutput!: GainNode;
-  /** The synthesized beacon voice (null while a custom audio file is playing). */
-  private beaconVoice: BeaconVoice | null = null;
-  /** Looping custom-audio source, when `soundUrl` loaded successfully. */
-  private beaconCustom: AudioBufferSourceNode | null = null;
+  /**
+   * Every beacon, as a uniform unit. Each picks its spatializer by the SAME
+   * steam/modeled/interp/plain logic and carries its own voice/custom loop. A
+   * length-1 array is byte-identical to the legacy single-beacon path.
+   */
+  private beacons: BeaconUnit[] = [];
   private headHeight: number;
   private won = false;
   private caught = false;
@@ -284,36 +309,17 @@ export class Game {
     // solver (occlusion + diffraction); otherwise fall back to the plain
     // straight-line HrtfSource. Either way `beaconInput` is where the dry voice
     // feeds and `beaconOutput` is the master-bound output.
-    if (this.steam) {
-      // Steam Audio path: the beacon's dry voice feeds a Steam Audio source. The
-      // level geometry is pushed into the Steam Audio scene; the listener + source
-      // positions + world.step are driven from the game loop (applyAudioPose/tick).
-      this.steam.setGeometry(level.acousticWalls ?? []);
-      this.steamBeacon = this.steam.createSource();
-      this.beaconInput = this.steamBeacon.input as GainNode;
-      this.beaconOutput = this.steamBeacon.output as GainNode;
-    } else if (level.acousticWalls && level.acousticWalls.length > 0) {
-      // Pass the interpolating renderer (?hrtf=interp) so the modeled beacon's
-      // REFLECTIONS are rendered through the click-free, head-tracked worklet instead
-      // of the convolver buffer-swap (the turn-click). null → old convolver fallback.
-      this.modeledBeacon = new ModeledSource(graph.ctx, graph.master, renderer.set, this.interpRenderer);
-      this.beaconInput = this.modeledBeacon.input;
-      this.beaconOutput = this.modeledBeacon.output;
-      // (the initial solve happens at the end of the constructor, once the start
-      // pose is set — see this.refreshBeacon() below)
-    } else if (this.interpRenderer) {
-      // CLICK-FREE path: render the beacon through the interpolating worklet.
-      this.interpBeacon = this.interpRenderer.createSource();
-      this.interpBeacon.output.connect(graph.master);
-      this.beaconInput = this.interpBeacon.input;
-      this.beaconOutput = this.interpBeacon.output;
-    } else {
-      this.beacon = renderer.createSource();
-      this.beacon.output.connect(graph.master);
-      this.beaconInput = this.beacon.input;
-      this.beaconOutput = this.beacon.output;
+    // Steam Audio path: the level geometry is pushed into the Steam Audio scene
+    // ONCE (shared by all beacon sources). Per-unit sources are created below.
+    if (this.steam) this.steam.setGeometry(level.acousticWalls ?? []);
+    // Build one uniform unit per beacon, each choosing its spatializer by the SAME
+    // steam/modeled/interp/plain logic, and start its voice. For a single-beacon
+    // level this is byte-identical to the legacy singular wiring.
+    for (const spec of level.beacons) {
+      const u = this.makeBeaconUnit(spec);
+      this.beacons.push(u);
+      this.startBeaconSource(u);
     }
-    this.startBeaconSource();
 
     // Monsters: a PURE AI state + a looping growl through its own HrtfSource so it's
     // locatable by ear and Dopplers as it chases. No-op when the level has none.
@@ -356,6 +362,49 @@ export class Game {
   }
 
   /**
+   * Build ONE beacon's spatializer unit, choosing exactly one engine branch by the
+   * SAME priority the single beacon used: steam → modeled (acoustic geometry) →
+   * interp (?hrtf=interp) → plain HrtfSource. `input` is where the dry voice feeds,
+   * `output` is the master-bound gain (the fade target). The Steam scene geometry is
+   * set ONCE by the caller before the unit loop (not here).
+   */
+  private makeBeaconUnit(spec: BeaconSpec): BeaconUnit {
+    const graph = this.graph;
+    const level = this.level;
+    const u: BeaconUnit = {
+      spec, input: null as unknown as GainNode, output: null as unknown as GainNode,
+      voice: null, custom: null, plain: null, interp: null, modeled: null, steam: null,
+    };
+    if (this.steam) {
+      // Steam Audio path: the beacon's dry voice feeds a Steam Audio source. The
+      // listener + source positions + world.step are driven from the game loop.
+      u.steam = this.steam.createSource();
+      u.input = u.steam.input as GainNode;
+      u.output = u.steam.output as GainNode;
+    } else if (level.acousticWalls && level.acousticWalls.length > 0) {
+      // Pass the interpolating renderer (?hrtf=interp) so the modeled beacon's
+      // REFLECTIONS are rendered through the click-free, head-tracked worklet instead
+      // of the convolver buffer-swap (the turn-click). null → old convolver fallback.
+      u.modeled = new ModeledSource(graph.ctx, graph.master, this.renderer.set, this.interpRenderer);
+      u.input = u.modeled.input;
+      u.output = u.modeled.output;
+      // (the initial solve happens at the end of the constructor — refreshBeacon())
+    } else if (this.interpRenderer) {
+      // CLICK-FREE path: render the beacon through the interpolating worklet.
+      u.interp = this.interpRenderer.createSource();
+      u.interp.output.connect(graph.master);
+      u.input = u.interp.input;
+      u.output = u.interp.output;
+    } else {
+      u.plain = this.renderer.createSource();
+      u.plain.output.connect(graph.master);
+      u.input = u.plain.input;
+      u.output = u.plain.output;
+    }
+    return u;
+  }
+
+  /**
    * Create a positioned voice through the ACTIVE engine: a Steam Audio source when
    * `?engine=steam` is selected, otherwise our straight-line `HrtfSource`. Both
    * expose `{ input, output, setPosition, teardown }`, so callers (monsters today;
@@ -382,41 +431,41 @@ export class Game {
    * play it looped (fetch + decode, cached); otherwise — or on failure — play the
    * chosen synth preset (default 'tone'). Both feed `this.beacon.input`.
    */
-  private startBeaconSource() {
+  private startBeaconSource(u: BeaconUnit) {
     // "Find the absorber" mode: no beacon voice. The room is revealed by clapping;
     // the goal is the silent dead spot, so we never start a beacon sound.
     if (this.level.goal === 'absorber') return;
     // Always start the synth preset immediately so the beacon is never silent.
     // If a custom `soundUrl` is set, the shared helper loads + loops it through the
-    // SAME HrtfSource and we swap to it when it arrives; on failure the synth stays.
-    this.startSynthBeacon();
-    const url = this.level.beacon.soundUrl;
+    // SAME source and we swap to it when it arrives; on failure the synth stays.
+    this.startSynthBeacon(u);
+    const url = u.spec.soundUrl;
     if (!url) return;
     // onFallback is a no-op here: the synth is already playing as the fallback.
     // shouldStart vetoes a late buffer if the beacon was won (and faded) meanwhile.
     void attachCustomLoop(
       this.graph.ctx,
-      this.beaconInput,
+      u.input,
       url,
       () => { /* keep the synth fallback already running */ },
-      { shouldStart: () => !this.won && this.beaconCustom == null },
+      { shouldStart: () => !this.won && u.custom == null },
     ).then((handle) => {
       if (!handle.source) return;
       // Swap: the custom loop is now playing, stop the synth preset.
-      this.beaconVoice?.stop();
-      this.beaconVoice = null;
-      this.beaconCustom = handle.source;
+      u.voice?.stop();
+      u.voice = null;
+      u.custom = handle.source;
     });
   }
 
-  /** Start (or restart) the synthesized preset voice. */
-  private startSynthBeacon() {
-    const preset: BeaconPreset = resolveBeaconPreset(this.level.beacon.sound);
-    this.beaconVoice?.stop();
+  /** Start (or restart) the synthesized preset voice for one unit. */
+  private startSynthBeacon(u: BeaconUnit) {
+    const preset: BeaconPreset = resolveBeaconPreset(u.spec.sound);
+    u.voice?.stop();
     // The dry voice feeds the spatializer input directly; real 1/r distance
     // attenuation is modeled downstream in the renderer.
-    this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beaconInput, preset, this.level.beacon.freq);
-    this.beaconVoice.start();
+    u.voice = new BeaconVoice(this.graph.ctx, u.input, preset, u.spec.freq);
+    u.voice.start();
   }
 
   /**
@@ -429,25 +478,24 @@ export class Game {
     if (this.interpRenderer) {
       this.interpRenderer.setListener({ x: pose.x, y: this.headHeight, z: pose.z, yaw: this.audioYaw });
     }
-    if (this.interpBeacon) {
-      this.interpBeacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
-      return;
+    // Steam Audio path: drive its (shared) listener once. world.step is pumped from
+    // tick(). The HRTF renderer listener above is still updated for footsteps/monsters.
+    if (this.steam) this.steam.setListener(pose.x, this.headHeight, pose.z, this.audioYaw);
+    let anyModeled = false;
+    for (const u of this.beacons) {
+      if (u.interp) {
+        u.interp.setPosition(u.spec.x, this.headHeight, u.spec.z);
+      } else if (u.steam) {
+        u.steam.setPosition(u.spec.x, this.headHeight, u.spec.z);
+      } else if (u.plain) {
+        // Plain (fallback) beacon: straight-line spatializer, repositioned per frame.
+        u.plain.setPosition(u.spec.x, this.headHeight, u.spec.z);
+      } else if (u.modeled) {
+        anyModeled = true;
+      }
     }
-    if (this.steam && this.steamBeacon) {
-      // Steam Audio path: drive its listener + beacon source position. world.step
-      // (the actual sim) is pumped from tick(). The HRTF renderer listener above is
-      // still updated for footsteps/monsters (our engine), which keep using it.
-      this.steam.setListener(pose.x, this.headHeight, pose.z, this.audioYaw);
-      this.steamBeacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
-      return;
-    }
-    if (this.beacon) {
-      // Plain (fallback) beacon: straight-line spatializer, repositioned per frame.
-      this.beacon.setPosition(this.level.beacon.x, this.headHeight, this.level.beacon.z);
-    } else {
-      // Modeled beacon: re-solve the room for the new listener pose (throttled).
-      this.refreshBeacon(pose.x, pose.z);
-    }
+    // Modeled beacons: re-solve the room for the new listener pose (throttled).
+    if (anyModeled) this.refreshBeacon(pose.x, pose.z);
   }
 
   /**
@@ -458,23 +506,25 @@ export class Game {
    * beacon position comes from the level.
    */
   private refreshBeacon(lx = this.player.state.x, lz = this.player.state.z) {
-    const mb = this.modeledBeacon;
-    if (!mb) return;
-    mb.refresh({
-      walls: this.level.acousticWalls ?? [],
-      edges: this.level.acousticEdges,
-      listener: [lx, this.headHeight, lz],
-      yaw: this.audioYaw,
-      source: [this.level.beacon.x, this.headHeight, this.level.beacon.z],
-      speedOfSound: this.level.speedOfSound,
-      // Phase 2: full reflections at order 3. Energy pruning (geometry.rs) keeps the
-      // candidate search cheap, and the `orderTapCap` guard below auto-drops to a
-      // lower order on large low-absorption enclosures (cathedral-class) whose
-      // high-order chains stay audible and would otherwise blow the IR-build budget.
-      maxOrder: 3,
-      orderTapCap: 24,
-      scattering: this.level.acousticScattering ?? 0.1,
-    });
+    for (const u of this.beacons) {
+      if (!u.modeled) continue;
+      u.modeled.refresh({
+        walls: this.level.acousticWalls ?? [],
+        edges: this.level.acousticEdges,
+        listener: [lx, this.headHeight, lz],
+        yaw: this.audioYaw,
+        source: [u.spec.x, this.headHeight, u.spec.z],
+        speedOfSound: this.level.speedOfSound,
+        // Phase 2: full reflections at order 3. Energy pruning (geometry.rs) keeps the
+        // candidate search cheap, and the `orderTapCap` guard auto-drops to a lower
+        // order on large low-absorption enclosures (cathedral-class) whose high-order
+        // chains stay audible and would otherwise blow the IR-build budget. Each
+        // ModeledSource self-throttles, so N beacons just self-pace independently.
+        maxOrder: 3,
+        orderTapCap: 24,
+        scattering: this.level.acousticScattering ?? 0.1,
+      });
+    }
   }
 
   /**
@@ -537,12 +587,13 @@ export class Game {
     return {
       player: { x: s.x, z: s.z, yaw: this.audioYaw },
       beacon: { x: this.level.beacon.x, z: this.level.beacon.z },
+      beacons: this.beacons.map((u) => ({ x: u.spec.x, z: u.spec.z })),
       goal: this.level.goal ?? 'beacon',
       goalTarget: this.winTarget(),
       walls: this.level.acousticWalls ?? [],
       distance: this.player.distanceTo(this.winTarget().x, this.winTarget().z),
       engine: this.steam ? 'steam' : this.interpRenderer ? 'interp' : 'legacy',
-      reflections: this.modeledBeacon?.debugReflections() ?? [],
+      reflections: this.beacons.flatMap((u) => u.modeled?.debugReflections() ?? []),
       decoysLeft: this.decoysLeft,
       monsters: this.monsters.map((m) => ({ x: m.state.x, z: m.state.z })),
       floors: this.level.floors ?? [],
@@ -566,7 +617,7 @@ export class Game {
     // listener, or moving walls (the caller may swap `acousticWalls` per frame),
     // must re-solve occlusion/diffraction. Throttled + dirty-checked inside refresh,
     // so an utterly static scene rebuilds zero times here.
-    if (this.modeledBeacon) {
+    if (this.beacons.some((u) => u.modeled)) {
       const p = this.glide.current;
       this.refreshBeacon(p.x, p.z);
     }
@@ -598,7 +649,7 @@ export class Game {
         MonsterVoice.roar(this.graph.ctx, this.graph.master);
         // Then freeze + fade the looping chase audio (mirrors win).
         const t = this.graph.ctx.currentTime;
-        this.beaconOutput.gain.setTargetAtTime(0, t, 0.3);
+        for (const u of this.beacons) u.output.gain.setTargetAtTime(0, t, 0.3);
         for (const mm of this.monsters) mm.src.output.gain.setTargetAtTime(0, t, 0.3);
         this.cb.onCaught?.();
       }
@@ -805,7 +856,8 @@ export class Game {
     if ((this.level.goal === 'absorber' || this.level.goal === 'escape') && this.level.goalTarget) {
       return this.level.goalTarget;
     }
-    return { x: this.level.beacon.x, z: this.level.beacon.z };
+    // Normal mode: the decoupled win point if set, else the first beacon (default).
+    return this.level.winTarget ?? { x: this.level.beacon.x, z: this.level.beacon.z };
   }
 
   private checkWin() {
@@ -813,8 +865,9 @@ export class Game {
     const d = this.player.distanceTo(t.x, t.z);
     if (d <= this.level.goalRadius && !this.won) {
       this.won = true;
-      // Fade the beacon out on win.
-      this.beaconOutput.gain.setTargetAtTime(0, this.graph.ctx.currentTime, 0.3);
+      // Fade ALL beacons out on win.
+      const ft = this.graph.ctx.currentTime;
+      for (const u of this.beacons) u.output.gain.setTargetAtTime(0, ft, 0.3);
       // Victory flourish: a short, distinct arrival chime through the master bus so
       // a win is as audible as the catch roar (it was near-silent before).
       winChime(this.graph.ctx, this.graph.master);
@@ -839,15 +892,19 @@ export class Game {
   }
 
   destroy() {
-    this.beaconVoice?.stop();
-    this.beaconVoice = null;
-    if (this.beaconCustom) {
-      try { this.beaconCustom.stop(); } catch { /* already stopped */ }
-      this.beaconCustom = null;
+    for (const u of this.beacons) {
+      u.voice?.stop();
+      u.voice = null;
+      if (u.custom) {
+        try { u.custom.stop(); } catch { /* already stopped */ }
+        u.custom = null;
+      }
+      u.plain?.disconnect();
+      u.interp?.output.disconnect();
+      u.modeled?.disconnect();
+      u.steam?.dispose();
     }
-    this.beacon?.disconnect();
-    this.modeledBeacon?.disconnect();
-    this.steamBeacon?.dispose();
+    this.beacons = [];
     for (const m of this.monsters) {
       m.voice?.stop();
       if (m.custom) {

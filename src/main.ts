@@ -242,6 +242,7 @@ let SCATTER = 0.05;
 let LEVEL: GameLevel = {
   start: { x: 4, z: 8.5, yaw: 0 }, // facing -z (toward the beacon end)
   beacon: { x: 4, z: 1.5, freq: 440 },
+  beacons: [{ x: 4, z: 1.5, freq: 440 }],
   goalRadius: 0.8,
   // Modeled beacon: same geometry the clap uses, so walls occlude the beacon and
   // openings let it diffract through.
