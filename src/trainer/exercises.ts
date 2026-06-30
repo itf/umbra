@@ -61,6 +61,9 @@ export interface Question {
   sceneB?: Scene;
   /** Direction-only: the source bearing in degrees, 0 = forward, +90 = right. */
   bearingDeg?: number;
+  /** Distance-drill only: the true wall-ahead distance (m) in each room, for the
+   *  post-answer reveal. */
+  wallDistsM?: { a: number; b: number };
 }
 
 export interface GenOptions {
@@ -627,6 +630,7 @@ function genDistance(rng: Rng, difficulty: number, opts: GenOptions = {}): Quest
     correctAnswer: aIsClose ? 'Room A' : 'Room B',
     sceneA: scene('distance-a', distA),
     sceneB: scene('distance-b', distB),
+    wallDistsM: { a: distA, b: distB },
   };
 }
 

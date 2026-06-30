@@ -223,13 +223,20 @@ function fmtRoom(size: [number, number, number]): string {
 }
 
 /**
- * For a room-size question, a post-answer reveal of both rooms' actual dimensions
- * (W × H × D) so the learner can connect what they heard to the geometry. Empty
- * for non-size drills or if a scene is missing.
+ * A post-answer reveal of the ground-truth geometry behind a drill, so the learner
+ * can connect what they heard to the numbers:
+ *  - room-size drills (larger/wider/longer) → both rooms' dimensions (W × H × D),
+ *  - the distance drill → the true wall-ahead distance in each room.
+ * Empty for drills with nothing numeric to reveal.
  */
 function sizeReveal(q: Question): string {
-  if (!SIZE_TYPES.has(q.type) || !q.sceneA?.roomSize || !q.sceneB?.roomSize) return '';
-  return ` Room A: ${fmtRoom(q.sceneA.roomSize)}. Room B: ${fmtRoom(q.sceneB.roomSize)}.`;
+  if (SIZE_TYPES.has(q.type) && q.sceneA?.roomSize && q.sceneB?.roomSize) {
+    return ` Room A: ${fmtRoom(q.sceneA.roomSize)}. Room B: ${fmtRoom(q.sceneB.roomSize)}.`;
+  }
+  if (q.type === 'distance' && q.wallDistsM) {
+    return ` Room A wall: ${q.wallDistsM.a.toFixed(1)} m. Room B wall: ${q.wallDistsM.b.toFixed(1)} m.`;
+  }
+  return '';
 }
 
 function typeFilter(): ExerciseType[] | undefined {
