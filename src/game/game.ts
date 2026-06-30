@@ -394,7 +394,7 @@ export class Game {
     if (this.level.goal === 'absorber') return;
     // Interpose the shared proximity gain between the dry voice(s) and the
     // spatializer input. Both the synth voice AND the custom audio loop feed THIS
-    // node, so the "getting warmer" cue (reportProgress → setProximity) reaches
+    // node, so the "getting warmer" cue (reportProgress → proximityGain) reaches
     // whichever voice is live. It starts at unity (far).
     this.beaconProxGain = this.graph.ctx.createGain();
     this.beaconProxGain.gain.value = 1;

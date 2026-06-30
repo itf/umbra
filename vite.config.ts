@@ -99,6 +99,19 @@ export default defineConfig({
       workbox: {
         // HRTF datasets and audio are large; precache app shell, runtime-cache the rest.
         globPatterns: ['**/*.{js,css,html,wasm}'],
+        // Don't precache the LAZY Steam Audio path (three.js ~700 KB + the 6 MB phonon
+        // WASM + its worker/processor). They load only on ?engine=steam via a dynamic
+        // import, so the default player never needs them — precaching them wasted ~6.6 MB
+        // (most of the precache) and slowed install. They're runtime-cached on first use.
+        globIgnores: [
+          '**/three.module-*.js',
+          '**/phonon_bindings*.wasm',
+          '**/steam-audio-processor-*.js',
+          '**/reflection-simulator-worker-*.js',
+          '**/world-*.js',
+          '**/backend-*.js',
+          '**/index-*.js',
+        ],
         maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
         runtimeCaching: [
           {

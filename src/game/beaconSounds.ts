@@ -177,18 +177,6 @@ export class BeaconVoice {
     try { this.out.disconnect(); } catch { /* noop */ }
   }
 
-  /**
-   * Continuous "getting warmer" cue: scale the voice's output gain by proximity to
-   * the beacon (closer = louder). Smoothly ramped so it never clicks. Driven from the
-   * game loop on every progress report. Safe to call frequently.
-   */
-  setProximity(distance: number) {
-    const g = proximityGain(distance);
-    const t = this.ctx.currentTime;
-    // Short time-constant glide so rapid distance updates don't zipper.
-    this.out.gain.setTargetAtTime(g, t, 0.08);
-  }
-
   private trigger() {
     if (this.preset === 'bell') this.triggerBell();
     else if (this.preset === 'musicbox') this.triggerMusicbox();
