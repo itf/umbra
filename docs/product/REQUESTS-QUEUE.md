@@ -58,3 +58,20 @@ Crackle-at-rest (default engine) was FIXED in 747168c.
   bundle with the settings work (item C) after agent A lands.
 - NEW logged gap (user question): near-field per-ear distance ILD not modeled (far-field
   HRTF + single head-center 1/r). See NEEDS-PLAYTEST.md.
+
+## Final state (post-compaction-safe checkpoint)
+COMMITTED:
+- item 1 Keybindings: `7322e48` (arrows+Q/E turn, A/D step).
+- Crackle fix: `747168c`. Near-field per-ear ILD: `e77152e` (+ 1/r-vs-r² clarification `f37521a`).
+- item 2 Navigation/routing: `6d83746`. item 6 Trainer A/B + keyboard: `bf9b1fd`.
+- item 3+4 Settings (Steam toggle in-game + REMOVED warmer cue — beacon now pure 1/r): `b5d4dc1`.
+- Steam head-tracked reflections COMPLETE in fork (`b3838eb`, not pushed).
+IN FLIGHT (last item):
+- item 3/5/7 (agent `a96c8f4f…`): PACKAGE the fork reproducibly (submodule + vendored prebuilt
+  dist) so it's npm-install-clean, then WIRE backend.ts to `reflections:{headTracked:true,
+  maxOrder:1,irTaps:512}`, RAISE the reflected field back up (undo 2ce7589's wet:0.25/0.35/0.2
+  suppression now that reflections are head-tracked), and lower DEFAULT_TRANSMISSION ~5x. Guard:
+  STOP if packaging can't be made portable. → fixes Steam maze navigation end-to-end.
+REMAINING MANUAL (only the user can do): browser ear-confirm of near-field ILD, head-tracked
+  Steam reflections in a maze (needs ?engine=steam-sofa + COOP/COEP + CPU profile), and the
+  general NEEDS-PLAYTEST list. Suite: 622 unit + 37 e2e green.
