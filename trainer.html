@@ -95,6 +95,16 @@
       </label>
       <input id="probe-file" type="file" accept="audio/*" aria-label="Custom probe recording file"
              style="margin-top:8px;color:#9aa" />
+      <div style="margin-top:10px">
+        <button id="probe-record"
+                aria-label="Record your own mouth click as the probe sound"
+                style="background:#2c2c2c;color:#eee;border:2px solid #444;font-size:0.9rem;padding:10px 16px;min-height:44px;min-width:auto;border-radius:10px">
+          Record your click
+        </button>
+        <p id="probe-record-hint" class="hint" style="margin:4px 0 0">
+          Make your click during the 1-second recording window. It replaces the custom probe.
+        </p>
+      </div>
       <p style="margin-top:10px">
         <label style="flex-direction:row; align-items:center; gap:8px; color:#bbb; font-size:14px">
           <input type="checkbox" id="engine-steam-toggle" style="width:1.1rem;height:1.1rem" />

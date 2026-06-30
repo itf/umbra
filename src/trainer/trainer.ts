@@ -12,10 +12,11 @@
  * Everything is announced via an aria-live region so it plays with eyes closed.
  */
 import { initAcoustics } from '../engine/acoustics/core';
-import { startAudio } from '../engine/audioGraph';
+import { startAudio, getGraph } from '../engine/audioGraph';
 import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { ScenePlayer, type ProbeSpec } from '../debug/scenePlayer';
 import { PROBE_PRESETS, isProbeName } from '../debug/probes';
+import { record as recordClick } from './clickRecorder';
 import {
   makeRandomQuestion,
   hasRoomB,
@@ -755,6 +756,35 @@ function setupProbePicker() {
       updateHint();
     } catch {
       pickedProbeBuffer = null; // bad file → selectedProbe() falls back to clap
+    }
+  });
+
+  // "Record your click" button — captures ~1 s from the mic, processes it through
+  // the click pipeline, and stores it in the same pickedProbeBuffer slot the File
+  // path uses (selectedProbe() returns { buffer: pickedProbeBuffer } for both).
+  const recordBtn = $('probe-record') as HTMLButtonElement;
+  recordBtn.addEventListener('click', async () => {
+    recordBtn.disabled = true;
+    recordBtn.textContent = 'Recording…';
+    recordBtn.setAttribute('aria-label', 'Recording in progress — make your click now');
+    announce('Recording — make your click now.');
+    try {
+      await ensurePlayer(); // ensures the AudioContext is running
+      const ctx = getGraph()!.ctx;
+      const buf = await recordClick(ctx);
+      pickedProbeBuffer = buf;
+      sel.value = 'custom';
+      // Update hint text to reflect a mic recording rather than a file.
+      hint.textContent = 'your recorded mouth click — used as the echo probe';
+      announce('Saved your click. It\'s now your probe.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Recording failed.';
+      announce(`Recording failed: ${msg}`);
+      // Leave pickedProbeBuffer intact (previous probe is still valid).
+    } finally {
+      recordBtn.disabled = false;
+      recordBtn.textContent = 'Record your click';
+      recordBtn.setAttribute('aria-label', 'Record your own mouth click as the probe sound');
     }
   });
 }
