@@ -42,3 +42,19 @@ Crackle-at-rest (default engine) was FIXED in 747168c.
   (`a58b2403…`) settles — no point vendoring a WASM that's about to be rebuilt; also avoids
   concurrent edits in the three-steam-audio repo.
 - Steam head-tracked reflections (`a58b2403…`): RUNNING in the fork (item 7).
+
+## Update (fork reflections DONE)
+- **Steam head-tracked reflections: COMPLETE in the fork** (three-steam-audio `b3838eb`,
+  not pushed). All 4 steps done; reflected field is now spatialized (L≠R), not mono.
+  PERF: realtime-safe for order-1 + ~512-tap IR + a FEW sources (perfect for the single
+  beacon → maze geometry cues); won't sustain MANY sources / long tails without
+  partitioned-FFT convolution (not built). Opt-in: createWorld({ reflections:{ headTracked:
+  true, maxOrder:1, irTaps:512 } }). With it on, papasangre can raise reflections.wet back to
+  material-driven strength (undo 2ce7589) without re-masking direction. Needs a browser
+  CPU-profile confirm.
+- Fork is now feature-complete (SOFA + head-tracked reflections) → item 5 (packaging:
+  submodule vs vendored WASM) is now RIPE and the fork repo is free (its agent finished).
+- ALSO decided: REMOVE the artificial "getting warmer" cue (real 1/r is already modeled);
+  bundle with the settings work (item C) after agent A lands.
+- NEW logged gap (user question): near-field per-ear distance ILD not modeled (far-field
+  HRTF + single head-center 1/r). See NEEDS-PLAYTEST.md.
