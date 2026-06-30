@@ -54,3 +54,9 @@ Next: synthesis meeting → roadmap → first build.
   reconcile water/marble, separable-7 material-ID set. Touches materials.ts/exercises.ts.
 - Disjoint files → safe in parallel. Gate each on tsc + tests, commit separately.
 - Next meeting: "playtest review" after #1+#2 land → pick from #3 editor / #4 trainer / #5 daily.
+
+**#2 Materials SHIPPED** (commit `5066fe2`): +18 cited materials, water/marble reconciled,
+easy→hard material-ID ladder + "which wall is metal" drill, +10 tests (328 total).
+**#1 Accessibility** still building (agent `a56c898f…`); its files (index.html,
+beaconSounds.ts, game.ts, heading.ts, main.ts, tests/heading.test.ts) held uncommitted
+until it finishes, then commit + run full suite + playtest-review meeting.
