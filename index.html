@@ -28,12 +28,18 @@
         <p>Choose a level to play. Put on headphones first.</p>
         <div id="level-picker" aria-label="Level list"></div>
         <nav class="page-links" aria-label="Other pages">
+          <button id="open-progress" type="button" class="linklike">🏆 Your progress / best times</button>
           <button id="redo-calibration" type="button" class="linklike">🎧 Calibrate audio</button>
           <button id="redo-tutorial" type="button" class="linklike">🚶 Replay tutorial</button>
           <a href="/trainer.html">🎧 Echolocation trainer</a>
           <a href="/editor.html">✏️ Level editor</a>
         </nav>
       </section>
+
+      <!-- Best Times / Progress: a read-only summary of cleared levels, per-mode
+           bests, and the daily streak. Reachable from the picker; content mounted
+           by src/ui/progress.ts. -->
+      <section id="progress-screen" aria-label="Best times and progress" hidden></section>
 
       <!-- Calibration: eyes-free headphone L/R + volume check. Toggled by main.ts;
            its first sound is the user gesture (like Begin). Content mounted by

@@ -25,6 +25,8 @@ import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
+import { renderProgressScreen } from './ui/progress';
+import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
 import { SettingsStore } from './ui/settingsStore';
@@ -46,6 +48,7 @@ const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 const statusEl = document.getElementById('status')!;
 const alertsEl = document.getElementById('alerts')!;
 const pickerScreen = document.getElementById('picker-screen')!;
+const progressScreen = document.getElementById('progress-screen')!;
 const startScreen = document.getElementById('start-screen')!;
 const gameScreen = document.getElementById('game-screen')!;
 const startButton = document.getElementById('start-button') as HTMLButtonElement;
@@ -276,6 +279,7 @@ function hideOnboardingScreens() {
   startScreen.hidden = true;
   calibrationScreen.hidden = true;
   tutorialScreen.hidden = true;
+  progressScreen.hidden = true;
 }
 
 /** Reveal the Begin screen for a chosen level (hides the other screens). */
@@ -330,6 +334,52 @@ function showPicker() {
   // choice instead of the top of the document.
   (pickerScreen.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
 }
+
+/** Human labels for the trainer exercise types shown on the progress screen. */
+const TRAINER_LABELS: Record<string, string> = {
+  all: 'Mixed drill',
+  direction: 'Direction',
+  distance: 'Distance',
+  gap: 'Gap detection',
+  orientation: 'Orientation',
+  larger: 'Larger room',
+  wider: 'Wider room',
+  longer: 'Longer room',
+  carpet: 'Carpet vs hard floor',
+  brick: 'Brick vs soft wall',
+  reflector: 'Reflector',
+  material: 'Material',
+  metal: 'Metal',
+};
+
+/** Read the trainer store into the progress-screen's trainer rows (read-only). */
+function trainerRows(): TrainerInfo[] {
+  const map = trainerStore.load();
+  return Object.entries(map)
+    .filter(([, p]) => p.best != null && p.sessions > 0)
+    .map(([type, p]) => ({ label: TRAINER_LABELS[type] ?? type, best: p.best, sessions: p.sessions }));
+}
+
+/** Show the read-only "Best Times / Progress" screen, announcing its overview. */
+function showProgress() {
+  hideOnboardingScreens();
+  progressScreen.hidden = false;
+  const levels: LevelInfo[] = builtinLevels().map((b) => ({
+    name: b.name,
+    category: b.category as ProgressCategory,
+  }));
+  renderProgressScreen(progressScreen, {
+    levels,
+    // Scores are keyed by the level's display name (the id applyLevel records under).
+    bestOf: (name) => scoreStore.best(name),
+    streak: dailyStreakStore.load(),
+    trainer: trainerRows(),
+    say,
+    onBack: showPicker,
+  });
+}
+
+document.getElementById('open-progress')?.addEventListener('click', showProgress);
 
 /** Resolve a picker selection (builtin id, saved name, or generated) to a Level. */
 async function resolveSelection(sel: PickerSelection): Promise<Level | undefined> {
