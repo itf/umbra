@@ -235,3 +235,17 @@ Web Speech TTS (default OFF, graceful fallback) + per-level time/clap scoring wi
   difficulty → solvable Level), endless freeplay, picker sandbox UI. Owns sandbox.ts +
   picker + main start flow. Then Cycle-8 review → leaderboard.
 - NEEDS-PLAYTEST grew: TTS default-off tradeoff + voice quality; generated-level fairness.
+
+**8C Sandbox SHIPPED** (`e5c8035`): pure seeded generator (mode×difficulty→solvable Level),
+800-level fuzz, picker sandbox UI. +37 tests (573 unit, 26 e2e). Cycle 8 COMPLETE.
+- Cycle-8 review (`meetings/2026-06-29-cycle8-review.md`): diminishing returns on raw
+  breadth → bias to PROVE QUALITY + make work reviewable. Biggest risk = unverified-by-ear
+  (NEEDS-PLAYTEST ~10 items, only the user can resolve).
+
+### Cycle 9 — Engagement closer + harden + hand-off (in progress)
+- **9A Local leaderboard** (agent `aa7c5f1f…`): "Best Times/Progress" summary screen over
+  scoreStore + dailyStreakStore (cleared count, per-mode bests, streak), spoken. Owns
+  progressSummary + a progress screen + picker entry.
+- **9B Full regression + bundle/perf audit** (agent `aab0847b…`): run all unit+e2e, build,
+  verify default bundle stays lean (three/steam lazy), perf sanity, dead-code scan → report.
+- Then **9C** session hand-off doc + consolidated NEEDS-PLAYTEST with exact URLs/steps.
