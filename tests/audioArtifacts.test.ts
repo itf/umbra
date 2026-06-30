@@ -228,8 +228,31 @@ renderDescribe('offline-render stress scenarios', () => {
     const click = detectClicksStereo(out.left, out.right, CLICK_OPTS);
     expect(click.count).toBe(0);
     expect(Math.max(...[out.left, out.right].map((c) => Math.max(...c.map(Math.abs))))).toBeLessThan(4);
+
+    // NO DROPOUT: the source is a CONTINUOUS tone, so its level must never collapse
+    // toward silence as direction buckets change during the spin. The old fresh-node
+    // crossfade had a one-block priming gap on the incoming convolver → a brief dip;
+    // the persistent dual-convolver crossfade has none. Measure the combined RMS
+    // envelope in short windows and assert the quietest sustained window stays a
+    // healthy fraction of the median (a true dropout would crater this ratio).
+    const win = Math.floor(0.005 * sr); // 5 ms windows
+    const env: number[] = [];
+    for (let i = 0; i + win <= out.left.length; i += win) {
+      let s = 0;
+      for (let j = 0; j < win; j++) {
+        const l = out.left[i + j], rr = out.right[i + j];
+        s += l * l + rr * rr;
+      }
+      env.push(Math.sqrt(s / (2 * win)));
+    }
+    // Drop the first/last few windows (onset/teardown) and look at the steady spin.
+    const steady = env.slice(3, env.length - 3).sort((a, b) => a - b);
+    const median = steady[Math.floor(steady.length / 2)];
+    const minRms = steady[0];
+    expect(median).toBeGreaterThan(0); // sanity: there IS sustained output
+    expect(minRms).toBeGreaterThan(0.2 * median); // no window craters → no dropout
     // eslint-disable-next-line no-console
-    console.log(`[rotation] maxRatio=${click.maxRatio.toFixed(1)} renderMs=${out.ms.toFixed(1)}`);
+    console.log(`[rotation] maxRatio=${click.maxRatio.toFixed(1)} minRms/median=${(minRms / median).toFixed(2)} renderMs=${out.ms.toFixed(1)}`);
   });
 
   it('FAST WALKING: source whips past the listener, delay ramps hard, no click + bounded', async () => {

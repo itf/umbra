@@ -166,11 +166,17 @@ export class HrtfSource {
   private propDelay: DelayNode;
   private distanceGain: GainNode;
   private airLowpass: BiquadFilterNode;
-  /** The currently-audible chain (fully faded in). Null until first placement. */
-  private current: ConvChain | null = null;
-  /** A chain mid-fade-in, plus when its fade completes (so we don't stack swaps and
-   *  so we know when the displaced `current` can be disposed). Null when settled. */
-  private fading: { chain: ConvChain; doneAt: number; prev: ConvChain | null } | null = null;
+  /**
+   * TWO PERSISTENT convolver chains (built on first placement), linearly crossfaded
+   * on each direction change. We swap the IDLE chain's `.buffer` (its gain is 0, so
+   * the unavoidable one-block reset on a buffer reload is inaudible) then ramp gains.
+   * Persistent (not fresh-per-swap) chains avoid the brand-new-ConvolverNode priming
+   * gap that briefly dipped a sustained beacon when crossing direction buckets.
+   */
+  private chains: [ConvChain, ConvChain] | null = null;
+  private active = 0;
+  /** When the in-flight crossfade completes (rate-limit: don't stack swaps). */
+  private fadeDoneAt = 0;
   private lastDirIndex = -1;
   private placed = false; // has setPosition run at least once (delay snap vs ramp)
   private r: HrtfRenderer;
@@ -195,18 +201,17 @@ export class HrtfSource {
   }
 
   /**
-   * Build a fully-formed chain for `buf` and connect it. CRITICAL: the convolver's
-   * `.buffer` is set BEFORE it is wired into the live `airLowpass` feed, so the
-   * convolution never undergoes a mid-stream buffer RESET (reloading a live
-   * ConvolverNode's `.buffer` drops/discontinues a frame of audio — the "square-wave
-   * front" click heard when crossing HRIR direction buckets). A fresh node per swap
-   * starts clean; the old one is faded out and disposed.
+   * Build a persistent chain for `buf` at `initialGain` and wire it permanently into
+   * the live feed. The chain stays connected for the source's whole life; direction
+   * changes swap the buffer of whichever chain is currently silent (gain 0), so the
+   * one-block reset from reloading `.buffer` is inaudible and there is no fresh-node
+   * priming gap.
    */
   private makeChain(buf: AudioBuffer | null, initialGain: number): ConvChain {
     const ctx = this.r.ctx;
     const convolver = ctx.createConvolver();
     convolver.normalize = false;
-    if (buf) convolver.buffer = buf; // set buffer BEFORE connecting (no live reset)
+    if (buf) convolver.buffer = buf;
     // The convolver's two output channels ARE the two ears (our buffer packs L in
     // ch0, R in ch1); route each straight through to the matching output channel.
     const splitter = ctx.createChannelSplitter(2);
@@ -218,14 +223,8 @@ export class HrtfSource {
     splitter.connect(merger, 1, 1);
     merger.connect(gain);
     gain.connect(this.output);
-    this.airLowpass.connect(convolver); // connect to the live feed LAST
+    this.airLowpass.connect(convolver);
     return { convolver, gain };
-  }
-
-  /** Disconnect + drop a chain's nodes (after its fade-out completes). */
-  private disposeChain(chain: ConvChain) {
-    try { this.airLowpass.disconnect(chain.convolver); } catch { /* already gone */ }
-    try { chain.gain.disconnect(); } catch { /* already gone */ }
   }
 
   setPosition(x: number, y: number, z: number) {
@@ -266,37 +265,32 @@ export class HrtfSource {
     const t = ctx.currentTime;
     const FADE = 0.04; // 40 ms
 
-    // Retire a completed fade-in: its `prev` chain is fully silent now → dispose it,
-    // and the faded-in chain becomes `current`.
-    if (this.fading && t >= this.fading.doneAt) {
-      if (this.fading.prev) this.disposeChain(this.fading.prev);
-      this.current = this.fading.chain;
-      this.fading = null;
-    }
-
     const buf = this.r.makeConvolverBuffer(idx);
 
-    if (!this.current && !this.fading) {
-      // First placement: a single chain at full gain, no crossfade.
-      this.current = this.makeChain(buf, 1);
+    if (!this.chains) {
+      // First placement: build BOTH persistent chains. The active one carries `buf`
+      // at full gain; the idle one waits silent for the first direction change.
+      this.chains = [this.makeChain(buf, 1), this.makeChain(null, 0)];
+      this.active = 0;
       return;
     }
 
-    // RATE-LIMIT: if a fade is still in flight, DON'T start another (stacking fades
-    // thrashes the gains). Drop this update; the next direction change after the fade
-    // settles picks up the latest pose.
-    if (this.fading) return;
+    // RATE-LIMIT: if a crossfade is still in flight, DON'T start another (stacking
+    // fades thrashes the gains, and reloading the idle buffer mid-fade would reset a
+    // chain that isn't fully silent yet). Drop this update; the next direction change
+    // after the fade settles picks up the latest pose.
+    if (t < this.fadeDoneAt) return;
 
-    // FRESH-NODE crossfade. Build a brand-new chain with `buf` already loaded BEFORE
-    // it's wired to the live feed — so the new convolution starts clean with no
-    // mid-stream buffer RESET (the reset was the "square-wave front" click). Fade the
-    // new chain in from 0 and the current chain out to 0 (linear sum-to-1: the two
-    // HRIR chains carry the SAME source at adjacent directions, so amplitudes add).
-    const incoming = this.makeChain(buf, 0);
-    const outgoing = this.current!;
-    linearCrossfade(incoming.gain.gain, outgoing.gain.gain, t, FADE);
-    this.fading = { chain: incoming, doneAt: t + FADE, prev: outgoing };
-    this.current = null; // `outgoing` lives on as fading.prev until the fade completes
+    // PERSISTENT-CHAIN crossfade. Load the new HRIR into the IDLE chain (gain 0, so
+    // its one-block buffer-reset is inaudible) — the chain is already warm/connected,
+    // so there's no fresh-ConvolverNode priming gap — then linear sum-to-1 crossfade
+    // to it (the two chains carry the SAME source at adjacent directions → correlated,
+    // amplitudes add, so a linear pair keeps the level flat without a dip).
+    const idle = this.active ^ 1;
+    this.chains[idle].convolver.buffer = buf;
+    linearCrossfade(this.chains[idle].gain.gain, this.chains[this.active].gain.gain, t, FADE);
+    this.active = idle;
+    this.fadeDoneAt = t + FADE;
   }
 
   disconnect() {
