@@ -16,6 +16,67 @@ const assertNativeStatus = (operation, status) => {
 //#endregion
 //#region src/worker/audio-node.ts
 const CONTROL_VALUE_COUNT = 23;
+const CROSSFADE_SECONDS = .03;
+var ReflectionConvolverChain = class {
+	input;
+	get output() {
+		return this.#output;
+	}
+	#active = 0;
+	#context;
+	#convolvers = [void 0, void 0];
+	#disposed = false;
+	#gains;
+	#output;
+	constructor(context) {
+		this.#context = context;
+		this.input = context.createGain();
+		this.#output = context.createGain();
+		this.#gains = [context.createGain(), context.createGain()];
+		for (const gain of this.#gains) {
+			gain.gain.value = 0;
+			gain.connect(this.#output);
+		}
+	}
+	dispose() {
+		if (this.#disposed) return;
+		this.#disposed = true;
+		try {
+			this.input.disconnect();
+		} catch {}
+		for (const convolver of this.#convolvers) try {
+			convolver?.disconnect();
+		} catch {}
+		for (const gain of this.#gains) try {
+			gain.disconnect();
+		} catch {}
+		try {
+			this.#output.disconnect();
+		} catch {}
+	}
+	setIr(ir) {
+		if (this.#disposed || ir.samples <= 0) return;
+		const buffer = this.#context.createBuffer(2, ir.samples, this.#context.sampleRate);
+		buffer.getChannelData(0).set(ir.data.subarray(0, ir.samples));
+		buffer.getChannelData(1).set(ir.data.subarray(ir.samples, 2 * ir.samples));
+		const next = this.#active ^ 1;
+		this.#convolvers[next]?.disconnect();
+		const convolver = this.#context.createConvolver();
+		convolver.normalize = false;
+		convolver.buffer = buffer;
+		this.input.connect(convolver);
+		convolver.connect(this.#gains[next]);
+		this.#convolvers[next] = convolver;
+		const now = this.#context.currentTime;
+		const end = now + CROSSFADE_SECONDS;
+		for (const g of this.#gains) g.gain.cancelScheduledValues(now);
+		this.#gains[next].gain.setValueAtTime(this.#gains[next].gain.value, now);
+		this.#gains[next].gain.linearRampToValueAtTime(1, end);
+		this.#gains[this.#active].gain.setValueAtTime(this.#gains[this.#active].gain.value, now);
+		this.#gains[this.#active].gain.linearRampToValueAtTime(0, end);
+		this.#active = next;
+	}
+};
 const MissingAudioWorkletNode = class {
 	constructor() {
 		throw new Error("AudioWorkletNode is not available in this environment");
@@ -94,7 +155,10 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 	#controlSequence;
 	#disposed = false;
 	#error;
+	#headTracked;
+	#lastReflectionIr;
 	#onDispose;
+	#reflectionChains = /* @__PURE__ */ new Set();
 	#rejectReady;
 	#resolveReady;
 	#state = "initializing";
@@ -120,6 +184,7 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			}
 		});
 		this.source = options.source;
+		this.#headTracked = options.headTracked === true;
 		this.#onDispose = options.onDispose;
 		this.ready = new Promise((resolve, reject) => {
 			this.#resolveReady = resolve;
@@ -144,16 +209,8 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 		}
 	}
 	connectReflections(bus, options = {}) {
+		if (this.#headTracked) return this.#connectReflectionConvolver(bus, options.gain ?? 1);
 		return this.#connectSend(bus, 1, options.gain ?? 1);
-	}
-	setReflectionIr(ir) {
-		if (this.#disposed) return;
-		this.port.postMessage({
-			channels: ir.channels,
-			data: ir.data,
-			samples: ir.samples,
-			type: "reflection-ir"
-		}, [ir.data.buffer]);
 	}
 	connectReverb(bus, options = {}) {
 		return this.#connectSend(bus, 2, options.gain ?? 1);
@@ -166,6 +223,8 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			this.#rejectReady(this.#error);
 		}
 		this.#state = "disposed";
+		for (const chain of this.#reflectionChains) chain.dispose();
+		this.#reflectionChains.clear();
 		disposeWorkletNode(this, () => this.#onDispose(this));
 	}
 	setControl(values) {
@@ -192,6 +251,41 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			type: "control",
 			values: packet
 		}, [packet.buffer]);
+	}
+	setReflectionIr(ir) {
+		if (this.#disposed || !this.#headTracked) return;
+		this.#lastReflectionIr = ir;
+		for (const chain of this.#reflectionChains) chain.setIr(ir);
+	}
+	#connectReflectionConvolver(bus, initialGain) {
+		if (this.#disposed) throw new Error("Cannot connect a disposed SteamAudioNode");
+		if (bus.context !== this.context) throw new Error("Steam Audio send and bus must use the same AudioContext");
+		const chain = new ReflectionConvolverChain(this.context);
+		const gainNode = this.context.createGain();
+		gainNode.gain.value = validateGain(initialGain);
+		this.connect(chain.input, 1, 0);
+		chain.output.connect(gainNode);
+		gainNode.connect(bus);
+		this.#reflectionChains.add(chain);
+		if (this.#lastReflectionIr) chain.setIr(this.#lastReflectionIr);
+		let connected = true;
+		return {
+			disconnect: () => {
+				if (!connected) return;
+				connected = false;
+				this.#reflectionChains.delete(chain);
+				try {
+					this.disconnect(chain.input, 1, 0);
+				} catch {}
+				try {
+					gainNode.disconnect(bus);
+				} catch {}
+				chain.dispose();
+			},
+			setGain: (gain) => {
+				gainNode.gain.value = validateGain(gain);
+			}
+		};
 	}
 	#connectSend(bus, output, initialGain) {
 		if (this.#disposed) throw new Error("Cannot connect a disposed SteamAudioNode");
@@ -369,7 +463,7 @@ var ReflectionSimulationWorker = class {
 	#error;
 	#pending = false;
 	#worker;
-	constructor(wasmBinary, sampleRate, frameSize, maxSources, settings, onResult) {
+	constructor(wasmBinary, sampleRate, frameSize, maxSources, settings, onResult, sofaData) {
 		this.#worker = new Worker(new URL("./reflection-simulator-worker.js", import.meta.url), { type: "module" });
 		this.#worker.onmessage = ({ data }) => {
 			if (data?.type === "error") {
@@ -391,14 +485,18 @@ var ReflectionSimulationWorker = class {
 			this.#error = new Error(event.message || "Steam Audio reflection worker failed");
 		};
 		const binary = wasmBinary.slice(0);
+		const transfers = [binary];
+		const sofaCopy = sofaData ? sofaData.slice(0) : void 0;
+		if (sofaCopy) transfers.push(sofaCopy);
 		this.#worker.postMessage({
 			frameSize,
 			maxSources,
 			sampleRate,
 			settings,
+			sofaData: sofaCopy,
 			type: "init",
 			wasmBinary: binary
-		}, [binary]);
+		}, transfers);
 	}
 	addDynamicMesh(id, geometry, materialCount, transform) {
 		this.#post({
@@ -2837,35 +2935,42 @@ async function Module(moduleArg = {}) {
 		Module["_sa_ambisonics_binaural_effect_release"] = wasmExports["I"];
 		Module["_sa_ambisonics_binaural_effect_reset"] = wasmExports["J"];
 		Module["_sa_ambisonics_binaural_effect_apply"] = wasmExports["K"];
-		Module["_sa_direct_effect_create"] = wasmExports["L"];
-		Module["_sa_direct_effect_release"] = wasmExports["M"];
-		Module["_sa_direct_effect_apply"] = wasmExports["N"];
-		Module["_sa_reflection_effect_create"] = wasmExports["O"];
-		Module["_sa_reflection_effect_release"] = wasmExports["P"];
-		Module["_sa_reflection_effect_apply"] = wasmExports["Q"];
-		Module["_sa_reflection_effect_get_tail"] = wasmExports["R"];
-		Module["_sa_simulator_create"] = wasmExports["S"];
-		Module["_sa_simulator_commit"] = wasmExports["T"];
-		Module["_sa_simulator_release"] = wasmExports["U"];
-		Module["_sa_simulator_run_direct"] = wasmExports["V"];
-		Module["_sa_simulator_run_reflections"] = wasmExports["W"];
-		Module["_sa_simulator_set_listener"] = wasmExports["X"];
-		Module["_sa_source_create"] = wasmExports["Y"];
-		Module["_sa_source_release"] = wasmExports["Z"];
-		Module["_sa_source_set_inputs"] = wasmExports["_"];
-		Module["_malloc"] = wasmExports["$"];
-		Module["_sa_source_set_reflection_inputs"] = wasmExports["aa"];
-		Module["_sa_source_get_direct_outputs"] = wasmExports["ba"];
-		Module["_sa_source_get_reflection_outputs"] = wasmExports["ca"];
-		Module["_sa_buffer_alloc"] = wasmExports["da"];
-		Module["_sa_buffer_free"] = wasmExports["ea"];
-		Module["_sa_buffer_deinterleave"] = wasmExports["fa"];
-		Module["_sa_buffer_interleave"] = wasmExports["ga"];
-		Module["_sa_source_get_reflection_ir_size"] = wasmExports["ha"];
-		Module["_sa_source_get_reflection_ir"] = wasmExports["ia"];
-		__emscripten_stack_restore = wasmExports["ja"];
-		__emscripten_stack_alloc = wasmExports["ka"];
-		_emscripten_stack_get_current = wasmExports["la"];
+		Module["_sa_ambisonics_decode_effect_create"] = wasmExports["L"];
+		Module["_sa_ambisonics_decode_effect_release"] = wasmExports["M"];
+		Module["_sa_ambisonics_decode_effect_reset"] = wasmExports["N"];
+		Module["_sa_ambisonics_decode_effect_apply"] = wasmExports["O"];
+		Module["_sa_direct_effect_create"] = wasmExports["P"];
+		Module["_sa_direct_effect_release"] = wasmExports["Q"];
+		Module["_sa_direct_effect_apply"] = wasmExports["R"];
+		Module["_sa_reflection_effect_create"] = wasmExports["S"];
+		Module["_sa_reflection_effect_release"] = wasmExports["T"];
+		Module["_sa_reflection_effect_reset"] = wasmExports["U"];
+		Module["_sa_reflection_effect_apply"] = wasmExports["V"];
+		Module["_sa_reflection_effect_get_tail"] = wasmExports["W"];
+		Module["_sa_convolution_reflection_effect_create"] = wasmExports["X"];
+		Module["_sa_source_apply_convolution_reflection"] = wasmExports["Y"];
+		Module["_sa_simulator_create"] = wasmExports["Z"];
+		Module["_sa_simulator_commit"] = wasmExports["_"];
+		Module["_sa_simulator_release"] = wasmExports["$"];
+		Module["_sa_simulator_run_direct"] = wasmExports["aa"];
+		Module["_sa_simulator_run_reflections"] = wasmExports["ba"];
+		Module["_sa_simulator_set_listener"] = wasmExports["ca"];
+		Module["_sa_source_create"] = wasmExports["da"];
+		Module["_sa_source_release"] = wasmExports["ea"];
+		Module["_sa_source_set_inputs"] = wasmExports["fa"];
+		Module["_malloc"] = wasmExports["ga"];
+		Module["_sa_source_set_reflection_inputs"] = wasmExports["ha"];
+		Module["_sa_source_get_direct_outputs"] = wasmExports["ia"];
+		Module["_sa_source_get_reflection_outputs"] = wasmExports["ja"];
+		Module["_sa_buffer_alloc"] = wasmExports["ka"];
+		Module["_sa_buffer_free"] = wasmExports["la"];
+		Module["_sa_buffer_deinterleave"] = wasmExports["ma"];
+		Module["_sa_buffer_interleave"] = wasmExports["na"];
+		Module["_sa_source_get_reflection_ir_size"] = wasmExports["oa"];
+		Module["_sa_source_get_reflection_ir"] = wasmExports["pa"];
+		__emscripten_stack_restore = wasmExports["qa"];
+		__emscripten_stack_alloc = wasmExports["ra"];
+		_emscripten_stack_get_current = wasmExports["sa"];
 		wasmMemory = wasmExports["l"];
 		wasmExports["__indirect_function_table"];
 	}
@@ -3596,9 +3701,9 @@ var WorldImpl = class {
 	#reflectionInterval;
 	#reverbBuses = /* @__PURE__ */ new Set();
 	#simulationInterval;
+	#sofaData;
 	#sources = /* @__PURE__ */ new Set();
 	#wasmBinary;
-	#sofaData;
 	constructor(runtime, options) {
 		this.audioContext = options.audioContext;
 		this.module = runtime.module;
@@ -3615,6 +3720,7 @@ var WorldImpl = class {
 		const maxOrder = integer("reflections.maxOrder", reflectionOptions?.maxOrder ?? options.simulation?.maxOrder ?? 1, 0);
 		const diffuseSamples = integer("reflections.diffuseSamples", reflectionOptions?.diffuseSamples ?? options.simulation?.diffuseSamples ?? 32);
 		const headTracked = Boolean(reflectionOptions && typeof reflectionOptions === "object" && reflectionOptions.headTracked);
+		const irDuration = Math.min(positive("reflections.irDuration", reflectionOptions?.irDuration ?? .2), maxDuration);
 		const irTaps = integer("reflections.irTaps", reflectionOptions?.irTaps ?? 512, 1);
 		this.reflectionSettings = {
 			bounces: 8,
@@ -3622,6 +3728,7 @@ var WorldImpl = class {
 			duration: maxDuration,
 			enabled: reflectionOptions !== void 0,
 			headTracked,
+			irDuration,
 			irradianceMinDistance: 1,
 			irTaps,
 			maxDuration,
@@ -3645,7 +3752,7 @@ var WorldImpl = class {
 			this.module._sa_context_release(this.context);
 			throw error;
 		}
-		if (useReflectionWorker) this.reflectionWorker = new ReflectionSimulationWorker(this.#wasmBinary, this.audioContext.sampleRate, this.frameSize, this.maxSources + 1, this.reflectionSettings, (outputs) => this.#receiveReflectionOutputs(outputs));
+		if (useReflectionWorker) this.reflectionWorker = new ReflectionSimulationWorker(this.#wasmBinary, this.audioContext.sampleRate, this.frameSize, this.maxSources + 1, this.reflectionSettings, (outputs) => this.#receiveReflectionOutputs(outputs), this.#sofaData);
 		this.scene = new AcousticSceneImpl(this);
 		this.listenerImpl = new ListenerImpl(this);
 		this.listener = this.listenerImpl;

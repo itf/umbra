@@ -187,6 +187,53 @@ interface WorldOptions {
   simulationRate?: number;
 }
 //#endregion
+//#region src/three/geometry.d.ts
+interface ConvertedGeometry {
+  absorption: Float32Array;
+  indices: Int32Array;
+  materialIndices: Int32Array;
+  scattering: Float32Array;
+  transmission: Float32Array;
+  vertices: Float32Array;
+}
+//#endregion
+//#region src/worker/reflection-simulation.d.ts
+interface ReflectionIr {
+  data: Float32Array;
+  samples: number;
+}
+interface ReflectionSourceInput {
+  ahead: readonly [number, number, number];
+  enabled: boolean;
+  id: number;
+  position: readonly [number, number, number];
+  reverbScale: readonly [number, number, number];
+  up: readonly [number, number, number];
+}
+interface ReflectionWorkerResult {
+  outputs: Array<{
+    id: number;
+    ir?: ReflectionIr;
+    reverbTimes: [number, number, number];
+  }>;
+  type: 'result';
+}
+declare class ReflectionSimulationWorker {
+  #private;
+  constructor(wasmBinary: ArrayBuffer, sampleRate: number, frameSize: number, maxSources: number, settings: NormalizedReflectionSimulationSettings, onResult: (result: ReflectionWorkerResult['outputs']) => void, sofaData?: ArrayBuffer);
+  addDynamicMesh(id: number, geometry: ConvertedGeometry, materialCount: number, transform: Matrix4): void;
+  addSource(input: ReflectionSourceInput): void;
+  addStaticMesh(id: number, geometry: ConvertedGeometry, materialCount: number): void;
+  commitScene(): void;
+  dispose(): void;
+  removeMesh(id: number): void;
+  removeSource(id: number): void;
+  run(): void;
+  setListener(position: readonly [number, number, number], ahead: readonly [number, number, number], up: readonly [number, number, number], settings: NormalizedReflectionSimulationSettings): void;
+  updateDynamicMesh(id: number, transform: Matrix4): void;
+  updateSource(input: ReflectionSourceInput): void;
+}
+//#endregion
 //#region src/bindings/phonon_bindings.d.ts
 // Auto-generated from bindings/bindings.h
 // Do not edit manually. Run: node scripts/generate-types.ts
@@ -223,6 +270,8 @@ interface SteamAudioBindings extends EmscriptenModule {
   _sa_reflection_effect_release(effect: number): void;
   _sa_reflection_effect_apply(effect: number, reverb_times: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_reflection_effect_get_tail(effect: number, out_buffer: number, num_samples: number): number;
+  _sa_convolution_reflection_effect_create(ctx: number, sample_rate: number, frame_size: number, order: number, max_duration: number, out_effect: number): number;
+  _sa_source_apply_convolution_reflection(effect: number, source: number, order: number, sample_rate: number, max_duration: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_simulator_create(ctx: number, scene: number, sample_rate: number, frame_size: number, max_sources: number, max_occlusion_samples: number, reflections_enabled: number, max_rays: number, diffuse_samples: number, max_duration: number, max_order: number, reflection_threads: number, convolution: number, out_sim: number): number;
   _sa_simulator_commit(sim: number): void;
   _sa_simulator_release(sim: number): void;
@@ -280,6 +329,10 @@ interface NodeOptions {
   source: Source;
   wasmBinary: ArrayBuffer;
 }
+interface StereoReflectionIr {
+  data: Float32Array;
+  samples: number;
+}
 declare const AudioWorkletNodeBase: {
   new (context: BaseAudioContext, name: string, options?: AudioWorkletNodeOptions): AudioWorkletNode;
   prototype: AudioWorkletNode;
@@ -310,64 +363,12 @@ declare class SteamAudioNode extends AudioWorkletNodeBase {
   connectReflections(bus: ReflectionBusNode, options?: {
     gain?: number;
   }): ReflectionConnection;
-  setReflectionIr(ir: {
-    channels: number;
-    data: Float32Array;
-    samples: number;
-  }): void;
   connectReverb(bus: ReverbBusNode, options?: {
     gain?: number;
   }): ReverbConnection;
   dispose(): void;
   setControl(values: NodeControlValues): void;
-}
-//#endregion
-//#region src/three/geometry.d.ts
-interface ConvertedGeometry {
-  absorption: Float32Array;
-  indices: Int32Array;
-  materialIndices: Int32Array;
-  scattering: Float32Array;
-  transmission: Float32Array;
-  vertices: Float32Array;
-}
-//#endregion
-//#region src/worker/reflection-simulation.d.ts
-interface ReflectionSourceInput {
-  ahead: readonly [number, number, number];
-  enabled: boolean;
-  id: number;
-  position: readonly [number, number, number];
-  reverbScale: readonly [number, number, number];
-  up: readonly [number, number, number];
-}
-interface ReflectionIr {
-  channels: number;
-  data: Float32Array;
-  samples: number;
-}
-interface ReflectionWorkerResult {
-  outputs: Array<{
-    id: number;
-    ir?: ReflectionIr;
-    reverbTimes: [number, number, number];
-  }>;
-  type: 'result';
-}
-declare class ReflectionSimulationWorker {
-  #private;
-  constructor(wasmBinary: ArrayBuffer, sampleRate: number, frameSize: number, maxSources: number, settings: NormalizedReflectionSimulationSettings, onResult: (result: ReflectionWorkerResult['outputs']) => void);
-  addDynamicMesh(id: number, geometry: ConvertedGeometry, materialCount: number, transform: Matrix4): void;
-  addSource(input: ReflectionSourceInput): void;
-  addStaticMesh(id: number, geometry: ConvertedGeometry, materialCount: number): void;
-  commitScene(): void;
-  dispose(): void;
-  removeMesh(id: number): void;
-  removeSource(id: number): void;
-  run(): void;
-  setListener(position: readonly [number, number, number], ahead: readonly [number, number, number], up: readonly [number, number, number], settings: NormalizedReflectionSimulationSettings): void;
-  updateDynamicMesh(id: number, transform: Matrix4): void;
-  updateSource(input: ReflectionSourceInput): void;
+  setReflectionIr(ir: StereoReflectionIr): void;
 }
 //#endregion
 //#region src/three/world.d.ts
@@ -377,6 +378,7 @@ interface NormalizedReflectionSimulationSettings {
   duration: number;
   enabled: boolean;
   headTracked: boolean;
+  irDuration: number;
   irradianceMinDistance: number;
   irTaps: number;
   maxDuration: number;

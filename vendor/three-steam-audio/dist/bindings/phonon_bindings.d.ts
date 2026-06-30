@@ -34,6 +34,8 @@ export interface SteamAudioBindings extends EmscriptenModule {
   _sa_reflection_effect_release(effect: number): void;
   _sa_reflection_effect_apply(effect: number, reverb_times: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_reflection_effect_get_tail(effect: number, out_buffer: number, num_samples: number): number;
+  _sa_convolution_reflection_effect_create(ctx: number, sample_rate: number, frame_size: number, order: number, max_duration: number, out_effect: number): number;
+  _sa_source_apply_convolution_reflection(effect: number, source: number, order: number, sample_rate: number, max_duration: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_simulator_create(ctx: number, scene: number, sample_rate: number, frame_size: number, max_sources: number, max_occlusion_samples: number, reflections_enabled: number, max_rays: number, diffuse_samples: number, max_duration: number, max_order: number, reflection_threads: number, convolution: number, out_sim: number): number;
   _sa_simulator_commit(sim: number): void;
   _sa_simulator_release(sim: number): void;

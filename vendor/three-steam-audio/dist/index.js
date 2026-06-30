@@ -1,4 +1,4 @@
-import { c as SteamAudioNode, i as detectCapabilities, l as SteamAudioError, o as ReflectionBusNode, s as ReverbBusNode, t as createWorld } from "./world-Cjw4K4AQ.js";
+import { c as SteamAudioNode, i as detectCapabilities, l as SteamAudioError, o as ReflectionBusNode, s as ReverbBusNode, t as createWorld } from "./world-BbGVRMC8.js";
 //#region src/three/materials.ts
 const material = (absorption, scattering, transmission = [
 	0,

@@ -66,7 +66,7 @@ const getRuntime = (wasmBinary, frameSize, sofaData) => {
       const hrtf = sofaData
         ? createSofaHrtf(module, context, frameSize, sofaData)
         : createHandle(module, out =>
-          module._sa_hrtf_create(context, sampleRate, frameSize, out))
+            module._sa_hrtf_create(context, sampleRate, frameSize, out))
       return { context, hrtf, module }
     })
     runtimePromises.set(cacheKey, promise)
@@ -90,17 +90,16 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     super()
     const processorOptions = options.processorOptions ?? {}
     this.frameSize = processorOptions.frameSize
-    // Head-tracked Ambisonic reflections (opt-in). When enabled and an IR has
-    // been pushed, the reflected field is rendered by convolving the dry mono
-    // source with a per-channel Ambisonic IR and decoding to binaural, instead
-    // of mono-duplicating the parametric reflected field.
+    // Head-tracked reflections (opt-in). The directional, head-tracked reflected
+    // field is rendered OUTSIDE this worklet: the reflection-simulation worker
+    // bakes a per-pose binaural STEREO impulse response (see
+    // reflection-simulator-worker.js) and the main thread convolves the dry
+    // beacon through a Web Audio ConvolverNode. So when headTracked is set, this
+    // worklet's reflection output (output[1]) carries only the DRY MONO
+    // reflection-send signal (duplicated to both channels) for that ConvolverNode
+    // to filter — it does NOT itself convolve or decode. When headTracked is off,
+    // output[1] carries the legacy mono-duplicated parametric reflected field.
     this.headTracked = processorOptions.headTracked === true
-    this.reflectionOrder = processorOptions.reflectionOrder ?? 1
-    this.reflectionChannels = (this.reflectionOrder + 1) * (this.reflectionOrder + 1)
-    this.reflectionIr = undefined // { channels, taps, data: Float32Array }
-    this.convHistory = undefined // mono input history ring for FIR convolution
-    this.convHistoryPos = 0
-    this.ambiEffect = 0
     this.controlBuffer = processorOptions.controlBuffer
     this.controlSequence = this.controlBuffer
       ? new Int32Array(this.controlBuffer, 0, 1)
@@ -146,8 +145,6 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.port.onmessage = ({ data }) => {
       if (data?.type === 'control' && data.values)
         this.control.set(data.values)
-      else if (data?.type === 'reflection-ir')
-        this.setReflectionIr(data)
       else if (data?.type === 'dispose')
         this.dispose()
     }
@@ -161,6 +158,48 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
           type: 'error',
         })
       })
+  }
+
+  // Run the parametric reflection (output[1]) and reverb (output[2]) effects for
+  // this block. The reflection effect is only needed for the legacy
+  // mono-duplicated reflected field; in headTracked mode the reflection send is
+  // the dry mono signal (the main-thread ConvolverNode does the filtering), so
+  // skip it. The reverb effect always runs. `inputActive` selects apply vs tail.
+  applyParametricBuses(module, inputActive) {
+    if (!this.headTracked) {
+      if (inputActive) {
+        module._sa_reflection_effect_apply(
+          this.reflectionEffect,
+          this.reflectionTimesPointer,
+          this.monoPointer,
+          this.reflectionPointer,
+          this.frameSize,
+        )
+      }
+      else {
+        module._sa_reflection_effect_get_tail(
+          this.reflectionEffect,
+          this.reflectionPointer,
+          this.frameSize,
+        )
+      }
+    }
+    if (inputActive) {
+      module._sa_reflection_effect_apply(
+        this.reverbEffect,
+        this.reverbTimesPointer,
+        this.monoPointer,
+        this.reverbPointer,
+        this.frameSize,
+      )
+    }
+    else {
+      module._sa_reflection_effect_get_tail(
+        this.reverbEffect,
+        this.reverbPointer,
+        this.frameSize,
+      )
+    }
   }
 
   dispose() {
@@ -184,29 +223,7 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     module._free(this.reverbPointer)
     module._free(this.reflectionTimesPointer)
     module._free(this.reverbTimesPointer)
-    if (this.ambiEffect) {
-      module._sa_ambisonics_binaural_effect_release(this.ambiEffect)
-      module._free(this.ambiInPointer)
-      module._free(this.ambiOutPointer)
-      this.ambiEffect = 0
-    }
     this.ready = false
-  }
-
-  // Store the latest per-source Ambisonic reflection IR (channels x taps,
-  // row-major). Called at the simulation update rate, not audio rate.
-  setReflectionIr(data) {
-    if (!this.headTracked || !data?.data)
-      return
-    const channels = Math.min(data.channels, this.reflectionChannels)
-    const taps = data.samples
-    if (channels <= 0 || taps <= 0)
-      return
-    this.reflectionIr = { channels, data: data.data, taps }
-    if (!this.convHistory || this.convHistory.length < taps) {
-      this.convHistory = new Float32Array(taps)
-      this.convHistoryPos = 0
-    }
   }
 
   initialize(runtime) {
@@ -232,15 +249,6 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.reverbPointer = allocate(module, this.frameSize * 4)
     this.reflectionTimesPointer = allocate(module, 3 * 4)
     this.reverbTimesPointer = allocate(module, 3 * 4)
-    if (this.headTracked) {
-      this.ambiEffect = createHandle(module, out =>
-        module._sa_ambisonics_binaural_effect_create(
-          context, sampleRate, this.frameSize, hrtf, this.reflectionOrder, out))
-      // Ambisonic field buffer (channels x frameSize) feeding the decode, and
-      // its stereo output.
-      this.ambiInPointer = allocate(module, this.reflectionChannels * this.frameSize * 4)
-      this.ambiOutPointer = allocate(module, 2 * this.frameSize * 4)
-    }
     this.ready = true
     this.port.postMessage({ type: 'ready' })
   }
@@ -339,34 +347,7 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
       heap[reflectionTimesOffset + band] = this.control[15 + band]
       heap[reverbTimesOffset + band] = this.control[19 + band]
     }
-    if (inputActive) {
-      module._sa_reflection_effect_apply(
-        this.reflectionEffect,
-        this.reflectionTimesPointer,
-        this.monoPointer,
-        this.reflectionPointer,
-        this.frameSize,
-      )
-      module._sa_reflection_effect_apply(
-        this.reverbEffect,
-        this.reverbTimesPointer,
-        this.monoPointer,
-        this.reverbPointer,
-        this.frameSize,
-      )
-    }
-    else {
-      module._sa_reflection_effect_get_tail(
-        this.reflectionEffect,
-        this.reflectionPointer,
-        this.frameSize,
-      )
-      module._sa_reflection_effect_get_tail(
-        this.reverbEffect,
-        this.reverbPointer,
-        this.frameSize,
-      )
-    }
+    this.applyParametricBuses(module, inputActive)
 
     const targetMix = hrtf ? 1 : 0
     const mixStep = 1 / (sampleRate * 0.02)
@@ -386,77 +367,27 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
           + heap[directOffset + this.frameSize + index] * dryMix
     }
 
-    // Head-tracked reflected field: convolve the dry mono reflection signal
-    // (monoPointer) with the per-channel Ambisonic IR, then decode to binaural.
-    // Produces a stereo reflected field that rotates with the head, replacing
-    // the mono-duplicated parametric one. Falls back to mono duplication when
-    // no IR has arrived yet.
-    let headTrackedStereo = false
-    if (this.headTracked && this.reflectionIr && this.ambiEffect) {
-      headTrackedStereo = this.renderHeadTrackedReflections(heap, monoOffset)
-    }
-
-    const ambiOutBase = this.ambiOutPointer >>> 2
+    // Reflection send (output[1]):
+    //  * headTracked: emit the DRY MONO reflection-send signal (monoPointer,
+    //    which here holds the dry input downmix) scaled by wet, duplicated to
+    //    both channels. The main-thread ConvolverNode convolves this with the
+    //    per-pose binaural stereo IR baked by the worker, producing the
+    //    directional, head-tracked reflected field. No convolution/decode here.
+    //  * legacy: emit the mono-duplicated parametric reflected field.
     for (let index = 0; index < this.frameSize; index++) {
       this.outputLeft[this.outputWrite] = heap[outputOffset + index]
       this.outputRight[this.outputWrite] = heap[outputOffset + this.frameSize + index]
       const reverbSample = heap[reverbOffset + index] * this.control[22]
-      if (headTrackedStereo) {
-        const wet = this.control[18]
-        this.reflectionLeft[this.outputWrite] = heap[ambiOutBase + index] * wet
-        this.reflectionRight[this.outputWrite]
-          = heap[ambiOutBase + this.frameSize + index] * wet
-      }
-      else {
-        const reflectionSample = heap[reflectionOffset + index] * this.control[18]
-        this.reflectionLeft[this.outputWrite] = reflectionSample
-        this.reflectionRight[this.outputWrite] = reflectionSample
-      }
+      const reflectionSample = this.headTracked
+        ? heap[monoOffset + index] * this.control[18]
+        : heap[reflectionOffset + index] * this.control[18]
+      this.reflectionLeft[this.outputWrite] = reflectionSample
+      this.reflectionRight[this.outputWrite] = reflectionSample
       this.reverbLeft[this.outputWrite] = reverbSample
       this.reverbRight[this.outputWrite] = reverbSample
       this.outputWrite = (this.outputWrite + 1) % this.outputLeft.length
       this.outputCount++
     }
-  }
-
-  // Direct multichannel FIR convolution of the dry mono reflection signal (at
-  // heap[monoOffset..]) with the Ambisonic IR, followed by Ambisonics-binaural
-  // decode. Writes stereo into ambiOutPointer. Returns true on success.
-  // Cost ~ channels * taps MACs per output sample; keep taps modest (irTaps).
-  renderHeadTrackedReflections(heap, monoOffset) {
-    const { module } = this.runtime
-    const ir = this.reflectionIr
-    const taps = ir.taps
-    const channels = ir.channels
-    const history = this.convHistory
-    const histLen = history.length
-    const ambiInBase = this.ambiInPointer >>> 2
-
-    for (let index = 0; index < this.frameSize; index++) {
-      // Append the new mono sample to the history ring.
-      this.convHistoryPos = (this.convHistoryPos + 1) % histLen
-      history[this.convHistoryPos] = heap[monoOffset + index]
-      // For each Ambisonic channel, accumulate FIR(history, ir[ch]).
-      for (let ch = 0; ch < channels; ch++) {
-        const irOffset = ch * taps
-        let acc = 0
-        let h = this.convHistoryPos
-        for (let t = 0; t < taps; t++) {
-          acc += ir.data[irOffset + t] * history[h]
-          h = h === 0 ? histLen - 1 : h - 1
-        }
-        heap[ambiInBase + ch * this.frameSize + index] = acc
-      }
-    }
-    const status = module._sa_ambisonics_binaural_effect_apply(
-      this.ambiEffect,
-      this.runtime.hrtf,
-      this.reflectionOrder,
-      this.ambiInPointer,
-      this.ambiOutPointer,
-      this.frameSize,
-    )
-    return status === 0
   }
 
   pullOutput(output, reflectionOutput, reverbOutput, quantumSize) {

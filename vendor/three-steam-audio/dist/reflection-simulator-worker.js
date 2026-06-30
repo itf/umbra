@@ -64,40 +64,109 @@ const createStaticMesh = (scene, geometry, materialCount) => {
                 ))))))))
 }
 
-// Copy the source's listener-relative Ambisonic reflection IR out of the WASM
-// heap into a standalone Float32Array, truncated to runtime.irTaps per channel,
-// and stage it for transfer. Layout: channels x taps, row-major. Returns
-// nothing; mutates `entry` and pushes the backing ArrayBuffer onto `transfers`.
-let irScratch = 0
-let irScratchFloats = 0
-const extractIr = (source, entry, transfers) => {
-  const { module } = runtime
-  const packed = module._sa_source_get_reflection_ir_size(source)
-  if (!packed)
-    return
-  const channels = packed >> 16
-  const samples = packed & 0xffff
-  if (channels <= 0 || samples <= 0)
-    return
-  const need = channels * samples
-  if (irScratchFloats < need) {
-    if (irScratch)
-      module._free(irScratch)
-    irScratch = allocate(module, need * 4)
-    irScratchFloats = need
-  }
-  const written = module._sa_source_get_reflection_ir(source, irScratch, need)
-  if (written !== need)
-    return
-  const taps = Math.min(samples, runtime.irTaps)
-  const out = new Float32Array(channels * taps)
-  const base = irScratch >>> 2
-  for (let ch = 0; ch < channels; ch++)
-    out.set(
-      module.HEAPF32.subarray(base + ch * samples, base + ch * samples + taps),
-      ch * taps,
+// Bake the per-pose BINAURAL STEREO reflection impulse response for one source.
+//
+// Reflections are a linear filter, so rather than streaming audio we render the
+// source's reflection effect's response to a UNIT IMPULSE and decode it to
+// stereo for the CURRENT listener orientation. The worklet/main thread then just
+// convolves the dry beacon with this stereo IR (a Web Audio ConvolverNode).
+//
+// Pipeline (all in this WASM instance), per de-risk findings:
+//   1. The caller must have run sa_simulator_run_reflections immediately before
+//      this (a stale IR handle yields silence) — see the `run` handler.
+//   2. Feed a unit impulse (block 0) + zero-blocks to flush the partitioned-FFT
+//      tail through sa_source_apply_convolution_reflection -> world-frame
+//      Ambisonic field.
+//   3. Decode each block to STEREO with sa_ambisonics_decode_effect_apply using
+//      the LIVE listener ahead/up (rotation happens at decode, NOT by
+//      re-simulating).
+// Output: channel-major Float32Array [L(0..N-1), R(0..N-1)] of `irSamples`
+// frames. Mutates `entry.ir` and pushes the backing buffer onto `transfers`.
+const bakeStereoIr = (source, entry, transfers) => {
+  const {
+    ambiPointer,
+    captureBlocks,
+    channels,
+    decodeEffect,
+    frameSize,
+    hrtf,
+    irDuration,
+    irSamples,
+    listenerAhead,
+    listenerUp,
+    module,
+    monoPointer,
+    order,
+    reflectionEffect,
+    sampleRate,
+    stereoPointer,
+  } = runtime
+
+  // Fresh convolution + decode state for this bake.
+  module._sa_reflection_effect_reset(reflectionEffect)
+  module._sa_ambisonics_decode_effect_reset(decodeEffect)
+
+  const out = new Float32Array(2 * irSamples)
+  const monoBase = monoPointer >>> 2
+  const ambiFloats = channels * frameSize
+  const stereoBase = stereoPointer >>> 2
+  let wrote = 0
+  let nonSilent = false
+
+  for (let block = 0; block < captureBlocks && wrote < irSamples; block++) {
+    // Unit impulse in block 0, silence afterwards.
+    module.HEAPF32.fill(0, monoBase, monoBase + frameSize)
+    if (block === 0)
+      module.HEAPF32[monoBase] = 1
+
+    module.HEAPF32.fill(0, ambiPointer >>> 2, (ambiPointer >>> 2) + ambiFloats)
+    const applyStatus = module._sa_source_apply_convolution_reflection(
+      reflectionEffect,
+      source,
+      order,
+      sampleRate,
+      irDuration,
+      monoPointer,
+      ambiPointer,
+      frameSize,
     )
-  entry.ir = { channels, samples: taps, data: out }
+    if (applyStatus !== 0)
+      return // no IR available yet; leave entry.ir undefined
+
+    module.HEAPF32.fill(0, stereoBase, stereoBase + 2 * frameSize)
+    const decodeStatus = module._sa_ambisonics_decode_effect_apply(
+      decodeEffect,
+      hrtf,
+      order,
+      listenerAhead[0],
+      listenerAhead[1],
+      listenerAhead[2],
+      listenerUp[0],
+      listenerUp[1],
+      listenerUp[2],
+      1, // binaural
+      ambiPointer,
+      stereoPointer,
+      frameSize,
+    )
+    if (decodeStatus !== 0)
+      return
+
+    const take = Math.min(frameSize, irSamples - wrote)
+    for (let i = 0; i < take; i++) {
+      const l = module.HEAPF32[stereoBase + i]
+      const r = module.HEAPF32[stereoBase + frameSize + i]
+      out[wrote + i] = l
+      out[irSamples + wrote + i] = r
+      if (l !== 0 || r !== 0)
+        nonSilent = true
+    }
+    wrote += take
+  }
+
+  if (!nonSilent)
+    return
+  entry.ir = { data: out, samples: irSamples }
   transfers.push(out.buffer)
 }
 
@@ -188,12 +257,12 @@ const handlers = {
           module.HEAPF32[offset + 2],
         ],
       }
-      // Head-tracked path: extract the listener-relative Ambisonic IR
-      // (truncated to irTaps) and transfer it (zero-copy) to the worklet.
-      // Throttled to the sim update rate by virtue of running here, not at
-      // audio rate.
+      // Head-tracked path: bake the per-pose binaural STEREO reflection IR
+      // (impulse -> Ambisonic -> orientation decode) and transfer it (zero-copy)
+      // to the main thread, which convolves the dry beacon through it. Throttled
+      // to the sim update rate by virtue of running here, not at audio rate.
       if (runtime.headTracked)
-        extractIr(source, entry, transfers)
+        bakeStereoIr(source, entry, transfers)
       outputs.push(entry)
     }
     module._free(pointer)
@@ -212,6 +281,11 @@ const handlers = {
       message.settings.order,
       message.settings.irradianceMinDistance,
     )
+    // Store the live head orientation for the binaural decode (head tracking
+    // happens at decode time, not by re-simulating). Same ahead/up convention
+    // the simulator gets.
+    runtime.listenerAhead = message.ahead
+    runtime.listenerUp = message.up
   },
   'update-dynamic-mesh': (message) => {
     const entry = meshes.get(message.id)
@@ -228,16 +302,40 @@ const handlers = {
   },
 }
 
+const createSofaHrtf = (module, context, sampleRate, frameSize, sofaData) => {
+  const bytes = new Uint8Array(sofaData)
+  const pointer = allocate(module, bytes.byteLength)
+  try {
+    module.HEAPU8.set(bytes, pointer)
+    return createHandle(module, out =>
+      module._sa_hrtf_create_sofa(
+        context,
+        sampleRate,
+        frameSize,
+        pointer,
+        bytes.byteLength,
+        out,
+      ))
+  }
+  finally {
+    module._free(pointer)
+  }
+}
+
 const initialize = async (message) => {
   const module = await createSteamAudioModule({ wasmBinary: message.wasmBinary })
   const context = createHandle(module, out => module._sa_context_create(out))
   const scene = createHandle(module, out => module._sa_scene_create(context, out))
   const settings = message.settings
+  const sampleRate = message.sampleRate
+  const frameSize = message.frameSize
+  const headTracked = Boolean(settings.headTracked)
+  const order = settings.maxOrder ?? 1
   const simulator = createHandle(module, out => module._sa_simulator_create(
     context,
     scene,
-    message.sampleRate,
-    message.frameSize,
+    sampleRate,
+    frameSize,
     message.maxSources,
     1,
     1,
@@ -246,18 +344,72 @@ const initialize = async (message) => {
     settings.maxDuration,
     settings.maxOrder,
     1,
-    settings.headTracked ? 1 : 0,
+    headTracked ? 1 : 0,
     out,
   ))
+
   runtime = {
     context,
-    headTracked: Boolean(settings.headTracked),
-    irTaps: settings.irTaps ?? 1024,
+    frameSize,
+    headTracked,
+    // Listener orientation for the binaural decode; canonical until the first
+    // set-listener arrives (ahead -Z, up +Y — Steam's default head frame).
+    listenerAhead: [0, 0, -1],
+    listenerUp: [0, 1, 0],
     module,
-    order: settings.maxOrder ?? 1,
+    order,
+    sampleRate,
     scene,
     simulator,
   }
+
+  if (!headTracked)
+    return
+
+  // Head-tracked reflection rendering: bake a per-pose binaural STEREO IR.
+  const channels = (order + 1) * (order + 1)
+  // Baked binaural IR length. Short by design (directional cue is in the early
+  // reflections); bounds bake + convolution cost. captureBlocks covers the
+  // duration plus a few blocks of partitioned-FFT latency to flush the tail.
+  const irDuration = settings.irDuration ?? 0.2
+  const irSamples = Math.round(irDuration * sampleRate)
+  const captureBlocks = Math.ceil(irSamples / frameSize) + 4
+
+  const hrtf = message.sofaData
+    ? createSofaHrtf(module, context, sampleRate, frameSize, message.sofaData)
+    : createHandle(module, out =>
+        module._sa_hrtf_create(context, sampleRate, frameSize, out))
+  const reflectionEffect = createHandle(module, out =>
+    module._sa_convolution_reflection_effect_create(
+      context,
+      sampleRate,
+      frameSize,
+      order,
+      irDuration,
+      out,
+    ))
+  const decodeEffect = createHandle(module, out =>
+    module._sa_ambisonics_decode_effect_create(
+      context,
+      sampleRate,
+      frameSize,
+      hrtf,
+      order,
+      out,
+    ))
+
+  Object.assign(runtime, {
+    ambiPointer: allocate(module, channels * frameSize * 4),
+    captureBlocks,
+    channels,
+    decodeEffect,
+    hrtf,
+    irDuration,
+    irSamples,
+    monoPointer: allocate(module, frameSize * 4),
+    reflectionEffect,
+    stereoPointer: allocate(module, 2 * frameSize * 4),
+  })
 }
 
 const dispose = () => {
@@ -268,9 +420,24 @@ const dispose = () => {
   for (const id of [...meshes.keys()])
     handlers['remove-mesh']({ id })
   handlers['commit-scene']()
-  runtime.module._sa_simulator_release(runtime.simulator)
-  runtime.module._sa_scene_release(runtime.scene)
-  runtime.module._sa_context_release(runtime.context)
+  const { module } = runtime
+  if (runtime.headTracked) {
+    if (runtime.decodeEffect)
+      module._sa_ambisonics_decode_effect_release(runtime.decodeEffect)
+    if (runtime.reflectionEffect)
+      module._sa_reflection_effect_release(runtime.reflectionEffect)
+    if (runtime.hrtf)
+      module._sa_hrtf_release(runtime.hrtf)
+    if (runtime.monoPointer)
+      module._free(runtime.monoPointer)
+    if (runtime.ambiPointer)
+      module._free(runtime.ambiPointer)
+    if (runtime.stereoPointer)
+      module._free(runtime.stereoPointer)
+  }
+  module._sa_simulator_release(runtime.simulator)
+  module._sa_scene_release(runtime.scene)
+  module._sa_context_release(runtime.context)
   postMessage({ type: 'disposed' })
   close()
 }
