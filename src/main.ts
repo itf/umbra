@@ -13,7 +13,13 @@ import {
   budgetIntroAnnouncement,
   remainingPhrase as budgetRemainingPhrase,
 } from './game/clapAnnounce';
-import { Heading, keyTurnDelta, announceHeading } from './game/heading';
+import {
+  Heading,
+  keyTurnDelta,
+  announceHeadingWithDirection,
+  crossedDetent,
+  COMPASS_POINTS,
+} from './game/heading';
 import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
 import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
@@ -545,13 +551,27 @@ function setupTurning(game: Game): (delta: number) => void {
 
   // Slew loop: advance toward target, then apply the SLEWED value to both the
   // audio (game) and the compass so they stay in lockstep and catch up together.
+  // As the SLEWED heading sweeps across an 8-point compass detent (N/NE/E/…), fire
+  // a subtle, debounced spoken cue naming the new direction (G2). Only on a crossing
+  // — never continuously — and rate-limited so a fast spin doesn't machine-gun the
+  // live region. It rides the SAME polite `say()` as the keyboard read-out; a held
+  // turn's settle announcement (below) supersedes it when the turn stops.
   let lastT = performance.now();
+  let lastDetentSpokenAt = 0;
   const loop = (now: number) => {
     const dt = Math.min(0.05, (now - lastT) / 1000);
     lastT = now;
+    const prev = heading.current;
     if (heading.tick(dt)) {
       game.setYaw(heading.current);
       compass.setHeading(heading.current);
+      const detent = crossedDetent(prev, heading.current);
+      // Subtle detent cue: only while actively slewing (target not yet reached) and
+      // no more than ~3×/s, so passing several detents in a fast turn doesn't spam.
+      if (detent != null && now - lastDetentSpokenAt > 300) {
+        lastDetentSpokenAt = now;
+        say(`Facing ${COMPASS_POINTS[detent]}.`);
+      }
     }
     requestAnimationFrame(loop);
   };
@@ -559,14 +579,15 @@ function setupTurning(game: Game): (delta: number) => void {
 
   // Keyboard turning: nudge the target heading, sync the dial, and announce the
   // new heading after a short idle so a held/repeated key doesn't spam the live
-  // region (it speaks once the turn settles).
+  // region (it speaks once the turn settles). The settle read-out NAMES the nearest
+  // compass direction (G2), e.g. "Turned 45 degrees right, facing north-east."
   let announceTimer: ReturnType<typeof setTimeout> | null = null;
   return (delta: number) => {
     if (delta === 0) return;
     heading.setTarget(heading.desired + delta);
     compass.setHeading(heading.desired);
     if (announceTimer != null) clearTimeout(announceTimer);
-    announceTimer = setTimeout(() => say(announceHeading(heading.desired)), 250);
+    announceTimer = setTimeout(() => say(announceHeadingWithDirection(heading.desired)), 250);
   };
 }
 

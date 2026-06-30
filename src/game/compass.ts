@@ -9,6 +9,14 @@
  *
  * Heading convention matches turnControl: yaw radians, +yaw = turning right, so
  * the arc sweeps LEFT under the fixed top pointer when you turn right.
+ *
+ * Accessibility: the widget is a `role="slider"` and is keyboard-FOCUSABLE
+ * (tabindex=0). It exposes the live heading via aria-valuenow (degrees) and a
+ * human aria-valuetext (e.g. "facing north-east"), updated on every setHeading so a
+ * screen-reader user who focuses it hears the current heading. Turning itself is
+ * driven by the GLOBAL arrow-key handler in main.ts (which slews the same Heading
+ * and calls setHeading); the widget deliberately does NOT bind arrow keys so it
+ * never double-handles them — it just reflects the value.
  */
 
 export interface CompassOptions {
@@ -23,6 +31,27 @@ export interface CompassOptions {
 }
 
 const SVGNS = 'http://www.w3.org/2000/svg';
+
+/** 8-point compass names (yaw=0 = start = north; +yaw clockwise). */
+const COMPASS_POINTS = [
+  'north', 'north-east', 'east', 'south-east',
+  'south', 'south-west', 'west', 'north-west',
+] as const;
+
+/** Normalize a yaw (radians) to [0,360) degrees, with 0 = start/north. */
+function yawDeg(yaw: number): number {
+  return ((((yaw * 180) / Math.PI) % 360) + 360) % 360;
+}
+
+/** Human-readable heading for aria-valuetext, e.g. "30 degrees right, facing north-east". */
+function headingText(yaw: number): string {
+  const deg = yawDeg(yaw);
+  const dir = COMPASS_POINTS[Math.round(deg / 45) % 8];
+  const d = Math.round(deg);
+  if (d === 0 || d === 360) return 'facing start direction (north)';
+  const rel = d <= 180 ? `${d} degrees right` : `${360 - d} degrees left`;
+  return `${rel}, facing ${dir}`;
+}
 
 /** The compass shows only the top arc of this many degrees (±ARC_DEG/2 from up). */
 const ARC_DEG = 120;
@@ -78,6 +107,12 @@ export class Compass {
     this.yaw = yaw;
     const deg = (yaw * 180) / Math.PI;
     this.arc.setAttribute('transform', `rotate(${deg} ${this.cx} ${this.cy})`);
+    // Reflect the live heading for assistive tech (a focused screen-reader user
+    // hears their heading). aria-valuenow is the absolute compass bearing (0–359°,
+    // 0 = start/north); aria-valuetext spells out the relative turn + direction.
+    const bearing = Math.round(yawDeg(yaw)) % 360;
+    this.el.setAttribute('aria-valuenow', String(bearing));
+    this.el.setAttribute('aria-valuetext', headingText(yaw));
   }
 
   private build(): SVGSVGElement {
@@ -86,7 +121,16 @@ export class Compass {
     svg.setAttribute('height', String(this.height));
     svg.setAttribute('viewBox', `0 0 ${this.width} ${this.height}`);
     svg.setAttribute('role', 'slider');
-    svg.setAttribute('aria-label', 'Compass. Drag left or right to turn.');
+    svg.setAttribute('aria-label', 'Compass. Drag left or right, or use the arrow keys, to turn.');
+    // Keyboard-focusable so a screen-reader user can land on it and hear the
+    // heading. Turning is handled by the global arrow handler (main.ts); we expose
+    // the value, not the input. aria-valuemin/max span a full compass turn (0–359°).
+    svg.setAttribute('tabindex', '0');
+    svg.setAttribute('aria-valuemin', '0');
+    svg.setAttribute('aria-valuemax', '359');
+    svg.setAttribute('aria-valuenow', '0');
+    svg.setAttribute('aria-valuetext', headingText(0));
+    svg.style.outline = 'none';
     svg.style.touchAction = 'none';
     svg.style.userSelect = 'none';
     svg.style.cursor = 'ew-resize';

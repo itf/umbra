@@ -12,7 +12,7 @@ import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
 import { Footsteps } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
-import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
+import { BeaconVoice, proximityGain, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
 import {
   makeMonster,
@@ -184,6 +184,13 @@ export class Game {
   private beaconVoice: BeaconVoice | null = null;
   /** Looping custom-audio source, when `soundUrl` loaded successfully. */
   private beaconCustom: AudioBufferSourceNode | null = null;
+  /**
+   * Shared "getting warmer" proximity gain. BOTH the synth voice and the custom
+   * audio loop feed THIS node (which feeds `beaconInput`), so the proximity cue
+   * (louder as you close in) applies regardless of which voice is live — fixing the
+   * custom-audio beacon getting no warmer cue. Modulated from reportProgress.
+   */
+  private beaconProxGain: GainNode | null = null;
   private headHeight: number;
   private won = false;
   private caught = false;
@@ -350,6 +357,13 @@ export class Game {
     // "Find the absorber" mode: no beacon voice. The room is revealed by clapping;
     // the goal is the silent dead spot, so we never start a beacon sound.
     if (this.level.goal === 'absorber') return;
+    // Interpose the shared proximity gain between the dry voice(s) and the
+    // spatializer input. Both the synth voice AND the custom audio loop feed THIS
+    // node, so the "getting warmer" cue (reportProgress → setProximity) reaches
+    // whichever voice is live. It starts at unity (far).
+    this.beaconProxGain = this.graph.ctx.createGain();
+    this.beaconProxGain.gain.value = 1;
+    this.beaconProxGain.connect(this.beaconInput);
     // Always start the synth preset immediately so the beacon is never silent.
     // If a custom `soundUrl` is set, the shared helper loads + loops it through the
     // SAME HrtfSource and we swap to it when it arrives; on failure the synth stays.
@@ -360,7 +374,7 @@ export class Game {
     // shouldStart vetoes a late buffer if the beacon was won (and faded) meanwhile.
     void attachCustomLoop(
       this.graph.ctx,
-      this.beaconInput,
+      this.beaconProxGain,
       url,
       () => { /* keep the synth fallback already running */ },
       { shouldStart: () => !this.won && this.beaconCustom == null },
@@ -377,7 +391,10 @@ export class Game {
   private startSynthBeacon() {
     const preset: BeaconPreset = resolveBeaconPreset(this.level.beacon.sound);
     this.beaconVoice?.stop();
-    this.beaconVoice = new BeaconVoice(this.graph.ctx, this.beaconInput, preset, this.level.beacon.freq);
+    // Feed the shared proximity gain (so the warmer cue applies), falling back to the
+    // raw input if it somehow wasn't created (e.g. absorber mode never calls this).
+    const dest = this.beaconProxGain ?? this.beaconInput;
+    this.beaconVoice = new BeaconVoice(this.graph.ctx, dest, preset, this.level.beacon.freq);
     this.beaconVoice.start();
   }
 
@@ -455,12 +472,17 @@ export class Game {
   private reportProgress() {
     const t = this.winTarget();
     const d = this.player.distanceTo(t.x, t.z);
-    // Continuous "getting warmer" cue: scale the dry beacon voice's loudness by
-    // proximity so closing in is HEARD, not just narrated in coarse bands. Only the
-    // synth voice is modulated (null in 'absorber' mode — no beacon — and while a
-    // custom audio loop is playing). Works for every engine path since they all
-    // share this dry voice feeding the spatializer.
-    if (this.level.goal !== 'absorber') this.beaconVoice?.setProximity(d);
+    // Continuous "getting warmer" cue: scale the dry beacon's loudness by proximity
+    // so closing in is HEARD, not just narrated in coarse bands. Modulating the
+    // SHARED proximity gain means the cue reaches BOTH the synth voice and the
+    // custom audio loop (whichever is live) — the custom `soundUrl` beacon now gets
+    // it too. Null only in 'absorber' mode (no beacon). Works for every engine path
+    // since they all share this dry chain feeding the spatializer.
+    if (this.beaconProxGain) {
+      const t = this.graph.ctx.currentTime;
+      // Short time-constant glide so rapid distance updates don't zipper.
+      this.beaconProxGain.gain.setTargetAtTime(proximityGain(d), t, 0.08);
+    }
     this.cb.onProgress?.(d);
   }
 
@@ -765,6 +787,10 @@ export class Game {
     if (this.beaconCustom) {
       try { this.beaconCustom.stop(); } catch { /* already stopped */ }
       this.beaconCustom = null;
+    }
+    if (this.beaconProxGain) {
+      try { this.beaconProxGain.disconnect(); } catch { /* noop */ }
+      this.beaconProxGain = null;
     }
     this.beacon?.disconnect();
     this.modeledBeacon?.disconnect();

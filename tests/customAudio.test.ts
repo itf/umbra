@@ -95,6 +95,19 @@ describe('attachCustomLoop (fallback + start)', () => {
     expect(onFallback).not.toHaveBeenCalled();
   });
 
+  it('connects the custom loop to the dest node it is given (proximity-gain routing)', async () => {
+    // Game now passes the SHARED proximity gain as `dest` so the "getting warmer"
+    // cue modulates the custom loop too. This asserts the helper wires the source
+    // into exactly that node — the contract Game.startBeaconSource relies on.
+    const { ctx, source } = fakeCtx();
+    const proxGain = { __isProxGain: true } as unknown as AudioNode;
+    await attachCustomLoop(ctx, proxGain, 'ok', vi.fn(), {
+      fetchBytes: async () => new ArrayBuffer(8),
+      decode: async () => fakeBuffer,
+    });
+    expect(source.connect).toHaveBeenCalledWith(proxGain);
+  });
+
   it('invokes onFallback and yields a null source on failure', async () => {
     const { ctx } = fakeCtx();
     const onFallback = vi.fn();

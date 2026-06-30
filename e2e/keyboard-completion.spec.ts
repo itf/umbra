@@ -29,6 +29,30 @@ test('arrow keys turn and announce a new heading', async ({ page }) => {
     .toMatch(/facing|north|south|east|west|left|right|°|degree/);
 });
 
+test('the compass widget exposes a slider value that updates when turning', async ({ page }) => {
+  await beginLevel(page, LEVEL);
+
+  // The compass SVG is the role=slider widget mounted in #turn-pad. It must be
+  // keyboard-focusable and expose its heading to assistive tech via aria-value*.
+  const compass = page.locator('#turn-pad [role="slider"]');
+  await expect(compass).toHaveAttribute('tabindex', '0');
+  await expect(compass).toHaveAttribute('aria-valuemin', '0');
+  await expect(compass).toHaveAttribute('aria-valuemax', '359');
+
+  const before = await compass.getAttribute('aria-valuenow');
+  const beforeText = await compass.getAttribute('aria-valuetext');
+  expect(beforeText).toBeTruthy();
+
+  // Turning via the global arrow handler must update the widget's exposed value.
+  for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowRight');
+  await page.waitForTimeout(300); // let the slew loop apply + setHeading run
+
+  await expect.poll(async () => compass.getAttribute('aria-valuenow')).not.toBe(before);
+  await expect
+    .poll(async () => (await compass.getAttribute('aria-valuetext'))?.toLowerCase() ?? '')
+    .toMatch(/facing|degree|north|south|east|west/);
+});
+
 test('step keys move the player toward the beacon', async ({ page }) => {
   await beginLevel(page, LEVEL);
 
