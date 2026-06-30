@@ -569,6 +569,14 @@ export class ModeledSource {
     this.lastFadeT = t;
   }
 
+  /** DEBUG: the currently-active reflection image-source world positions + gains
+   *  (the strong reflections being rendered). For the `?debug=1` minimap. */
+  debugReflections(): Array<{ pos: [number, number, number]; gain: number }> {
+    return this.reflectImages
+      .filter((r) => r.active)
+      .map((r) => ({ pos: [...r.pos] as [number, number, number], gain: r.gain }));
+  }
+
   disconnect() {
     this.directSource.disconnect();
     for (const s of this.reflectSources) s.disconnect();

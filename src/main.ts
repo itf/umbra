@@ -357,6 +357,12 @@ startButton.addEventListener('click', async () => {
       onProgress: (d) => updateFootHints(d),
     }, undefined, steam, interpRenderer);
 
+    // DEBUG (?debug=1): top-down minimap + live audio readout overlay. Dev aid only;
+    // dynamically imported so it costs nothing on the normal path.
+    if (new URLSearchParams(location.search).get('debug') === '1') {
+      void import('./debug/debugOverlay').then(({ DebugOverlay }) => new DebugOverlay(game));
+    }
+
     // --- Turn control: the compass dial (only turn control) ---
     setupTurning(game);
 

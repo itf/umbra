@@ -446,6 +446,24 @@ export class Game {
   }
 
   /**
+   * DEBUG snapshot for the `?debug=1` overlay: the live pose + geometry + what the
+   * acoustics engine is currently rendering. Read-only; safe to poll per frame.
+   */
+  debugState() {
+    const s = this.player.state;
+    return {
+      player: { x: s.x, z: s.z, yaw: this.audioYaw },
+      beacon: { x: this.level.beacon.x, z: this.level.beacon.z },
+      goal: this.level.goal ?? 'beacon',
+      goalTarget: this.winTarget(),
+      walls: this.level.acousticWalls ?? [],
+      distance: this.player.distanceTo(this.winTarget().x, this.winTarget().z),
+      engine: this.steam ? 'steam' : this.interpRenderer ? 'interp' : 'legacy',
+      reflections: this.modeledBeacon?.debugReflections() ?? [],
+    };
+  }
+
+  /**
    * Advance the active audio glide. Driven once per animation frame from the host
    * loop (main.ts). A no-op when no glide is running, so it never thrashes
    * AudioParams while idle.
