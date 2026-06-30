@@ -65,7 +65,13 @@
         <button id="back-to-picker" class="secondary">Choose a different level</button>
       </section>
 
+      <!-- Settings panel (audio mix + preferences). Mounted by src/ui/settings.ts;
+           opened from the Settings button (or the S key in-game). Modal dialog of
+           standard labeled controls; hidden until opened. -->
+      <section id="settings-screen" aria-label="Settings" hidden></section>
+
       <section id="game-screen" hidden aria-label="Game">
+        <button id="open-settings" class="settings-open" type="button" aria-label="Settings">⚙ Settings</button>
         <div id="turn-pad"><!-- compass dial mounts here --></div>
 
         <!-- Echo: small button between the compass and the feet. -->

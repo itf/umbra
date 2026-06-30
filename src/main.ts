@@ -26,6 +26,10 @@ import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
+import { SettingsStore } from './ui/settingsStore';
+import { mountSettings, type SettingsPanel } from './ui/settings';
+import { TrainerStore } from './trainer/trainerStore';
+import { DailyStreakStore } from './trainer/dailyStreakStore';
 import { companionLine, modeForLevel, type CompanionEvent, type CompanionContext } from './game/companion';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
@@ -53,6 +57,12 @@ if (engineToggle) {
 }
 
 const onboarding = new OnboardingStore();
+const settings = new SettingsStore();
+const trainerStore = new TrainerStore();
+const dailyStreakStore = new DailyStreakStore();
+// The mounted settings panel (audio mix + prefs). Null until the game starts +
+// setupSettings mounts it; the in-game S key + the ⚙ button drive it.
+let settingsPanel: SettingsPanel | null = null;
 
 // Companion-voice preference. OPTIONAL + remembered: defaults ON for first-timers
 // (stored pref), but `?companion=off` / `?companion=on` overrides AND persists the
@@ -93,6 +103,16 @@ function applyChannelSwap(graph: AudioGraph, want: boolean) {
     graph.master.connect(graph.limiter);
     swapNode = null;
   }
+}
+
+/**
+ * Apply the master output volume (0..1) to the AudioGraph's master gain with a
+ * short smoothing ramp so a slider drag doesn't zipper. The single applier the
+ * settings panel and apply-on-load both call. Persistence is the SettingsStore's job.
+ */
+function setMasterVolume(graph: AudioGraph, v: number) {
+  const t = graph.ctx.currentTime;
+  graph.master.gain.setTargetAtTime(Math.max(0, Math.min(1, v)), t, 0.03);
 }
 
 function say(msg: string) {
@@ -359,6 +379,9 @@ startButton.addEventListener('click', async () => {
   try {
     const graph = await startAudio();
     applyChannelSwap(graph, onboarding.swap());
+    // Apply the persisted master volume on load (smoothed). `setMasterVolume`
+    // below is the single applier the settings panel also calls.
+    setMasterVolume(graph, settings.masterVolume());
     const { ctx } = graph;
     const renderer = await HrtfRenderer.create(ctx, HRTF_URL);
     // Alien physics: if the level sets a speed of sound, the live beacon/monster
@@ -490,6 +513,13 @@ startButton.addEventListener('click', async () => {
       },
     }, undefined, steam, interpRenderer);
 
+    // Apply the persisted "getting warmer" cue preference to this run.
+    game.setWarmerCue(settings.warmerCueEnabled());
+
+    // --- Settings panel (audio mix + preferences). Opened from the ⚙ button or the
+    // S key; every control wired to its existing hook, every change spoken. ---
+    setupSettings(graph, game);
+
     // DEBUG (?debug=1): top-down minimap + live audio readout overlay. Dev aid only;
     // dynamically imported so it costs nothing on the normal path.
     if (new URLSearchParams(location.search).get('debug') === '1') {
@@ -530,6 +560,9 @@ startButton.addEventListener('click', async () => {
     // (the CRITICAL keyboard-turning fix — without this the game is uncompletable
     // without a pointer drag); ? or H speaks the controls.
     window.addEventListener('keydown', (e) => {
+      // While the settings dialog is open it owns the keyboard (its own Escape/Tab/
+      // control handlers) — don't let game keys (step/turn/decoy/help/S) leak through.
+      if (settingsPanel?.isOpen()) return;
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         // Prevent the page from scrolling, and let key-repeat keep turning.
         e.preventDefault();
@@ -544,6 +577,7 @@ startButton.addEventListener('click', async () => {
         // (and a spoken cue) when out of decoys; announcement is via onDecoy.
         if (!ended && !game.throwDecoy()) alert('No decoys left.');
       }
+      else if (e.key === 's' || e.key === 'S') settingsPanel?.toggle();
       else if (e.key === '?' || e.key === 'h' || e.key === 'H') speakControls();
     });
 
@@ -750,8 +784,47 @@ function speakControls() {
     'A steps with your left foot, L with your right — alternate them and do not rush. ' +
     'Echo button or the Listen control claps to hear the room. ' +
     'T throws a sound decoy to lure a monster away from you. ' +
+    'S opens Settings — volume, companion voice, cues, and reset progress. ' +
     'Press question mark or H to hear this again.',
   );
+}
+
+/**
+ * Mount the settings panel and wire its opener (the ⚙ button + the S key, set up
+ * in the keydown handler). Every control is wired to its existing hook here — the
+ * single place that applies + persists each pref. Reset clears trainer + daily
+ * streak + onboarding/primer flags so first-run onboarding replays.
+ */
+function setupSettings(graph: AudioGraph, game: Game) {
+  const host = document.getElementById('settings-screen');
+  if (!host) return;
+  settingsPanel = mountSettings(host, {
+    say,
+    alert,
+    getMasterVolume: () => settings.masterVolume(),
+    setMasterVolume: (v) => {
+      settings.setMasterVolume(v);
+      setMasterVolume(graph, v);
+    },
+    getCompanion: () => companionEnabled(),
+    setCompanion: (on) => setCompanion(on),
+    getWarmerCue: () => settings.warmerCueEnabled(),
+    setWarmerCue: (on) => {
+      settings.setWarmerCueEnabled(on);
+      game.setWarmerCue(on);
+    },
+    getSwap: () => onboarding.swap(),
+    setSwap: (on) => {
+      onboarding.setSwap(on);
+      applyChannelSwap(graph, on);
+    },
+    resetProgress: () => {
+      trainerStore.clear();
+      dailyStreakStore.clear();
+      onboarding.clearAll();
+    },
+  });
+  document.getElementById('open-settings')?.addEventListener('click', () => settingsPanel?.open());
 }
 
 function setupClap(

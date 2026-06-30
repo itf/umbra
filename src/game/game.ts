@@ -195,6 +195,14 @@ export class Game {
   private won = false;
   private caught = false;
   /**
+   * "Getting warmer" proximity cue enable flag (6C settings toggle). When ON
+   * (default) the beacon's dry loudness scales with closeness via `beaconProxGain`
+   * in reportProgress. When OFF the cue is disabled and the beacon is pinned to a
+   * CONSTANT level (unity), so closing in is no longer heard — only narrated. Does
+   * not touch any other behaviour; absorber mode has no beacon either way.
+   */
+  private warmerCueOn = true;
+  /**
    * Live monster runtime, one entry per level monster. Each has a PURE AI state
    * (monster.ts) and its own spatialized growl voice through an HrtfSource, so a
    * chasing monster Dopplers/glides as it nears. Empty (and zero per-frame cost)
@@ -480,8 +488,11 @@ export class Game {
     // since they all share this dry chain feeding the spatializer.
     if (this.beaconProxGain) {
       const t = this.graph.ctx.currentTime;
-      // Short time-constant glide so rapid distance updates don't zipper.
-      this.beaconProxGain.gain.setTargetAtTime(proximityGain(d), t, 0.08);
+      // Short time-constant glide so rapid distance updates don't zipper. When the
+      // warmer cue is disabled (settings), pin the beacon to a CONSTANT level (unity)
+      // so closeness is no longer heard — only narrated by onProgress below.
+      const g = this.warmerCueOn ? proximityGain(d) : 1;
+      this.beaconProxGain.gain.setTargetAtTime(g, t, 0.08);
     }
     this.cb.onProgress?.(d);
   }
@@ -579,6 +590,16 @@ export class Game {
   }
 
   /** Turn the player's head (radians). Audio yaw follows immediately (no position glide). */
+  /**
+   * Enable/disable the "getting warmer" proximity cue (6C settings). When turned
+   * off mid-run the beacon is immediately re-pinned to a constant level; when
+   * turned back on the next progress report restores the proximity-scaled gain.
+   */
+  setWarmerCue(on: boolean) {
+    this.warmerCueOn = on;
+    this.reportProgress();
+  }
+
   setYaw(yaw: number) {
     this.player.setYaw(yaw);
     this.audioYaw = yaw;

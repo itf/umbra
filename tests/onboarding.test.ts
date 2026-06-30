@@ -6,6 +6,7 @@ import {
   CALIBRATION_DONE_KEY,
   TUTORIAL_DONE_KEY,
   SWAP_KEY,
+  COMPANION_KEY,
   MODE_PRIMER_KEY,
 } from '../src/ui/onboardingStore';
 
@@ -188,6 +189,35 @@ describe('OnboardingStore (persistence)', () => {
     expect(s.modePrimerSeen('sonar')).toBe(false);
     expect(s.tutorialDone()).toBe(false);
     expect(s.isFirstRun()).toBe(true); // primers don't affect first-run gating
+  });
+
+  it('clearAll wipes done flags, primers, companion, and swap (onboarding replays)', () => {
+    const fake = fakeStorage();
+    const s = new OnboardingStore(fake);
+    s.setCalibrationDone();
+    s.setTutorialDone();
+    s.setSwap(true);
+    s.setCompanionEnabled(false);
+    s.setModePrimerSeen('stealth');
+    s.setModePrimerSeen('absorber');
+    s.setModePrimerSeen('sonar');
+
+    s.clearAll();
+
+    expect(s.calibrationDone()).toBe(false);
+    expect(s.tutorialDone()).toBe(false);
+    expect(s.isFirstRun()).toBe(true); // onboarding gate replays
+    expect(s.swap()).toBe(false);
+    expect(s.companionEnabled()).toBe(true); // back to the default-ON
+    expect(s.modePrimerSeen('stealth')).toBe(false);
+    expect(s.modePrimerSeen('absorber')).toBe(false);
+    expect(s.modePrimerSeen('sonar')).toBe(false);
+    // The keys are physically removed from storage, not just set to '0'.
+    expect(fake._map.has(CALIBRATION_DONE_KEY)).toBe(false);
+    expect(fake._map.has(TUTORIAL_DONE_KEY)).toBe(false);
+    expect(fake._map.has(SWAP_KEY)).toBe(false);
+    expect(fake._map.has(COMPANION_KEY)).toBe(false);
+    for (const key of Object.values(MODE_PRIMER_KEY)) expect(fake._map.has(key)).toBe(false);
   });
 
   it('degrades to memory when storage is null', () => {

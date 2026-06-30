@@ -70,6 +70,29 @@ export class OnboardingStore {
     }
   }
 
+  private remove(key: string) {
+    this.mem.delete(key);
+    try {
+      this.store?.removeItem(key);
+    } catch {
+      /* memory already cleared */
+    }
+  }
+
+  /**
+   * Wipe ALL onboarding + primer + preference flags so first-run onboarding
+   * replays from scratch (the 6C "reset progress" affordance calls this). Removes
+   * the calibration/tutorial "done" flags, every per-mode primer flag, and the
+   * companion + swap preferences — returning the player to a clean first-run state.
+   */
+  clearAll() {
+    this.remove(CALIBRATION_DONE_KEY);
+    this.remove(TUTORIAL_DONE_KEY);
+    this.remove(SWAP_KEY);
+    this.remove(COMPANION_KEY);
+    for (const key of Object.values(MODE_PRIMER_KEY)) this.remove(key);
+  }
+
   private flag(key: string): boolean {
     return this.read(key) === '1';
   }
