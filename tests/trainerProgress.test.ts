@@ -135,12 +135,12 @@ describe('TrainerStore persistence', () => {
 describe('summarizeProgress (pure)', () => {
   it('returns empty for a brand-new user (no sessions)', () => {
     expect(summarizeProgress('direction', null)).toBe('');
-    const empty: ExerciseProgress = { thresholdHistory: [], trials: 0, correct: 0, sessions: 0, best: null, last: null };
+    const empty: ExerciseProgress = { thresholdHistory: [], thresholdLog: [], trials: 0, correct: 0, sessions: 0, best: null, last: null };
     expect(summarizeProgress('direction', empty)).toBe('');
   });
 
   it('renders best, last and session count as percents', () => {
-    const p: ExerciseProgress = { thresholdHistory: [0.4, 0.18], trials: 18, correct: 14, sessions: 2, best: 0.18, last: 0.18 };
+    const p: ExerciseProgress = { thresholdHistory: [0.4, 0.18], thresholdLog: [{ ts: 1, threshold: 0.4 }, { ts: 2, threshold: 0.18 }], trials: 18, correct: 14, sessions: 2, best: 0.18, last: 0.18 };
     const msg = summarizeProgress('Sound direction', p);
     expect(msg).toContain('Sound direction');
     expect(msg).toContain('18%');
@@ -148,7 +148,7 @@ describe('summarizeProgress (pure)', () => {
   });
 
   it('uses singular "1 session"', () => {
-    const p: ExerciseProgress = { thresholdHistory: [0.5], trials: 5, correct: 3, sessions: 1, best: 0.5, last: 0.5 };
+    const p: ExerciseProgress = { thresholdHistory: [0.5], thresholdLog: [{ ts: 1, threshold: 0.5 }], trials: 5, correct: 3, sessions: 1, best: 0.5, last: 0.5 };
     expect(summarizeProgress('x', p)).toContain('1 session');
   });
 });

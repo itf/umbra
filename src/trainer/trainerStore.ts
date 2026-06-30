@@ -15,11 +15,27 @@
  */
 
 export const TRAINER_PROGRESS_KEY = 'ps.trainer.progress.v1';
+/** First-launch onboarding gate (the "blind reference" trial runs once). */
+export const TRAINER_ONBOARDING_KEY = 'ps.trainer.onboarding.v1';
+
+/** A timestamped threshold sample (for the progress sparkline / trend). */
+export interface ThresholdEntry {
+  /** Epoch ms when the session was recorded. */
+  ts: number;
+  /** Difficulty threshold in [0,1] (lower = better). */
+  threshold: number;
+}
 
 /** Persisted record for one exercise type (or the 'all'/mixed pseudo-type). */
 export interface ExerciseProgress {
   /** One threshold sample per completed session, oldest first. */
   thresholdHistory: number[];
+  /**
+   * Timestamped threshold samples, oldest first — the source for the progress
+   * sparkline. Back-compat: older blobs only had `thresholdHistory` (plain
+   * numbers, no timestamps); those are tolerated and surfaced with ts=0.
+   */
+  thresholdLog: ThresholdEntry[];
   /** Total trials answered across all sessions of this type. */
   trials: number;
   /** Total correct answers across all sessions (for an accuracy readout). */
@@ -40,7 +56,7 @@ export interface ExerciseProgress {
 export type ProgressMap = Record<string, ExerciseProgress>;
 
 function emptyProgress(): ExerciseProgress {
-  return { thresholdHistory: [], trials: 0, correct: 0, sessions: 0, best: null, last: null };
+  return { thresholdHistory: [], thresholdLog: [], trials: 0, correct: 0, sessions: 0, best: null, last: null };
 }
 
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -67,6 +83,17 @@ function sanitize(raw: unknown): ExerciseProgress {
   const o = raw as Record<string, unknown>;
   if (Array.isArray(o.thresholdHistory)) {
     p.thresholdHistory = o.thresholdHistory.filter(isNum);
+  }
+  // Timestamped log: keep only well-formed {ts, threshold} entries. If absent
+  // (old blob), synthesize from the plain history with ts=0 so the sparkline /
+  // trend still has the shape — old entries simply lack a real timestamp.
+  if (Array.isArray(o.thresholdLog)) {
+    p.thresholdLog = o.thresholdLog
+      .filter((e): e is { ts: unknown; threshold: unknown } => !!e && typeof e === 'object')
+      .filter((e) => isNum(e.ts) && isNum(e.threshold))
+      .map((e) => ({ ts: e.ts as number, threshold: e.threshold as number }));
+  } else {
+    p.thresholdLog = p.thresholdHistory.map((threshold) => ({ ts: 0, threshold }));
   }
   if (isNum(o.trials)) p.trials = Math.max(0, Math.floor(o.trials));
   if (isNum(o.correct)) p.correct = Math.max(0, Math.floor(o.correct));
@@ -130,11 +157,12 @@ export class TrainerStore {
    * sample, fold in the session's trial/correct counts, and update best/last.
    * Returns the updated record.
    */
-  recordSession(type: string, session: { threshold: number; trials: number; correct: number }): ExerciseProgress {
+  recordSession(type: string, session: { threshold: number; trials: number; correct: number }, now: number = Date.now()): ExerciseProgress {
     const map = this.load();
     const p = map[type] ?? emptyProgress();
     const t = session.threshold;
     p.thresholdHistory.push(t);
+    p.thresholdLog.push({ ts: now, threshold: t });
     p.trials += Math.max(0, Math.floor(session.trials));
     p.correct += Math.max(0, Math.floor(session.correct));
     p.sessions += 1;
@@ -153,11 +181,11 @@ export class TrainerStore {
    * session count: call `recordSession` once at the start of a sitting, then
    * `updateLastSession` on each later checkpoint/flush. No-op if no session exists.
    */
-  updateLastSession(type: string, session: { threshold: number; trials: number; correct: number }): ExerciseProgress {
+  updateLastSession(type: string, session: { threshold: number; trials: number; correct: number }, now: number = Date.now()): ExerciseProgress {
     const map = this.load();
     const p = map[type];
     if (!p || p.sessions === 0 || p.thresholdHistory.length === 0) {
-      return this.recordSession(type, session);
+      return this.recordSession(type, session, now);
     }
     // Roll back the previous checkpoint's contribution, then re-apply the latest.
     const prevT = p.thresholdHistory[p.thresholdHistory.length - 1];
@@ -166,6 +194,12 @@ export class TrainerStore {
     p.trials = Math.max(0, p.trials - prevTrials) + Math.max(0, Math.floor(session.trials));
     p.correct = Math.max(0, p.correct - prevCorrect) + Math.max(0, Math.floor(session.correct));
     p.thresholdHistory[p.thresholdHistory.length - 1] = session.threshold;
+    // Mirror the in-place edit into the timestamped log (re-stamp the latest).
+    if (p.thresholdLog.length > 0) {
+      p.thresholdLog[p.thresholdLog.length - 1] = { ts: now, threshold: session.threshold };
+    } else {
+      p.thresholdLog.push({ ts: now, threshold: session.threshold });
+    }
     p.last = session.threshold;
     p.lastTrials = Math.max(0, Math.floor(session.trials));
     p.lastCorrect = Math.max(0, Math.floor(session.correct));
@@ -186,6 +220,84 @@ export class TrainerStore {
       /* ignore */
     }
   }
+
+  /**
+   * Has the one-time "blind reference" onboarding been shown? Stored as a tiny
+   * separate flag so it survives a progress `clear()` (onboarding is a one-shot
+   * orientation, not part of the score history). Guarded; false on any error.
+   */
+  hasSeenOnboarding(): boolean {
+    try {
+      return this.store?.getItem(TRAINER_ONBOARDING_KEY) === '1';
+    } catch {
+      return this.onboardingMem;
+    }
+  }
+
+  /** Mark the onboarding as seen so it never repeats. */
+  markOnboardingSeen() {
+    this.onboardingMem = true;
+    try {
+      this.store?.setItem(TRAINER_ONBOARDING_KEY, '1');
+    } catch {
+      /* memory flag already set */
+    }
+  }
+
+  private onboardingMem = false;
+}
+
+// --- Pure progress-trend helpers (sparkline data + accessible summary) --------
+
+/** A point ready for the sparkline canvas: x in [0,1] (time), y in [0,1] (threshold). */
+export interface SparkPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * PURE: turn a threshold log into normalized sparkline points. X is spread evenly
+ * across the samples (index-based — robust to ts=0 back-compat entries and to many
+ * sessions in one day), Y is the RAW threshold in [0,1] (already a 0..1 difficulty,
+ * so no rescaling needed — a flat line means a flat skill, a falling line means
+ * improvement since lower = better). Empty in → empty out. A single sample → one
+ * centred point. The canvas drawer flips Y (lower threshold = higher on screen).
+ */
+export function sparklinePoints(log: ThresholdEntry[]): SparkPoint[] {
+  if (log.length === 0) return [];
+  if (log.length === 1) return [{ x: 0.5, y: clamp01(log[0].threshold) }];
+  const n = log.length;
+  return log.map((e, i) => ({ x: i / (n - 1), y: clamp01(e.threshold) }));
+}
+
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+/**
+ * PURE: an accessible, spoken-friendly one-line trend summary for an exercise
+ * (canvas alone isn't screen-reader accessible). Renders the direction of change
+ * and the best score as a percent of full difficulty (lower = better):
+ *
+ *   "Room size: improving — best 22% of full difficulty over 4 sessions."
+ *
+ * Direction compares the latest sample to the average of the EARLIER ones:
+ * improving (lower), regressing (higher), or steady. Empty for no history so the
+ * caller can hide the row for a brand-new exercise.
+ */
+export function trendSummary(label: string, p: ExerciseProgress | null | undefined): string {
+  if (!p || p.thresholdLog.length === 0 || p.best == null) return '';
+  const log = p.thresholdLog;
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
+  const sessions = log.length === 1 ? '1 session' : `${log.length} sessions`;
+  let dir = 'steady';
+  if (log.length >= 2) {
+    const latest = log[log.length - 1].threshold;
+    const earlier = log.slice(0, -1);
+    const avgEarlier = earlier.reduce((a, b) => a + b.threshold, 0) / earlier.length;
+    const delta = latest - avgEarlier;
+    if (delta < -0.03) dir = 'improving';
+    else if (delta > 0.03) dir = 'slipping';
+  }
+  return `${label}: ${dir} — best ${pct(p.best)} of full difficulty over ${sessions}.`;
 }
 
 /**

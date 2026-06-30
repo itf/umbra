@@ -19,13 +19,17 @@ import { PROBE_PRESETS, isProbeName } from '../debug/probes';
 import {
   makeRandomQuestion,
   hasRoomB,
+  echoDelayMs,
   ALL_TYPES,
   type Question,
   type ExerciseType,
 } from './exercises';
 import { Staircase, difficultyBand, progressAnnouncement } from './adaptive';
 import { DistanceLadder, ladderAnnouncement } from './distanceLadder';
-import { TrainerStore, summarizeProgress } from './trainerStore';
+import { TrainerStore, summarizeProgress, trendSummary } from './trainerStore';
+import { planReplay, replayAnnouncement, type ReplayPlan } from './replay';
+import { shouldRunOnboarding, onboardingQuestion, ONBOARDING_REVEAL } from './onboarding';
+import { drawSparkline } from './sparkline';
 import {
   challengeForDate,
   dailyOpenAnnouncement,
@@ -82,6 +86,17 @@ let sessionDirty = false;
 let pendingGreeting = '';
 
 /**
+ * Freeze-frame replay state: after an A/B answer we auto-play A→gap→B with labels.
+ * `replayToken` is bumped on Next (and on a new question) so an in-flight replay's
+ * scheduled steps see a stale token and abort — that's how the Next button skips it.
+ */
+let replayToken = 0;
+/** True while the onboarding "blind reference" trial is the active question. */
+let onboardingActive = false;
+/** True once onboarding has been consumed this session (so we don't re-enter). */
+let onboardingDone = false;
+
+/**
  * Persist the current sitting as ONE stored session: the first flush appends a
  * session sample; later flushes UPDATE that same sample in place (so a long
  * sitting is one session, not one-per-trial). Checkpointing on settle + on unload
@@ -98,10 +113,58 @@ function flushSession() {
     sessionRecorded = true;
   }
   sessionDirty = false;
+  renderDashboard(); // reflect the freshly-checkpointed threshold in the trend
 }
 
 function announce(msg: string) {
   ($('live') as HTMLElement).textContent = msg;
+}
+
+/**
+ * Render the per-skill progress dashboard: for every exercise type with history,
+ * a labelled sparkline (canvas — the visible improvement curve) PLUS a spoken text
+ * summary (the accessible truth, since canvas is invisible to screen readers). The
+ * labels come straight from the #type picker so they stay in sync. Hidden entirely
+ * when there's no history yet (a brand-new user sees nothing to clutter the page).
+ */
+function renderDashboard() {
+  const panel = document.getElementById('progress-panel') as HTMLElement | null;
+  const list = document.getElementById('progress-list') as HTMLElement | null;
+  if (!panel || !list) return;
+  const typeSel = document.getElementById('type') as HTMLSelectElement | null;
+  // Map each picker value → its human label (covers 'all' + every exercise type).
+  const labels = new Map<string, string>();
+  if (typeSel) for (const opt of Array.from(typeSel.options)) labels.set(opt.value, opt.text);
+
+  const map = trainerStore.load();
+  list.innerHTML = '';
+  let any = false;
+  for (const [type, p] of Object.entries(map)) {
+    if (!p.thresholdLog || p.thresholdLog.length === 0) continue;
+    any = true;
+    const label = labels.get(type) ?? type;
+    const summary = trendSummary(label, p);
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:12px;margin:8px 0';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 120;
+    canvas.height = 32;
+    canvas.style.cssText = 'flex:0 0 auto;background:#101010;border-radius:6px';
+    // Canvas is decorative; the adjacent text carries the meaning for AT.
+    canvas.setAttribute('aria-hidden', 'true');
+    drawSparkline(canvas, p);
+
+    const text = document.createElement('span');
+    text.style.cssText = 'font-size:14px;color:#ccc';
+    text.textContent = summary;
+
+    row.appendChild(canvas);
+    row.appendChild(text);
+    list.appendChild(row);
+  }
+  panel.hidden = !any;
 }
 
 // --- Daily Challenge ----------------------------------------------------------
@@ -234,7 +297,11 @@ function sizeReveal(q: Question): string {
     return ` Room A: ${fmtRoom(q.sceneA.roomSize)}. Room B: ${fmtRoom(q.sceneB.roomSize)}.`;
   }
   if (q.type === 'distance' && q.wallDistsM) {
-    return ` Room A wall: ${q.wallDistsM.a.toFixed(1)} m. Room B wall: ${q.wallDistsM.b.toFixed(1)} m.`;
+    // Also speak the ECHO ARRIVAL TIME (round-trip Δt = 2·d/343), closing the
+    // perceptual loop between the heard delay and the wall distance.
+    const da = q.wallDistsM.a, db = q.wallDistsM.b;
+    return ` Room A wall: ${da.toFixed(1)} m — its echo returned about ${echoDelayMs(da).toFixed(1)} ms after the clap.` +
+      ` Room B wall: ${db.toFixed(1)} m — ${echoDelayMs(db).toFixed(1)} ms.`;
   }
   return '';
 }
@@ -251,6 +318,7 @@ function nextQuestion() {
   asked++;
   answered = false;
   loadedRoom = null;
+  replayToken++; // cancel any in-flight freeze-frame replay (Next skips it)
   // Daily mode: every "Next" replays the SAME seeded challenge (replay-for-fun),
   // the streak only changing on the first completion (handled in onAnswer).
   if (dailyChallenge) {
@@ -266,6 +334,26 @@ function nextQuestion() {
     nearDistanceM: fixedDifficulty() === null ? distanceLadder.distance() : undefined,
   });
   renderQuestion(current);
+}
+
+/**
+ * Begin the one-shot onboarding "blind reference" trial: a forced, very-easy
+ * larger/smaller discrimination that proves the skill in minute one. Rendered like
+ * a normal A/B question, but flagged so its answer reveals the skill and bypasses
+ * the staircase (see onOnboardingAnswer).
+ */
+function startOnboarding() {
+  asked++;
+  answered = false;
+  loadedRoom = null;
+  replayToken++;
+  onboardingActive = true;
+  current = onboardingQuestion();
+  renderQuestion(current);
+  announce(
+    'First, a quick demonstration. Two rooms — one clearly small, one clearly large. ' +
+    'Play Room A and Room B, then choose which room is LARGER.',
+  );
 }
 
 function renderQuestion(q: Question) {
@@ -339,11 +427,48 @@ async function playSingle() {
   announce('Playing the sound. Where is it coming from?');
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Run the freeze-frame post-answer replay: play A, gap, B, each with a spoken +
+ * on-screen label naming which room is which and which was correct. Skippable —
+ * each await checks `replayToken`; pressing Next (or starting a new question) bumps
+ * the token so a stale in-flight replay aborts immediately. Uses the SAME ScenePlayer
+ * path as Room A / Room B so the comparison sounds identical to manual playback.
+ */
+async function runReplay(plan: ReplayPlan) {
+  const token = ++replayToken;
+  const p = await ensurePlayer();
+  if (token !== replayToken || !current) return;
+  announce(replayAnnouncement(plan));
+  for (let i = 0; i < plan.steps.length; i++) {
+    const step = plan.steps[i];
+    if (token !== replayToken || !current) return;
+    const scene = step.room === 'A' ? current.sceneA : current.sceneB!;
+    p.load(scene);
+    loadedRoom = step.room;
+    await applyProbe(p);
+    if (token !== replayToken) return;
+    p.clap();
+    ($('feedback') as HTMLElement).textContent = step.label;
+    // Let the clap + its room tail ring, then the inter-scene gap before the next.
+    await sleep(1100);
+    if (i < plan.steps.length - 1) await sleep(plan.gapMs);
+  }
+}
+
 function onAnswer(choice: string, btn: HTMLButtonElement) {
   if (!current || answered) return;
   answered = true;
   const correct = choice === current.correctAnswer;
   if (correct) score++;
+
+  // Onboarding "blind reference" trial: prove the skill, then bow out of the
+  // staircase/persistence machinery (it's a one-shot orientation, not a score).
+  if (onboardingActive) {
+    onOnboardingAnswer(correct, btn);
+    return;
+  }
 
   // Daily-challenge mode: record (idempotent) the streak and produce the share
   // string, then short-circuit the normal staircase/persistence path.
@@ -417,6 +542,43 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   ($('next') as HTMLButtonElement).disabled = false;
   announce(`${verdict} Score ${score} of ${asked}.${extra}${progress} Press Next to continue.`);
   ($('next') as HTMLButtonElement).focus();
+
+  // Freeze-frame replay of the correct comparison (A→gap→B with labels) so a wrong
+  // answer teaches and a right one reinforces. Only for A/B drills; single-scene
+  // exercises return a null plan and keep their current behaviour. Skippable: Next
+  // bumps replayToken and the in-flight steps abort.
+  maybeReplay(correct);
+}
+
+/** Kick off the freeze-frame replay for the current A/B question (no-op otherwise). */
+function maybeReplay(correct: boolean) {
+  if (!current) return;
+  const plan = planReplay(current, correct);
+  if (plan) void runReplay(plan);
+}
+
+/**
+ * Onboarding answer: reveal that the player just echolocated, persist the seen-flag
+ * so it never repeats, run the same labelled replay, and roll the trainer into
+ * normal practice (the next "Next" generates a real adaptive question).
+ */
+function onOnboardingAnswer(correct: boolean, btn: HTMLButtonElement) {
+  const q = current!;
+  for (const el of Array.from($('answers').children) as HTMLButtonElement[]) {
+    el.disabled = true;
+    if (el.textContent === q.correctAnswer) el.classList.add('correct');
+    else if (el === btn) el.classList.add('wrong');
+  }
+  const verdict = correct ? 'Correct.' : `Not quite — the answer was ${q.correctAnswer}.`;
+  const reveal = ` ${ONBOARDING_REVEAL}`;
+  trainerStore.markOnboardingSeen();
+  onboardingActive = false;
+  onboardingDone = true;
+  ($('feedback') as HTMLElement).textContent = verdict + reveal;
+  ($('next') as HTMLButtonElement).disabled = false;
+  announce(`${verdict}${reveal} Press Next to start practising.`);
+  ($('next') as HTMLButtonElement).focus();
+  maybeReplay(correct);
 }
 
 /**
@@ -469,6 +631,7 @@ function onDailyAnswer(correct: boolean, _choice: string, btn: HTMLButtonElement
   refreshDailyStatus();
   announce(`${verdict} ${result} Your score: ${share}. Press Next to replay.`);
   ($('next') as HTMLButtonElement).focus();
+  maybeReplay(correct);
 }
 
 /** Populate the probe picker and wire the custom URL/file inputs. */
@@ -596,6 +759,7 @@ function onKeyDown(e: KeyboardEvent) {
 
 function main() {
   setupProbePicker();
+  renderDashboard(); // show the progress curves up front for returning users
   window.addEventListener('keydown', onKeyDown);
   // Pre-check the high-fidelity toggle when ?engine=steam is in the URL.
   const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
@@ -618,7 +782,14 @@ function main() {
     const label = typeSel.options[typeSel.selectedIndex].text;
     pendingGreeting = summarizeProgress(label, trainerStore.get(sessionType));
 
-    nextQuestion();
+    // First-ever launch: run the forced "blind reference" trial to prove the skill,
+    // then fall through to normal practice. Gated by a persisted flag (never repeats)
+    // and skipped in daily mode (this is the normal-Begin path).
+    if (!onboardingDone && shouldRunOnboarding({ hasSeen: trainerStore.hasSeenOnboarding(), daily: false })) {
+      startOnboarding();
+    } else {
+      nextQuestion();
+    }
   });
 
   // Daily challenge: show today's status, and start the seeded daily drill.
