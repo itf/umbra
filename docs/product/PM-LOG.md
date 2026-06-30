@@ -122,3 +122,18 @@ out-of-sonar tension, Sonar Vault level. +9 tests +3 e2e (391 unit, 11 e2e).
 shareable score, spoken. +26 tests +2 e2e (417 unit, 13 e2e).
 - **4B Stealth** still building (agent `a9e4034a…`, game.ts/load.ts/schema.ts +
   stealth-escape level + decoy). Its WIP has an in-progress tsc state — held until done.
+
+### Cycle 4 — Build COMPLETE
+- **4A Sonar-budget** (`f977fd0`), **4C Daily Challenge** (`44cbdce`), **4B Stealth+decoy**
+  (`762bc73`). 424 unit + 16 e2e green. Product is now multi-mode: beacon, absorber,
+  sonar-budget, stealth + a coaching trainer with daily challenges.
+- Cycle-4 review meeting held (`meetings/2026-06-29-cycle4-review.md`): biggest gap is now
+  the FIRST-RUN experience (4 modes a newcomer can't learn cold) — genre's #1 failure.
+
+### Cycle 5 — Build (in progress, 2 parallel agents)
+- **5A Guided onboarding** (agent `abdb7b14…`): graduated localization (L/R/front) +
+  clap/mode primers, skippable + remembered. Extends tutorial machine. Owns src/ui/* + main gate.
+- **5B Editor stealth authoring** (agent `a6ce22cf…`): goal:'escape' + exit tool +
+  decoyBudget + monster clarity + lint; closes the 4B authorability gap. Owns editor/*.
+- Disjoint → parallel. Then **5C** a11y polish (compass widget, cardinal detents, custom-
+  audio warmer cue) after 5A.
