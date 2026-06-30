@@ -18,7 +18,7 @@ import { ScenePlayer, type ProbeSpec } from '../debug/scenePlayer';
 import { PROBE_PRESETS, isProbeName } from '../debug/probes';
 import {
   makeRandomQuestion,
-  SINGLE_TYPES,
+  hasRoomB,
   type Question,
   type ExerciseType,
 } from './exercises';
@@ -48,6 +48,11 @@ let asked = 0;
 let seedCounter = (Math.random() * 1e9) | 0;
 /** Which room is currently loaded into the shared player, for A/B replay. */
 let loadedRoom: 'A' | 'B' | null = null;
+/**
+ * Keyboard answer cursor: index into the current question's choice buttons that
+ * Q/E cycles through and Enter/Space confirms. -1 = nothing highlighted yet.
+ */
+let answerCursor = -1;
 
 /**
  * Adaptive staircase (default mode). 2-down/1-up: harder after 2 in a row right,
@@ -230,11 +235,17 @@ function nextQuestion() {
 
 function renderQuestion(q: Question) {
   ($('prompt') as HTMLElement).textContent = q.prompt;
-  const isAB = !SINGLE_TYPES.includes(q.type);
+  // The single source of truth for "is there a Room B?" is the question's actual
+  // sceneB — not a hardcoded type list — so a single-scene exercise can never show
+  // a dead "Play Room B" button (the bug).
+  const isAB = hasRoomB(q);
 
   // Play controls.
   ($('play-ab') as HTMLElement).hidden = !isAB;
   ($('play-single') as HTMLElement).hidden = isAB;
+  // Belt-and-suspenders: disable Room B so even if the row were shown it can't be
+  // triggered without a sceneB (keyboard handler also gates on this).
+  ($('play-b') as HTMLButtonElement).disabled = !isAB;
 
   // Answer buttons.
   const answers = $('answers');
@@ -250,11 +261,18 @@ function renderQuestion(q: Question) {
 
   ($('feedback') as HTMLElement).textContent = '';
   ($('next') as HTMLButtonElement).disabled = true;
+  answerCursor = -1; // no keyboard choice highlighted on a fresh question
+
+  // Spoken, eyes-free controls hint tailored to this question's affordances.
+  const controls = hasRoomB(q)
+    ? 'Keys: A play Room A, D play Room B, Q and E to move between answers, Enter to confirm.'
+    : 'Keys: A play the sound, Q and E to move between answers, Enter to confirm.';
+
   // A one-shot greeting (returning-user progress) rides along on the first question
   // so the live region speaks it without a competing announcement clobbering it.
   const lead = pendingGreeting ? `${pendingGreeting} ` : '';
   pendingGreeting = '';
-  announce(`${lead}Question ${asked}. ${q.prompt} Play the sounds, then choose.`);
+  announce(`${lead}Question ${asked}. ${q.prompt} Play the sounds, then choose. ${controls}`);
 }
 
 async function playRoom(room: 'A' | 'B') {
@@ -455,8 +473,95 @@ function setupProbePicker() {
   });
 }
 
+/** Actions the trainer keyboard scheme can produce. */
+export type TrainerKeyAction = 'playA' | 'playB' | 'prev' | 'next' | 'confirm' | null;
+
+/**
+ * PURE key → action mapping for the trainer (mirrors the game's eyes-free scheme):
+ *   A = play Room A,  D = play Room B (only when a Room B exists),
+ *   Q = previous answer,  E = next answer,  Enter/Space = confirm selection.
+ * Returns null for any other key, or for D when `hasB` is false (so a single-scene
+ * exercise never produces a "play Room B" that does nothing). Case-insensitive.
+ */
+export function trainerKeyAction(key: string, hasB: boolean): TrainerKeyAction {
+  switch (key.toLowerCase()) {
+    case 'a': return 'playA';
+    case 'd': return hasB ? 'playB' : null;
+    case 'q': return 'prev';
+    case 'e': return 'next';
+    case 'enter':
+    case ' ':
+    case 'spacebar': return 'confirm';
+    default: return null;
+  }
+}
+
+/** True when focus is in a text input/select so global keys must NOT hijack typing. */
+function isTypingTarget(el: EventTarget | null): boolean {
+  const node = el as HTMLElement | null;
+  if (!node) return false;
+  const tag = node.tagName;
+  return tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || (node as HTMLElement).isContentEditable;
+}
+
+/** Highlight (and announce) the answer button at `answerCursor`. */
+function highlightAnswer() {
+  const btns = Array.from($('answers').children) as HTMLButtonElement[];
+  btns.forEach((b, i) => b.classList.toggle('focused', i === answerCursor));
+  const btn = btns[answerCursor];
+  if (btn) {
+    btn.focus();
+    announce(`Answer: ${btn.textContent}. Press Enter to confirm.`);
+  }
+}
+
+/** Move the answer cursor by `delta` (Q/E), wrapping, and highlight the result. */
+function moveAnswer(delta: number) {
+  const n = ($('answers').children.length);
+  if (n === 0 || answered) return;
+  answerCursor = answerCursor < 0
+    ? (delta > 0 ? 0 : n - 1)
+    : (answerCursor + delta + n) % n;
+  highlightAnswer();
+}
+
+/** Confirm the highlighted answer (Enter/Space) by invoking its click handler. */
+function confirmAnswer() {
+  if (answered) return;
+  const btns = Array.from($('answers').children) as HTMLButtonElement[];
+  const btn = btns[answerCursor];
+  if (btn && !btn.disabled) btn.click();
+}
+
+/**
+ * Global keyboard handler for the trainer. Only active once the drill is visible;
+ * ignored while typing in the probe URL / file picker / selects so it never eats
+ * keystrokes. Additive to the on-screen buttons.
+ */
+function onKeyDown(e: KeyboardEvent) {
+  if (($('drill') as HTMLElement).hidden) return; // drill not started yet
+  if (isTypingTarget(e.target)) return; // don't hijack typing in inputs
+  if (e.metaKey || e.ctrlKey || e.altKey) return; // leave shortcuts alone
+  const action = trainerKeyAction(e.key, current ? hasRoomB(current) : false);
+  if (!action) return;
+  e.preventDefault();
+  switch (action) {
+    case 'playA': { void (current && hasRoomB(current) ? playRoom('A') : playSingle()); break; }
+    case 'playB': void playRoom('B'); break;
+    case 'prev': moveAnswer(-1); break;
+    case 'next': moveAnswer(+1); break;
+    case 'confirm':
+      // After answering, Enter advances (matches the focused Next button); before
+      // answering it confirms the highlighted choice.
+      if (answered) { if (!($('next') as HTMLButtonElement).disabled) nextQuestion(); }
+      else confirmAnswer();
+      break;
+  }
+}
+
 function main() {
   setupProbePicker();
+  window.addEventListener('keydown', onKeyDown);
   // Pre-check the high-fidelity toggle when ?engine=steam is in the URL.
   const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
   if (engineToggle) engineToggle.checked = selectBackendFromSearch(location.search) === 'steam';
@@ -525,4 +630,6 @@ function main() {
   $('next').addEventListener('click', () => nextQuestion());
 }
 
-main();
+// Auto-start only in a real browser. Guarded so the module can be imported by unit
+// tests (node, no DOM) to exercise the pure helpers without booting the UI.
+if (typeof document !== 'undefined') main();

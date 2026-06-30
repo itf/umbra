@@ -708,6 +708,18 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number, opts: GenO
 export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap', 'orientation'];
 
 /**
+ * Pure predicate: does this question have a genuine Room B to play?
+ *
+ * The "Play Room B" control must only be shown when the question actually carries
+ * a second scene — gating on the live `sceneB` (not a hardcoded type list) is the
+ * bug-proof source of truth, so a single-scene exercise can never surface a dead
+ * Room B button (pressing which would do nothing / replay A).
+ */
+export function hasRoomB(q: Pick<Question, 'sceneB'>): boolean {
+  return q.sceneB != null;
+}
+
+/**
  * Build a question of the given type, deterministic in `seed`. Same (type, seed,
  * difficulty) always yields the identical question.
  */

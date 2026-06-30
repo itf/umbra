@@ -14,11 +14,15 @@
       button:disabled { opacity: 0.5; cursor: default; }
       .big { display: block; width: 100%; font-size: 1.15rem; padding: 20px; }
       .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      /* `display:flex` would otherwise override the `hidden` attribute, leaving a
+         hidden A/B row visible (the dead "Play Room B" bug). Force it hidden. */
+      [hidden] { display: none !important; }
       .row > button { flex: 1 1 140px; }
       .play { background: #5bd1ff; }
       .answer { background: #2c2c2c; color: #eee; border: 2px solid #444; }
       .answer.correct { background: #1f7a3f; border-color: #6ee787; color: #fff; }
       .answer.wrong { background: #7a1f1f; border-color: #ff6b6b; color: #fff; }
+      .answer.focused { outline: 3px solid #ffd166; outline-offset: 2px; }
       #prompt { font-size: 1.25rem; font-weight: 700; margin: 4px 0 12px; }
       #feedback { min-height: 1.5em; font-weight: 700; margin-top: 12px; }
       #score { font-variant-numeric: tabular-nums; color: #9aa; }
@@ -32,7 +36,8 @@
     <p class="hint">
       Train your ear to read rooms. Put on headphones, close your eyes, and answer
       which room is bigger, wider, longer, softer, rougher — or where a sound is.
-      Everything is announced for screen readers.
+      Everything is announced for screen readers. Keyboard: A plays Room A,
+      D plays Room B, Q and E move between answers, Enter confirms.
     </p>
 
     <div class="panel" id="daily-panel">

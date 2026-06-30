@@ -12,8 +12,10 @@ import {
   makeQuestion,
   makeRandomQuestion,
   bearingToDirection,
+  hasRoomB,
   AB_TYPES,
   ALL_TYPES,
+  SINGLE_TYPES,
   MATERIAL_LADDER,
   type Question,
 } from '../src/trainer/exercises';
@@ -346,6 +348,36 @@ describe('gap: single-scene mirror; gap is opposite the wall side', () => {
     expect(left!.sceneA.extraWalls![0].absorption).toEqual(right!.sceneA.extraWalls![0].absorption);
     // Both at the same forward distance from the (identical) listener.
     expect(Math.hypot(lc.x - L[0], lc.z - L[2])).toBeCloseTo(Math.hypot(rc.x - L[0], rc.z - L[2]), 6);
+  });
+});
+
+describe('hasRoomB (Room B visibility predicate)', () => {
+  it('is true for every A/B exercise (both scenes set)', () => {
+    for (const type of AB_TYPES) {
+      for (const seed of SEEDS.slice(0, 8)) {
+        const q = makeQuestion(type, seed);
+        expect(q.sceneB).toBeDefined();
+        expect(hasRoomB(q)).toBe(true);
+      }
+    }
+  });
+
+  it('is false for every single-scene exercise (no sceneB → no dead Room B button)', () => {
+    for (const type of SINGLE_TYPES) {
+      for (const seed of SEEDS.slice(0, 8)) {
+        const q = makeQuestion(type, seed);
+        expect(q.sceneB).toBeUndefined();
+        expect(hasRoomB(q)).toBe(false);
+      }
+    }
+  });
+
+  it('agrees with the type partition: every question is exactly one of A/B or single', () => {
+    for (const type of ALL_TYPES) {
+      const q = makeQuestion(type, 12345);
+      expect(hasRoomB(q)).toBe(AB_TYPES.includes(type));
+      expect(hasRoomB(q)).toBe(!SINGLE_TYPES.includes(type));
+    }
   });
 });
 
