@@ -41,3 +41,17 @@ minimap, `&companion=off` to mute the guide). Settings: press `S` in-game.
 - **Progress/leaderboard screen** — is the spoken summary useful/motivating?
 
 See `SESSION-HANDOFF.md` §4 for the consolidated list with URLs.
+
+## Acoustics fidelity notes (from user questions)
+- **1/r distance attenuation IS modeled** on every beacon path (interp + legacy + modeled
+  direct): `g = 1/max(1,dist)` amplitude + an air-absorption lowpass. So beacon loudness is
+  an honest distance cue already → the artificial "getting warmer" cue is redundant (slated
+  for removal once the navigation refactor lands; it caused the crackle).
+- **Near-field / per-ear distance ILD is NOT modeled (known gap).** We use ONE
+  distance-to-head-center 1/r for both ears, and the SADIE HRTFs are FAR-FIELD measured. So
+  a source almost touching one ear will NOT get the huge L/R loudness difference real
+  physics gives (~12 dB from the ~4× per-ear distance ratio at the side of the head, plus
+  the near-field HRTF boost). Directional ILD at normal distances IS modeled (via HRTF,
+  ~8.8 dB swing measured). Fixing near-field would need per-ear distance gain + a
+  distance-variation-function (DVF) / near-field HRTF correction — a real but bounded
+  enhancement; matters only for sources within ~0.5 m.
