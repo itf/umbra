@@ -8,10 +8,13 @@ import { describe, it, expect } from 'vitest';
 import {
   buildPickerModel,
   sandboxSelection,
+  sandboxSelectionFor,
+  selectionFromSeedText,
+  shareStringFor,
   spreadSeed,
   SANDBOX_MODE_LABELS,
 } from '../src/ui/levelPicker';
-import { generateLevel } from '../src/game/sandbox';
+import { generateLevel, sandboxShareString, parseSeed } from '../src/game/sandbox';
 
 describe('buildPickerModel', () => {
   it('lists builtins then saved, with stable keys', () => {
@@ -57,5 +60,46 @@ describe('sandboxSelection', () => {
     for (const m of ['beacon', 'absorber', 'sonar', 'stealth'] as const) {
       expect(SANDBOX_MODE_LABELS[m]).toBeTruthy();
     }
+  });
+});
+
+describe('seed sharing (entry + display)', () => {
+  it('shareStringFor mirrors sandboxShareString for a selection', () => {
+    const sel = sandboxSelectionFor('sonar', 4, 12345);
+    expect(shareStringFor(sel)).toBe(sandboxShareString(sel.sandbox!));
+  });
+
+  it('shareStringFor returns null for a non-generated selection', () => {
+    expect(shareStringFor({ source: 'builtin', ref: 'x', label: 'x' })).toBeNull();
+  });
+
+  it('selectionFromSeedText: bare number uses current mode + difficulty', () => {
+    const sel = selectionFromSeedText('42', 'stealth', 5);
+    expect(sel).not.toBeNull();
+    expect(sel!.sandbox).toMatchObject({ mode: 'stealth', difficulty: 5, seed: parseSeed('42') });
+  });
+
+  it('selectionFromSeedText: full share code carries its own mode + difficulty', () => {
+    const code = sandboxShareString({ mode: 'absorber', difficulty: 2, seed: 999 });
+    const sel = selectionFromSeedText(code, 'beacon', 4); // current ignored
+    expect(sel!.sandbox).toMatchObject({ mode: 'absorber', difficulty: 2, seed: 999 });
+  });
+
+  it('selectionFromSeedText: empty input → null (friendly error path)', () => {
+    expect(selectionFromSeedText('   ', 'beacon', 3)).toBeNull();
+  });
+
+  it('selectionFromSeedText: malformed share code → null', () => {
+    expect(selectionFromSeedText('papasangre sandbox zzz dX #qq', 'beacon', 3)).toBeNull();
+  });
+
+  it('round-trips a roll: generate → shareString → parse → identical Level', () => {
+    const rolled = sandboxSelection('sonar', 4, 7);
+    const a = generateLevel(rolled.sandbox!);
+    const code = shareStringFor(rolled)!;
+    const replay = selectionFromSeedText(code, 'beacon', 1); // current ignored by share code
+    const b = generateLevel(replay!.sandbox!);
+    expect(b).toEqual(a);
+    expect(replay!.sandbox).toEqual(rolled.sandbox);
   });
 });

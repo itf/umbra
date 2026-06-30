@@ -14,7 +14,15 @@
  */
 import type { BuiltinInfo } from '../level/builtins';
 import type { BuiltinCategory } from '../levels';
-import { SANDBOX_MODES, DIFFICULTIES, type SandboxMode, type Difficulty } from '../game/sandbox';
+import {
+  SANDBOX_MODES,
+  DIFFICULTIES,
+  parseSeed,
+  parseShareString,
+  sandboxShareString,
+  type SandboxMode,
+  type Difficulty,
+} from '../game/sandbox';
 
 /** One selectable row in the picker. */
 export interface PickerItem {
@@ -113,6 +121,59 @@ export function sandboxSelection(
     label: `Sandbox ${mode} (d${difficulty})`,
     sandbox: { mode, difficulty, seed },
   };
+}
+
+/**
+ * PURE: build a source:'generated' selection directly from explicit generator
+ * inputs (a parsed share string, or a bare seed + the current mode/difficulty).
+ * Used by the seed-entry flow, where the inputs are already resolved (not a
+ * counter to spread).
+ */
+export function sandboxSelectionFor(
+  mode: SandboxMode,
+  difficulty: Difficulty,
+  seed: number,
+): PickerSelection {
+  const s = seed >>> 0;
+  return {
+    source: 'generated',
+    ref: `${mode}:${difficulty}:${s}`,
+    label: `Sandbox ${mode} (d${difficulty})`,
+    sandbox: { mode, difficulty, seed: s },
+  };
+}
+
+/**
+ * PURE: resolve free-text the player typed into the seed box into a generated
+ * selection. Accepts a full share string ("papasangre sandbox <mode> d<diff>
+ * #<seed>" — overrides the current mode/difficulty) OR a bare seed (a number,
+ * `#base36`, or any string, hashed) replayed under the CURRENTLY selected mode +
+ * difficulty. Returns null on empty input so the caller can announce a friendly
+ * error. (Bare strings always parse to *some* seed via `parseSeed`, so only a
+ * malformed share string — which falls through to the bare-seed path — or empty
+ * input fails to produce a selection.)
+ */
+export function selectionFromSeedText(
+  text: string,
+  mode: SandboxMode,
+  difficulty: Difficulty,
+): PickerSelection | null {
+  const t = text.trim();
+  if (!t) return null;
+  // A full share string carries its own mode + difficulty.
+  if (/papasangre\s+sandbox/i.test(t)) {
+    const parsed = parseShareString(t);
+    if (!parsed) return null; // looks like a share string but is malformed
+    return sandboxSelectionFor(parsed.mode, parsed.difficulty, parsed.seed);
+  }
+  // Otherwise a bare seed under the current mode/difficulty.
+  return sandboxSelectionFor(mode, difficulty, parseSeed(t));
+}
+
+/** The share string for a selection (for the displayed/copyable code). */
+export function shareStringFor(sel: PickerSelection): string | null {
+  if (!sel.sandbox) return null;
+  return sandboxShareString(sel.sandbox);
 }
 
 export interface RenderOptions {
@@ -265,12 +326,67 @@ export function renderSandboxSection(
     difficulty: Number(diffSel.value) as Difficulty,
   });
 
+  // --- Seed readout + copy. Surfaced whenever a level is generated, so an
+  // eyes-free player hears the exact seed/share code and can copy + share it. ---
+  const seedOut = document.createElement('div');
+  seedOut.className = 'sandbox-seed-out';
+  seedOut.hidden = true;
+  const seedText = document.createElement('p');
+  seedText.className = 'sandbox-seed-text';
+  seedText.setAttribute('role', 'status');
+  seedText.setAttribute('aria-live', 'polite');
+  const copyRow = document.createElement('div');
+  copyRow.className = 'sandbox-copy-row';
+  const copySeedBtn = document.createElement('button');
+  copySeedBtn.type = 'button';
+  copySeedBtn.className = 'picker-item sandbox-copy';
+  copySeedBtn.textContent = 'Copy seed';
+  const copyShareBtn = document.createElement('button');
+  copyShareBtn.type = 'button';
+  copyShareBtn.className = 'picker-item sandbox-copy';
+  copyShareBtn.textContent = 'Copy share code';
+  copyRow.append(copySeedBtn, copyShareBtn);
+  seedOut.append(seedText, copyRow);
+
+  // The currently displayed roll's share inputs (for the copy buttons).
+  let current: PickerSelection | null = null;
+
+  const copy = async (value: string, what: string) => {
+    if (!navigator.clipboard) {
+      status.textContent = `Clipboard unavailable. ${what}: ${value}`;
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(value);
+      status.textContent = `Copied ${what}: ${value}`;
+    } catch {
+      status.textContent = `Could not copy. ${what}: ${value}`;
+    }
+  };
+  copySeedBtn.addEventListener('click', () => {
+    if (current?.sandbox) void copy(current.sandbox.seed.toString(36), 'seed');
+  });
+  copyShareBtn.addEventListener('click', () => {
+    const code = current && shareStringFor(current);
+    if (code) void copy(code, 'share code');
+  });
+
+  /** Surface a generated selection: display its seed + share code, then play it. */
+  const announceAndPlay = (sel: PickerSelection) => {
+    current = sel;
+    const { mode, difficulty, seed } = sel.sandbox!;
+    const share = shareStringFor(sel) ?? '';
+    seedOut.hidden = false;
+    seedText.textContent = `Seed ${seed.toString(36)}. Share code: ${share}`;
+    status.textContent =
+      `Generated ${SANDBOX_MODE_LABELS[mode]}, difficulty ${difficulty}, seed ${seed.toString(36)}.`;
+    onSelect(sel);
+  };
+
   const play = (newSeed: boolean) => {
     if (newSeed) seedCounter++;
     const { mode, difficulty } = read();
-    const sel = sandboxSelection(mode, difficulty, seedCounter);
-    status.textContent = `Generated ${SANDBOX_MODE_LABELS[mode]}, difficulty ${difficulty}, seed ${sel.sandbox!.seed.toString(36)}.`;
-    onSelect(sel);
+    announceAndPlay(sandboxSelection(mode, difficulty, seedCounter));
   };
 
   const genBtn = document.createElement('button');
@@ -289,6 +405,53 @@ export function renderSandboxSection(
   btnRow.className = 'sandbox-buttons';
   btnRow.append(genBtn, anotherBtn);
 
-  section.append(form, btnRow, status);
+  // --- Enter a seed / share code: paste a seed number or a full share string to
+  // replay an exact level. Parsing is pure (selectionFromSeedText); malformed
+  // input is announced, never crashes. ---
+  const entry = document.createElement('div');
+  entry.className = 'sandbox-entry';
+  const entryId = 'sandbox-seed-input';
+  const entryLabel = document.createElement('label');
+  entryLabel.htmlFor = entryId;
+  entryLabel.textContent = 'Play a shared seed or code';
+  const entryInput = document.createElement('input');
+  entryInput.type = 'text';
+  entryInput.id = entryId;
+  entryInput.className = 'sandbox-seed-input';
+  entryInput.placeholder = 'seed number or share code';
+  entryInput.setAttribute(
+    'aria-describedby',
+    'sandbox-seed-help',
+  );
+  entryLabel.appendChild(entryInput);
+  const entryHelp = document.createElement('p');
+  entryHelp.id = 'sandbox-seed-help';
+  entryHelp.className = 'picker-desc';
+  entryHelp.textContent =
+    'A bare seed uses the mode and difficulty above; a full share code carries its own.';
+  const playSeedBtn = document.createElement('button');
+  playSeedBtn.type = 'button';
+  playSeedBtn.className = 'picker-item sandbox-play-seed';
+  playSeedBtn.textContent = 'Play this seed';
+
+  const playEntered = () => {
+    const { mode, difficulty } = read();
+    const sel = selectionFromSeedText(entryInput.value, mode, difficulty);
+    if (!sel) {
+      status.textContent = 'Enter a seed number or a share code first.';
+      return;
+    }
+    announceAndPlay(sel);
+  };
+  playSeedBtn.addEventListener('click', playEntered);
+  entryInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      playEntered();
+    }
+  });
+  entry.append(entryLabel, entryHelp, playSeedBtn);
+
+  section.append(form, btnRow, seedOut, entry, status);
   container.appendChild(section);
 }

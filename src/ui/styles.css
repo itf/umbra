@@ -131,6 +131,21 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .sandbox-generate { background: #243024; }
 .sandbox-status { font-size: 0.85rem; color: var(--accent); min-height: 1.2em; margin: 8px 0 0; }
 
+/* Seed readout + copy controls (surfaced after a roll). */
+.sandbox-seed-out { margin: 10px 0 0; }
+.sandbox-seed-text { font-size: 0.85rem; color: #ddd; margin: 0 0 8px; word-break: break-word; }
+.sandbox-copy-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.sandbox-copy { flex: 1 1 140px; align-items: center; flex-direction: row; justify-content: center; }
+
+/* Enter-a-seed / share-code entry. */
+.sandbox-entry { margin: 12px 0 0; display: flex; flex-direction: column; gap: 6px; }
+.sandbox-entry label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: #bbb; }
+.sandbox-seed-input {
+  padding: 10px 12px; background: #1a1a1a; color: #fff; border: 1px solid #333;
+  border-radius: 10px; min-height: var(--touch); font-size: 0.95rem;
+}
+.sandbox-play-seed { align-items: center; flex-direction: row; justify-content: center; font-weight: 700; }
+
 /* When the game is active, let it own the whole viewport (override #app centering
    and scrolling). */
 #app:has(#game-screen:not([hidden])) { justify-content: stretch; align-items: stretch; overflow: hidden; }

@@ -544,3 +544,25 @@ export function parseSeed(text: string): number {
   // base36 (#xxxx) or any string → stable hash.
   return hashSeed(t.replace(/^#/, ''));
 }
+
+/**
+ * PURE: parse a full share string back into its generator inputs, the inverse of
+ * `sandboxShareString` ("papasangre sandbox <mode> d<difficulty> #<seed-base36>").
+ * Tolerant of surrounding/extra whitespace and case. Returns null on malformed
+ * input (unknown mode, out-of-range difficulty, missing pieces) so the caller can
+ * announce a friendly error instead of crashing. The seed is read as base36 (the
+ * `#xxxx` token `sandboxShareString` emits), so round-tripping is exact.
+ */
+export function parseShareString(text: string): GenerateParams | null {
+  const m = text
+    .trim()
+    .toLowerCase()
+    .match(/^papasangre\s+sandbox\s+(\w+)\s+d([1-5])\s+#([0-9a-z]+)$/);
+  if (!m) return null;
+  const mode = m[1] as SandboxMode;
+  if (!SANDBOX_MODES.includes(mode)) return null;
+  const difficulty = Number(m[2]) as Difficulty;
+  const seed = parseInt(m[3], 36);
+  if (!Number.isFinite(seed)) return null;
+  return { mode, difficulty, seed: seed >>> 0 };
+}

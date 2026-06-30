@@ -12,6 +12,7 @@ import {
   DIFFICULTIES,
   sandboxShareString,
   parseSeed,
+  parseShareString,
   type Difficulty,
   type SandboxMode,
 } from '../src/game/sandbox';
@@ -187,5 +188,37 @@ describe('sandbox share/parse helpers', () => {
     expect(sandboxShareString({ mode: 'beacon', difficulty: 3, seed: 42 })).toContain('beacon');
     expect(parseSeed('42')).toBe(42);
     expect(parseSeed('hello')).toBe(parseSeed('hello'));
+  });
+
+  it('parseShareString is the exact inverse of sandboxShareString', () => {
+    for (const mode of SANDBOX_MODES) {
+      for (const d of DIFFICULTIES) {
+        for (const seed of [0, 1, 42, 999, 0xdeadbeef]) {
+          const code = sandboxShareString({ mode, difficulty: d, seed });
+          expect(parseShareString(code)).toEqual({ mode, difficulty: d, seed: seed >>> 0 });
+        }
+      }
+    }
+  });
+
+  it('parseShareString tolerates whitespace + case, rejects malformed input', () => {
+    expect(parseShareString('  PAPASANGRE  SANDBOX  Beacon  D3  #16  ')).toEqual({
+      mode: 'beacon',
+      difficulty: 3,
+      seed: parseInt('16', 36),
+    });
+    expect(parseShareString('not a share string')).toBeNull();
+    expect(parseShareString('papasangre sandbox nope d3 #16')).toBeNull(); // bad mode
+    expect(parseShareString('papasangre sandbox beacon d9 #16')).toBeNull(); // bad difficulty
+    expect(parseShareString('papasangre sandbox beacon d3')).toBeNull(); // missing seed
+  });
+
+  it('share round-trip reproduces a byte-identical Level', () => {
+    for (const mode of SANDBOX_MODES) {
+      const params = { mode, difficulty: 4 as Difficulty, seed: 777 };
+      const code = sandboxShareString(params);
+      const parsed = parseShareString(code)!;
+      expect(generateLevel(parsed)).toEqual(generateLevel(params));
+    }
   });
 });
