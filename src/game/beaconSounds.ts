@@ -99,6 +99,30 @@ export function beaconTiming(preset: BeaconPreset): BeaconTiming {
   return TIMING[preset];
 }
 
+/**
+ * Continuous "getting warmer" gain for the dry beacon voice as a function of
+ * distance to the beacon (metres). Closer ⇒ louder, so a player can home in by ear
+ * without narration. Subtle + bounded: maps `farDist`→1.0 up to `nearDist`→`maxGain`
+ * on a smooth curve, clamped outside that range. Pure + unit-tested.
+ *
+ * `maxGain` is modest (default 1.8) so it complements — not overwhelms — the HRTF
+ * distance attenuation and the directional head-shadow cues.
+ */
+export function proximityGain(
+  distance: number,
+  nearDist = 0.8,
+  farDist = 8,
+  maxGain = 1.8,
+): number {
+  if (!Number.isFinite(distance)) return 1;
+  // Normalize 0 (far) → 1 (near) across [nearDist, farDist].
+  const span = Math.max(1e-3, farDist - nearDist);
+  const t = Math.max(0, Math.min(1, (farDist - distance) / span));
+  // Smoothstep for a gentle ramp that accelerates as you close in.
+  const s = t * t * (3 - 2 * t);
+  return 1 + s * (maxGain - 1);
+}
+
 // ---------------------------------------------------------------------------
 // The voice (needs an AudioContext) — ear-verified, not unit-tested.
 // ---------------------------------------------------------------------------
@@ -151,6 +175,18 @@ export class BeaconVoice {
     }
     this.oscillators = [];
     try { this.out.disconnect(); } catch { /* noop */ }
+  }
+
+  /**
+   * Continuous "getting warmer" cue: scale the voice's output gain by proximity to
+   * the beacon (closer = louder). Smoothly ramped so it never clicks. Driven from the
+   * game loop on every progress report. Safe to call frequently.
+   */
+  setProximity(distance: number) {
+    const g = proximityGain(distance);
+    const t = this.ctx.currentTime;
+    // Short time-constant glide so rapid distance updates don't zipper.
+    this.out.gain.setTargetAtTime(g, t, 0.08);
   }
 
   private trigger() {

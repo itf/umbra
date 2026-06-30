@@ -7,7 +7,7 @@ import { ClapRoom } from './engine/acoustics/clapRoom';
 import type { WallDef, EdgeDef } from './engine/acoustics/core';
 import { Game, type GameLevel } from './game/game';
 import { ClapBudget } from './game/clapBudget';
-import { Heading } from './game/heading';
+import { Heading, keyTurnDelta, announceHeading } from './game/heading';
 import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
 import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
@@ -363,8 +363,10 @@ startButton.addEventListener('click', async () => {
       void import('./debug/debugOverlay').then(({ DebugOverlay }) => new DebugOverlay(game));
     }
 
-    // --- Turn control: the compass dial (only turn control) ---
-    setupTurning(game);
+    // --- Turn control: the compass dial AND keyboard arrows (both drive the same
+    // slewed heading, so audio + dial stay in sync). `turnBy` lets the keydown
+    // handler nudge the heading; it announces the new heading via the live region. ---
+    const turnBy = setupTurning(game);
 
     // --- Step buttons ---
     const stepLeft = document.getElementById('step-left') as HTMLButtonElement;
@@ -377,11 +379,20 @@ startButton.addEventListener('click', async () => {
     // pointerdown (not click) for tight rhythm response.
     stepLeft.addEventListener('pointerdown', (e) => { e.preventDefault(); doStep('L'); });
     stepRight.addEventListener('pointerdown', (e) => { e.preventDefault(); doStep('R'); });
-    // Keyboard step keys (arrows are reserved for turning): A = left, L = right.
+    // Keyboard controls. A = left step, L = right step; Left/Right arrows turn
+    // (the CRITICAL keyboard-turning fix — without this the game is uncompletable
+    // without a pointer drag); ? or H speaks the controls.
     window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        // Prevent the page from scrolling, and let key-repeat keep turning.
+        e.preventDefault();
+        if (!ended) turnBy(keyTurnDelta(e.key, e.shiftKey));
+        return;
+      }
       if (e.repeat) return;
       if (e.key === 'a' || e.key === 'A') doStep('L');
       else if (e.key === 'l' || e.key === 'L') doStep('R');
+      else if (e.key === '?' || e.key === 'h' || e.key === 'H') speakControls();
     });
 
     // --- Clap to hear the room (echo button) ---
@@ -437,7 +448,14 @@ function updateFootHints(distance: number) {
   }
 }
 
-function setupTurning(game: Game) {
+/**
+ * Mount the compass dial + the slewed-heading loop, and return a `turnBy(delta)`
+ * that nudges the heading target by `delta` radians (used by the keyboard arrow
+ * handler). Both the dial drag and the keyboard drive the SAME `Heading`, so the
+ * audio and the visible dial always agree. Keyboard turns are announced (debounced)
+ * via the live region so an eyes-free user hears their new heading.
+ */
+function setupTurning(game: Game): (delta: number) => void {
   const turnPad = document.getElementById('turn-pad')!;
 
   // Rate-limited heading: the compass sets a TARGET; the actual heading slews
@@ -473,6 +491,28 @@ function setupTurning(game: Game) {
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);
+
+  // Keyboard turning: nudge the target heading, sync the dial, and announce the
+  // new heading after a short idle so a held/repeated key doesn't spam the live
+  // region (it speaks once the turn settles).
+  let announceTimer: ReturnType<typeof setTimeout> | null = null;
+  return (delta: number) => {
+    if (delta === 0) return;
+    heading.setTarget(heading.desired + delta);
+    compass.setHeading(heading.desired);
+    if (announceTimer != null) clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => say(announceHeading(heading.desired)), 250);
+  };
+}
+
+/** Speak the keyboard control scheme via the live region (the ? / H help key). */
+function speakControls() {
+  say(
+    'Controls: Left and Right arrows turn; hold Shift to turn farther. ' +
+    'A steps with your left foot, L with your right — alternate them and do not rush. ' +
+    'Echo button or the Listen control claps to hear the room. ' +
+    'Press question mark or H to hear this again.',
+  );
 }
 
 function setupClap(

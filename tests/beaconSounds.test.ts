@@ -2,9 +2,33 @@ import { describe, it, expect } from 'vitest';
 import {
   bellPartials, musicboxNotes, semitoneToFreq, resolveBeaconPreset,
   isBeaconPreset, beaconPresetNames, beaconTiming, DEFAULT_BEACON_PRESET,
-  MUSICBOX_MOTIF,
+  MUSICBOX_MOTIF, proximityGain,
 } from '../src/game/beaconSounds';
 import { emptyLevel, isLevel, type Level } from '../src/level/schema';
+
+describe('proximityGain ("getting warmer" cue)', () => {
+  it('is louder closer and quieter far away (monotonic)', () => {
+    const near = proximityGain(0.8);
+    const mid = proximityGain(4);
+    const far = proximityGain(8);
+    expect(near).toBeGreaterThan(mid);
+    expect(mid).toBeGreaterThan(far);
+  });
+  it('clamps to baseline 1.0 at/beyond the far distance', () => {
+    expect(proximityGain(8)).toBeCloseTo(1, 6);
+    expect(proximityGain(50)).toBeCloseTo(1, 6);
+  });
+  it('reaches the configured max at/within the near distance', () => {
+    expect(proximityGain(0.8, 0.8, 8, 1.8)).toBeCloseTo(1.8, 6);
+    expect(proximityGain(0, 0.8, 8, 1.8)).toBeCloseTo(1.8, 6);
+  });
+  it('stays bounded and finite for degenerate input', () => {
+    expect(proximityGain(Infinity)).toBe(1);
+    const g = proximityGain(3);
+    expect(g).toBeGreaterThanOrEqual(1);
+    expect(g).toBeLessThanOrEqual(1.8);
+  });
+});
 
 describe('beacon preset recipes', () => {
   it('bell partials scale with base frequency and ring down', () => {

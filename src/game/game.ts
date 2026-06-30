@@ -442,6 +442,12 @@ export class Game {
   private reportProgress() {
     const t = this.winTarget();
     const d = this.player.distanceTo(t.x, t.z);
+    // Continuous "getting warmer" cue: scale the dry beacon voice's loudness by
+    // proximity so closing in is HEARD, not just narrated in coarse bands. Only the
+    // synth voice is modulated (null in 'absorber' mode — no beacon — and while a
+    // custom audio loop is playing). Works for every engine path since they all
+    // share this dry voice feeding the spatializer.
+    if (this.level.goal !== 'absorber') this.beaconVoice?.setProximity(d);
     this.cb.onProgress?.(d);
   }
 
@@ -643,6 +649,9 @@ export class Game {
       this.won = true;
       // Fade the beacon out on win.
       this.beaconOutput.gain.setTargetAtTime(0, this.graph.ctx.currentTime, 0.3);
+      // Victory flourish: a short, distinct arrival chime through the master bus so
+      // a win is as audible as the catch roar (it was near-silent before).
+      winChime(this.graph.ctx, this.graph.master);
       this.cb.onWin?.();
     }
   }
@@ -667,6 +676,38 @@ export class Game {
     }
     this.monsters = [];
   }
+}
+
+/**
+ * A short, pleasant arrival chime played on win — a bright ascending major
+ * arpeggio (root, third, fifth, octave) with a soft bell-like decay, routed to the
+ * master bus front-and-centre (not spatialized) so success is unmistakable. Mirrors
+ * MonsterVoice.roar's self-contained, self-cleaning shape. Ear-verified, not unit-tested.
+ */
+export function winChime(ctx: BaseAudioContext, dest: AudioNode) {
+  const t0 = ctx.currentTime;
+  const out = ctx.createGain();
+  out.gain.value = 0.6;
+  out.connect(dest);
+  // C5 major arpeggio rolled upward.
+  const notes = [523.25, 659.25, 783.99, 1046.5];
+  let last: OscillatorNode | null = null;
+  notes.forEach((f, i) => {
+    const t = t0 + i * 0.09;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = f;
+    // A soft octave shimmer on top for sparkle.
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(0.5, t + 0.012);
+    env.gain.exponentialRampToValueAtTime(0.0008, t + 0.7);
+    osc.connect(env).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.75);
+    last = osc;
+  });
+  if (last) (last as OscillatorNode).onended = () => { try { out.disconnect(); } catch { /* noop */ } };
 }
 
 /** 2D segment intersection test (standard orientation method). */
