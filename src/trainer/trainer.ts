@@ -322,6 +322,26 @@ function sizeReveal(q: Question): string {
   return '';
 }
 
+/**
+ * Per-room ground-truth strings for the freeze-frame replay's step labels, so the
+ * numbers stay VISIBLE while each room plays (the replay overwrites #feedback, so
+ * the one-shot sizeReveal text alone would be clobbered). Size drills → each
+ * room's dimensions; distance drill → each wall's distance + echo delay.
+ */
+function replayReveal(q: Question): { a?: string; b?: string } | undefined {
+  if (SIZE_TYPES.has(q.type) && q.sceneA?.roomSize && q.sceneB?.roomSize) {
+    return { a: fmtRoom(q.sceneA.roomSize), b: fmtRoom(q.sceneB.roomSize) };
+  }
+  if (q.type === 'distance' && q.wallDistsM) {
+    const da = q.wallDistsM.a, db = q.wallDistsM.b;
+    return {
+      a: `${da.toFixed(1)} m, echo ${echoDelayMs(da).toFixed(1)} ms`,
+      b: `${db.toFixed(1)} m, echo ${echoDelayMs(db).toFixed(1)} ms`,
+    };
+  }
+  return undefined;
+}
+
 function typeFilter(): ExerciseType[] | undefined {
   const sel = $('type') as HTMLSelectElement;
   if (sel.value !== 'all') return [sel.value] as ExerciseType[];
@@ -621,7 +641,7 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
 /** Kick off the freeze-frame replay for the current A/B question (no-op otherwise). */
 function maybeReplay(correct: boolean) {
   if (!current) return;
-  const plan = planReplay(current, correct);
+  const plan = planReplay(current, correct, replayReveal(current));
   if (plan) void runReplay(plan);
 }
 

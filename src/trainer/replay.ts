@@ -63,7 +63,17 @@ export function replayDescriptors(type: Question['type']): { correct: string; ot
  * reinforces a right answer and corrects a wrong one identically. `correct` only
  * tweaks the intro wording (reinforce vs correct).
  */
-export function planReplay(q: Pick<Question, 'type' | 'correctAnswer'>, correct: boolean): ReplayPlan | null {
+export function planReplay(
+  q: Pick<Question, 'type' | 'correctAnswer'>,
+  correct: boolean,
+  /**
+   * Optional per-room reveal text (e.g. dimensions "8.4 × 4.6 × 7.1 m" for the
+   * size drills, or the wall distance for the distance drill) appended to each
+   * step label so the ground-truth numbers stay VISIBLE while that room plays —
+   * the replay overwrites #feedback, so this is where the size reveal must live.
+   */
+  reveal?: { a?: string; b?: string },
+): ReplayPlan | null {
   if (!hasRoomB(q as Question)) return null; // single-scene: nothing to compare
 
   // The A/B drills label their correct choice as "Room A"/"Room B" (or Left/Right
@@ -73,9 +83,11 @@ export function planReplay(q: Pick<Question, 'type' | 'correctAnswer'>, correct:
 
   const stepFor = (room: 'A' | 'B'): ReplayStep => {
     const isCorrect = room === correctRoom;
-    const label = isCorrect
-      ? `${room} is ${d.correct} (correct).`
-      : `${room} is ${d.other}.`;
+    const dims = room === 'A' ? reveal?.a : reveal?.b;
+    const what = isCorrect ? `${d.correct} (correct)` : d.other;
+    const label = dims
+      ? `${room} is ${what} — ${dims}.`
+      : `${room} is ${what}.`;
     return { room, label, isCorrect };
   };
 

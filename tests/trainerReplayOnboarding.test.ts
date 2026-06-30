@@ -78,6 +78,24 @@ describe('planReplay (freeze-frame post-answer replay)', () => {
     expect(line).toContain(plan.intro.trim());
     for (const s of plan.steps) expect(line).toContain(s.label);
   });
+
+  it('appends per-room reveal text (dimensions) to step labels when provided', () => {
+    const q = makeQuestion('larger', 5);
+    const plan = planReplay(q, false, { a: '8.4 × 4.6 × 7.1 m', b: '5.2 × 3.1 × 5.0 m' })!;
+    const a = plan.steps.find((s) => s.room === 'A')!;
+    const b = plan.steps.find((s) => s.room === 'B')!;
+    expect(a.label).toContain('8.4 × 4.6 × 7.1 m');
+    expect(b.label).toContain('5.2 × 3.1 × 5.0 m');
+    // the dims do not clobber the correctness call-out on whichever room is correct
+    const correctStep = plan.steps.find((s) => s.isCorrect)!;
+    expect(correctStep.label).toContain('(correct)');
+  });
+
+  it('omits the dash-dimensions when no reveal is passed (labels unchanged)', () => {
+    const q = makeQuestion('larger', 5);
+    const plan = planReplay(q, false)!;
+    expect(plan.steps[0].label).not.toContain('—');
+  });
 });
 
 // --- Onboarding gating --------------------------------------------------------
