@@ -117,3 +117,8 @@ out-of-sonar tension, Sonar Vault level. +9 tests +3 e2e (391 unit, 11 e2e).
 - **4C Daily Challenge** still building (agent `adb19ce8…`, trainer/daily.* — held).
 - **4B Stealth mode** dispatched (agent `a9e4034a…`, game.ts/monster + stealth-escape level
   + throw-a-sound decoy). game.ts freed by 4A. Watch index.ts contention (4B adds a level).
+
+**4C Daily Challenge SHIPPED** (`44cbdce`): clock-free daily seed + idempotent streak +
+shareable score, spoken. +26 tests +2 e2e (417 unit, 13 e2e).
+- **4B Stealth** still building (agent `a9e4034a…`, game.ts/load.ts/schema.ts +
+  stealth-escape level + decoy). Its WIP has an in-progress tsc state — held until done.
