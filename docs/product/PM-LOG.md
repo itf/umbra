@@ -274,3 +274,8 @@ is ear-dependent (NEEDS-PLAYTEST / SESSION-HANDOFF §4) — the user's call.
 npm install elsewhere — refactored to OPT-IN + portable (npm dep retained, SOFA dormant,
 activates only when fork is linked). Default path byte-unchanged, bundle lean, .sofa
 runtime-cached not precached. +6 tests (588). Live in-browser SOFA localization = manual confirm.
+
+### Cycle 11 — Sandbox seed-share (in progress)
+- **11A** (agent `ae32344d…`): surface/copy the current sandbox seed + enter a seed/share
+  string to reproduce an exact level. Finishes 8C (the pure share helpers exist; UI gap).
+  Deferred: online leaderboard (needs backend), narrative (large scope → user direction).
