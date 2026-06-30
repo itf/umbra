@@ -21,6 +21,7 @@ import openStreet from './open-street.json';
 import steppedCeiling from './stepped-ceiling-alcove.json';
 import sBendMaze from './s-bend-maze.json';
 import clapMaze from './clap-maze.json';
+import findTheOpening from './find-the-opening.json';
 import cathedral from './cathedral.json';
 import slowSoundVault from './slow-sound-vault.json';
 import findTheFoam from './find-the-foam.json';
@@ -130,6 +131,12 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     description: 'A serpentine brick maze navigated by echo, with a tight clap budget — probe deliberately at each junction to find where the echo isn’t.',
     category: 'sonar',
     json: clapMaze,
+  },
+  {
+    id: 'find-the-opening',
+    name: 'Find the Opening',
+    description: 'A narrow concrete corridor blocked by a wall with a single off-centre doorway. Clap — and listen to your own FOOTSTEPS echo down the corridor and through the gap — to find the opening, then walk through to the faint drip beyond.',
+    json: findTheOpening,
   },
   {
     id: 'cathedral',

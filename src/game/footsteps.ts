@@ -1,63 +1,102 @@
 /**
  * Footstep / stumble / bump / feet-together sound synthesis, varying by the
- * material underfoot (or the wall you bumped). Feet are barely directional, so we
- * synthesize clean sounds and place them with a light StereoPanner rather than the
- * HRTF convolver. Hybrid: a recorded sample is used if provided, else we synth.
+ * material underfoot (or the wall you bumped).
+ *
+ * Two spatialization paths:
+ *  - REFLECTING (walkable game): when a `FootstepRoom` context is supplied, the dry
+ *    synth is fed through a room-IR convolver built for the FOOT's position, so the
+ *    step echoes off the walls (revealing openings/corridors) and is localized from
+ *    where the foot actually landed.
+ *  - DRY (trainer / no level): feet are barely directional, so we synthesize clean
+ *    sounds and place them with a light StereoPanner. This is the fallback when no
+ *    room is supplied.
+ * Hybrid: a recorded sample is used if provided, else we synth.
  */
 import type { AudioGraph } from '../engine/audioGraph';
 import type { HrtfRenderer } from '../engine/hrtf/renderer';
+import type { FootstepRoom, FootstepRoomBuild } from '../engine/acoustics/footstepRoom';
 import type { Foot } from './player';
 import { soundsFor, type StepSynth } from './stepSounds';
+
+/** The room context for a single reflecting step (foot position + pose + geometry). */
+export type StepRoomCtx = FootstepRoomBuild;
 
 export class Footsteps {
   private graph: AudioGraph;
   private sampleCache = new Map<string, AudioBuffer | null>();
+  /** Reflecting-footstep engine; null ⇒ dry stereo-pan fallback (trainer). */
+  private room: FootstepRoom | null = null;
 
   // renderer kept for API compatibility / future per-foot room coupling.
   constructor(graph: AudioGraph, _renderer: HrtfRenderer) {
     this.graph = graph;
   }
 
-  /** A step on `material`, panned slightly to the stepping foot's side. */
-  step(foot: Foot, material: string) {
+  /** Enable reflecting footsteps by attaching a room engine (walkable game). */
+  setRoom(room: FootstepRoom | null) {
+    this.room = room;
+  }
+
+  /**
+   * A step on `material`. With `ctx` (and a room engine attached) it reflects off the
+   * level geometry from the foot position; otherwise it's a dry, lightly-panned synth.
+   */
+  step(foot: Foot, material: string, ctx?: StepRoomCtx) {
     const s = soundsFor(material);
     const pan = foot === 'L' ? -0.3 : 0.3;
-    if (s.stepSample) this.playSample(s.stepSample, s.step.level, pan);
-    else this.play(s.step, pan);
+    const dest = this.destFor(ctx);
+    if (s.stepSample) this.playSample(s.stepSample, s.step.level, pan, dest);
+    else this.play(s.step, pan, dest);
   }
 
   /** A stumble — material-independent, heavy and central. */
-  stumble() {
+  stumble(ctx?: StepRoomCtx) {
     this.play(
       { level: 0.7, thumpHz: 80, thumpLevel: 0.85, noiseDur: 0.14, thumpDur: 0.22, lp: 900 },
       0,
+      this.destFor(ctx),
     );
   }
 
   /** Bumping into a wall of `material`. */
-  bump(material: string) {
+  bump(material: string, ctx?: StepRoomCtx) {
     const s = soundsFor(material);
-    if (s.bumpSample) this.playSample(s.bumpSample, s.bump.level, 0);
-    else this.play(s.bump, 0);
+    const dest = this.destFor(ctx);
+    if (s.bumpSample) this.playSample(s.bumpSample, s.bump.level, 0, dest);
+    else this.play(s.bump, 0, dest);
   }
 
   /** Very quiet "feet together" cue after settling. */
-  feetTogether() {
+  feetTogether(ctx?: StepRoomCtx) {
     this.play(
       { level: 0.18, thumpHz: 150, thumpLevel: 0.12, noiseDur: 0.06, thumpDur: 0.05, lp: 2400, band: true },
       0,
+      this.destFor(ctx),
     );
   }
 
+  /**
+   * Resolve where the dry voice connects. With a room engine + per-step context the
+   * voice goes into the room convolver (reflecting + HRTF-spatialized from the foot);
+   * otherwise straight to master (the stereo pan applied upstream still positions it).
+   */
+  private destFor(ctx?: StepRoomCtx): AudioNode {
+    if (this.room && ctx) return this.room.voice(ctx);
+    return this.graph.master;
+  }
+
   // ---- procedural synthesis ----
-  private play(o: StepSynth, pan: number) {
+  private play(o: StepSynth, pan: number, dest: AudioNode) {
     const ctx = this.graph.ctx;
     const t = ctx.currentTime;
+    // When the voice feeds the room convolver the HRTF handles direction, so the
+    // crude L/R pan would only smear it — keep it centred in that case.
+    const reflecting = dest !== this.graph.master;
     const panner = ctx.createStereoPanner();
-    panner.pan.value = pan;
+    panner.pan.value = reflecting ? 0 : pan;
     const out = ctx.createGain();
     out.gain.value = o.level;
-    panner.connect(out).connect(this.graph.master);
+    panner.connect(out).connect(dest);
 
     // Noise transient (the "tap"). For granular surfaces, several short grains.
     const grains = o.crunch ? 2 + Math.round(o.crunch * 4) : 1;
@@ -93,7 +132,7 @@ export class Footsteps {
   }
 
   // ---- recorded-sample playback (loaded + cached on first use) ----
-  private playSample(url: string, level: number, pan: number) {
+  private playSample(url: string, level: number, pan: number, dest: AudioNode) {
     const cached = this.sampleCache.get(url);
     if (cached === undefined) {
       // Not loaded yet: kick off a fetch and synth-fallback this one time.
@@ -107,13 +146,14 @@ export class Footsteps {
     }
     if (cached === null) return; // still loading or failed
     const ctx = this.graph.ctx;
+    const reflecting = dest !== this.graph.master;
     const src = ctx.createBufferSource();
     src.buffer = cached;
     const panner = ctx.createStereoPanner();
-    panner.pan.value = pan;
+    panner.pan.value = reflecting ? 0 : pan;
     const out = ctx.createGain();
     out.gain.value = level;
-    src.connect(panner).connect(out).connect(this.graph.master);
+    src.connect(panner).connect(out).connect(dest);
     src.start();
   }
 }

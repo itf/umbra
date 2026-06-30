@@ -128,7 +128,7 @@ function polyArea(verts: Array<[number, number, number]>): number {
  * absorption = area-weighted mid-band absorption (walls carry per-band absorption),
  * volume = bounding-box volume (a robust approximation for the RT60 estimate).
  */
-function wallsRoom(walls: WallDef[], listener?: [number, number, number]): RoomGeom {
+export function wallsRoom(walls: WallDef[], listener?: [number, number, number]): RoomGeom {
   let area = 0;
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;

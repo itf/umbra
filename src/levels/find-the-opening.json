@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "Find the Opening",
+  "open": false,
+  "room": { "width": 4, "depth": 18, "height": 3 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "concrete",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 2, "z": 16.5, "yaw": 0 },
+  "beacons": [
+    { "id": "exit", "x": 3.1, "z": 1.5, "freq": 196, "goalRadius": 0.9, "sound": "drip" }
+  ],
+  "walls": [
+    {
+      "id": "barrier-left",
+      "ax": 0, "az": 9, "bx": 2.5, "bz": 9,
+      "material": "concrete"
+    },
+    {
+      "id": "barrier-right",
+      "ax": 3.7, "az": 9, "bx": 4, "bz": 9,
+      "material": "concrete"
+    }
+  ],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}

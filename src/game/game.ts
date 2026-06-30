@@ -8,9 +8,10 @@ import type { AudioGraph } from '../engine/audioGraph';
 import { HrtfRenderer, type HrtfSource } from '../engine/hrtf/renderer';
 import type { InterpolatingHrtfRenderer, InterpolatingHrtfSource } from '../engine/hrtf/interpolatingRenderer';
 import { ModeledSource } from '../engine/acoustics/modeledSource';
+import { FootstepRoom } from '../engine/acoustics/footstepRoom';
 import type { WallDef, EdgeDef } from '../engine/acoustics/core';
 import { Player, type Foot, type StepConfig, DEFAULT_STEP_CONFIG } from './player';
-import { Footsteps } from './footsteps';
+import { Footsteps, type StepRoomCtx } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
 import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
@@ -150,6 +151,7 @@ export class Game {
   private level: GameLevel;
   private cb: GameCallbacks;
   private footsteps: Footsteps;
+  private footstepRoom: FootstepRoom | null = null;
   /**
    * Records the LAST positioned noise the player made (step/stumble/bump) with a
    * normalized loudness. PURE model (noiseEvents.ts), parallel to footstep audio;
@@ -259,6 +261,13 @@ export class Game {
     this.headHeight = level.headHeight ?? 1.6;
     this.player = new Player({ x: level.start.x, z: level.start.z, yaw: level.start.yaw }, stepCfg);
     this.footsteps = new Footsteps(graph, renderer);
+    // Reflecting footsteps: when the level has acoustic geometry, route steps through
+    // a room-IR convolver sourced at the FOOT, so each step echoes off the walls and
+    // openings. Without geometry (or in the trainer) Footsteps stays dry/panned.
+    if ((this.level.acousticWalls?.length ?? 0) > 0) {
+      this.footstepRoom = new FootstepRoom(graph, renderer);
+      this.footsteps.setRoom(this.footstepRoom);
+    }
     this.noise = new NoiseTracker(cb.onNoise);
     this.audioYaw = level.start.yaw;
     // The glide sink applies an interpolated x/z (with the current audioYaw) to the
@@ -469,6 +478,35 @@ export class Game {
   }
 
   /**
+   * Build the per-step reflecting-footstep context: the head (listener) at the
+   * current audio pose and the sound's source at the foot position, offset slightly
+   * to the stepping foot's side so L/R steps originate from where the foot lands.
+   * Returns undefined when the level has no reflecting-footstep engine (stay dry).
+   */
+  private stepRoomCtx(footX: number, footZ: number, foot?: Foot): StepRoomCtx | undefined {
+    if (!this.footstepRoom) return undefined;
+    let sx = footX, sz = footZ;
+    if (foot) {
+      // Lateral offset (perpendicular to heading) to the foot's side, ~0.15 m.
+      const side = foot === 'L' ? -0.15 : 0.15;
+      sx += Math.cos(this.audioYaw) * side;
+      sz += Math.sin(this.audioYaw) * side;
+    }
+    const lp = this.listenerPos;
+    return {
+      walls: this.level.acousticWalls ?? [],
+      edges: this.level.acousticEdges,
+      listener: [lp.x, this.headHeight, lp.z],
+      // Feet are on the floor — source near ground level so floor/wall bounce is right.
+      source: [sx, 0.1, sz],
+      yaw: this.audioYaw,
+      maxOrder: 1,
+      scattering: this.level.acousticScattering ?? 0.1,
+      speedOfSound: this.level.speedOfSound,
+    };
+  }
+
+  /**
    * Snap the audio listener immediately to the LOGICAL player position (no glide).
    * For callers that change the pose without a step (yaw turn, wall bump) so the
    * audio reflects it at once.
@@ -603,7 +641,7 @@ export class Game {
       if (hitWall) {
         this.player.state.x = before.x;
         this.player.state.z = before.z;
-        this.footsteps.bump(hitWall.material);
+        this.footsteps.bump(hitWall.material, this.stepRoomCtx(before.x, before.z, foot));
         // Loud noise spike at the bump position (where the player still stands).
         this.emitNoise(makeNoiseEvent('bump', before.x, before.z, hitWall.material, nowMs));
         this.cb.onStumble?.('wall');
@@ -611,9 +649,9 @@ export class Game {
         return;
       }
       // After standing still, the feet came together — soft reset cue.
-      if (result.outcome.settled) this.footsteps.feetTogether();
+      if (result.outcome.settled) this.footsteps.feetTogether(this.stepRoomCtx(s.x, s.z));
       const floorMat = this.floorMaterialAt(s.x, s.z);
-      this.footsteps.step(result.outcome.foot, floorMat);
+      this.footsteps.step(result.outcome.foot, floorMat, this.stepRoomCtx(s.x, s.z, result.outcome.foot));
       // Positioned noise at the step's landing point; loudness from the floor
       // material (loud on gravel, near-silent on carpet/foam).
       this.emitNoise(makeNoiseEvent('step', s.x, s.z, floorMat, nowMs));
@@ -627,7 +665,7 @@ export class Game {
       this.reportProgress();
       this.checkWin();
     } else {
-      this.footsteps.stumble();
+      this.footsteps.stumble(this.stepRoomCtx(s.x, s.z));
       // Loud noise spike at the player's position (stumbling is loud on any floor).
       this.emitNoise(makeNoiseEvent('stumble', s.x, s.z, this.floorMaterialAt(s.x, s.z), nowMs));
       this.cb.onStumble?.(result.outcome.reason);
