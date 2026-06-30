@@ -63,7 +63,31 @@ is unavailable the picker just shows the builtins.
 Selecting an item loads the level (`getBuiltin` or `loadSavedLevel`) and reveals
 the Begin screen.
 
+## Schema: new level fields
+
+These fields were added to the `Level` schema alongside the new levels and are
+now authorable in the editor:
+
+- **`ambience: AmbientSource[]`** — continuous, non-goal sound sources (fountain,
+  AC hum, brown noise). Each has `id`, `x`, `z`, `sound`, `gain`, and optionally
+  `freq`/`soundUrl`. Rendered spatially at their world position.
+- **`events: ReactionEvent[]`** — time-windowed acoustic events that require a
+  player reaction. Each event names a `sourceId` (must match an ambient source's
+  `id`), a `type` (`'crossing'` | `'door'`), and a `start`/`end` time window (s).
+- **`requiredReactions: number`** — minimum reactions the player must register
+  (press **R** inside an event window) to unlock the win condition. Makes reaction
+  levels possible without a beacon goal.
+- **`winPoint: { x, z }` / `winRadius: number`** — a win area independent of
+  beacons. The player wins by reaching within `winRadius` metres of `winPoint`
+  (after satisfying any `requiredReactions` gate). Lets silent levels and reaction
+  levels have a clear destination.
+- **`clutter: number`** — a 0..1 per-level density for random-object clutter
+  (acoustically scattering objects scattered through the room). Omitting or setting
+  0 means a bare room.
+
 ## The demo levels and what each showcases
+
+### Navigation / geometry
 
 | id | Level | Showcases |
 |----|-------|-----------|
@@ -83,6 +107,38 @@ the Begin screen.
 
 The size pair has a large volume spread (52 m³ vs 3456 m³); the test-suite
 enforces a ≥4× spread.
+
+### Silent levels (no beacon)
+
+| id | Level | Showcases |
+|----|-------|-----------|
+| `find-the-door` | Find the Door | **No beacon, total silence.** A bare concrete corridor with one off-centre doorway in the right-hand wall. Navigate by clap echo and footstep reflections alone. Win area (`winPoint`/`winRadius`) is the region beyond the doorway — no goal sound. |
+
+### Reaction levels (press R when you detect a change)
+
+Reaction levels introduce **ambient sound sources** (`ambience`) and **reaction
+events** (`events`). During each event window, the ambient source changes
+acoustically (a crossing muffles it; a door opening brightens it). The player
+presses **R** when they detect the change. Win requires reaching the `winPoint`
+after registering at least `requiredReactions` reactions.
+
+| id | Level | Showcases |
+|----|-------|-----------|
+| `fountain-crossing` | Fountain Crossing | A `fountain` ambient source ahead. Three crossing events (each 2.5 s) duck and muffle the water as a person passes between you and it — a faint swoosh. Press **R** each crossing. React to ≥2, then walk to the fountain. |
+| `door-in-the-ac-corridor` | Door in the AC Corridor | A `brownnoise` AC source at the far end. Three door events (2.5 s each) make the AC leak louder and brighter while the door is open, with a click at open/close. Press **R** when you hear the door open. React to ≥2, then reach the far end. |
+
+### Material clap-trainers (find the target wall by its echo character; category `absorber`)
+
+These levels have **no beacon and no ambient source**. Win is a `winPoint` area in
+front of the target wall section. The player must locate the target wall by its
+echo timbre.
+
+| id | Level | Showcases |
+|----|-------|-----------|
+| `find-the-carpet` | Find the Carpet Wall | EASY. One whole concrete wall is carpet — the dead side swallows high frequencies. Walk to the area in front of it. |
+| `find-the-carpet-half` | Find the Half-Carpet Wall | MEDIUM. Only half of one wall is carpet — narrower dead spot to localise. |
+| `find-the-hard-wall` | Find the Hard Wall | MEDIUM (inverted). Dead carpet room; ONE bright sheet-metal wall rings back. Hunt the live wall. |
+| `find-the-metal-half` | Find the Half-Metal Wall | HARD. Acoustic-foam room; only half of one wall is sheet metal — the smallest live spot to pin down. |
 
 ## Adding a new builtin
 
