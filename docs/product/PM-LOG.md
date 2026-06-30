@@ -227,3 +227,11 @@ tests. NOT yet committed — 8A and 8B are ENTANGLED in main.ts/game.ts (8B wove
 announceCompletion in alongside 8A's Speech). 8B (`a4b33b0b…`) still running. Plan: commit
 8A+8B TOGETHER as one "engagement layer" commit when 8B reports (splitting interwoven hunks
 is error-prone). Tree currently green (522, tsc clean).
+
+**8A+8B Engagement layer SHIPPED together** (`4f49b3f`, entangled in main/game): optional
+Web Speech TTS (default OFF, graceful fallback) + per-level time/clap scoring with bests &
+"New best!" announce + picker best display. +38 tests (536 unit, 25 e2e).
+- **8C Sandbox generator** (agent `a2708409…`): pure seeded level generator (mode ×
+  difficulty → solvable Level), endless freeplay, picker sandbox UI. Owns sandbox.ts +
+  picker + main start flow. Then Cycle-8 review → leaderboard.
+- NEEDS-PLAYTEST grew: TTS default-off tradeoff + voice quality; generated-level fairness.
