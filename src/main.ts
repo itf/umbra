@@ -25,6 +25,7 @@ import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
+import { Router, type ScreenState } from './ui/router';
 import { renderProgressScreen } from './ui/progress';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
@@ -250,6 +251,21 @@ let SPEED_OF_SOUND: number | undefined;
 let liveRafId: number | null = null;
 
 /**
+ * The currently-running game's teardown handle, or null when no game is running.
+ * "Back to levels" (and any re-navigation) calls `stopActiveRun()` so the Game's
+ * audio nodes, the foot/turn/live rAF loops, and the keydown handler are all torn
+ * down cleanly — no leaked audio, monster, or glide loops across screen changes.
+ */
+let activeRun: { teardown: () => void } | null = null;
+function stopActiveRun() {
+  if (liveRafId != null) { cancelAnimationFrame(liveRafId); liveRafId = null; }
+  if (activeRun) {
+    try { activeRun.teardown(); } catch (e) { console.warn('[papasangre] run teardown', e); }
+    activeRun = null;
+  }
+}
+
+/**
  * Apply a chosen Level to the module-level game state. Called when a level is
  * picked (or preselected via ?level=…), BEFORE the Begin gesture — Begin still
  * owns the user-gesture-to-start-audio step.
@@ -284,7 +300,9 @@ function hideOnboardingScreens() {
 
 /** Reveal the Begin screen for a chosen level (hides the other screens). */
 function showStartScreen() {
+  stopActiveRun();
   hideOnboardingScreens();
+  gameScreen.hidden = true;
   startScreen.hidden = false;
   startButton.disabled = false;
   startButton.focus();
@@ -326,13 +344,20 @@ function runTutorial(after: () => void) {
   mountTutorial(tutorialScreen, { store: onboarding, say, alert, onDone: after });
 }
 
-/** Show the picker (the default entry point), hiding the Begin screen. */
+/**
+ * Show the picker (the default entry point), hiding the Begin screen, and
+ * RE-RENDER it every time. Returning to the picker must repopulate it — rendering
+ * only once at startup left it blank on return. Stops any in-progress run first
+ * (no leaked audio/loops) and announces + focuses for eyes-free use.
+ */
 function showPicker() {
+  stopActiveRun();
   hideOnboardingScreens();
+  gameScreen.hidden = true;
   pickerScreen.hidden = false;
-  // Move focus into the picker so an eyes-closed / screen-reader user lands on a
-  // choice instead of the top of the document.
-  (pickerScreen.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
+  // Re-render into a fresh host on EVERY show, so the picker is never empty.
+  void mountPicker();
+  say('Choose a level.');
 }
 
 /** Human labels for the trainer exercise types shown on the progress screen. */
@@ -362,7 +387,9 @@ function trainerRows(): TrainerInfo[] {
 
 /** Show the read-only "Best Times / Progress" screen, announcing its overview. */
 function showProgress() {
+  stopActiveRun();
   hideOnboardingScreens();
+  gameScreen.hidden = true;
   progressScreen.hidden = false;
   const levels: LevelInfo[] = builtinLevels().map((b) => ({
     name: b.name,
@@ -375,11 +402,13 @@ function showProgress() {
     streak: dailyStreakStore.load(),
     trainer: trainerRows(),
     say,
-    onBack: showPicker,
+    onBack: () => navigate({ screen: 'picker' }),
   });
 }
 
-document.getElementById('open-progress')?.addEventListener('click', showProgress);
+document.getElementById('open-progress')?.addEventListener('click', () =>
+  navigate({ screen: 'progress' }),
+);
 
 /** Resolve a picker selection (builtin id, saved name, or generated) to a Level. */
 async function resolveSelection(sel: PickerSelection): Promise<Level | undefined> {
@@ -404,6 +433,14 @@ async function mountPicker() {
     builtins: builtinLevels(),
     savedNames: saved,
     onSelect: async (sel) => {
+      // Builtin levels are deep-linkable (?level=<id>), so route them — this adds a
+      // history entry + URL so reload restores the level and Back returns to the
+      // picker. Saved/generated levels have no stable URL id, so apply them directly
+      // (transient; reload falls back to the picker, as before).
+      if (sel.source === 'builtin') {
+        navigate({ screen: 'level', level: sel.ref });
+        return;
+      }
       const level = await resolveSelection(sel);
       if (!level) {
         alert(`Could not load "${sel.label}".`);
@@ -421,41 +458,63 @@ async function mountPicker() {
   (host.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
 }
 
-backButton?.addEventListener('click', showPicker);
+backButton?.addEventListener('click', () => navigate({ screen: 'picker' }));
 
 // Replay onboarding from the picker (always available, ignores the "done" flags).
 document.getElementById('redo-calibration')?.addEventListener('click', () => {
-  runCalibration(showPicker);
+  runCalibration(() => navigate({ screen: 'picker' }));
 });
 document.getElementById('redo-tutorial')?.addEventListener('click', () => {
-  runTutorial(showPicker);
+  runTutorial(() => navigate({ screen: 'picker' }));
 });
 
-// Entry point. `?level=current` loads the editor's working level; `?level=<id>`
-// loads a bundled demo; otherwise show the picker. A preselected level jumps
-// straight to the Begin screen (the audio still waits for the Begin gesture).
-{
-  const param = new URLSearchParams(location.search).get('level');
-  if (param === 'current') {
+/**
+ * Resolve a level id from the URL (`?level=<id>`) to its Level, then run onboarding
+ * → Begin. `current` is the editor's working level; otherwise a bundled demo by id.
+ * Unknown ids fall back to the picker (returning false so the router can correct
+ * the URL). The DOM-only Begin reveal is `showStartScreen`; this is the loader.
+ */
+function loadLevelById(id: string): boolean {
+  if (id === 'current') {
     const edited = currentEditorLevel();
-    if (edited) {
-      applyLevel(edited, edited.name || 'Editor level');
-      gateOnboarding(showStartScreen);
-    } else {
-      void mountPicker();
-    }
-  } else if (param) {
-    const builtin = getBuiltin(param);
-    if (builtin) {
-      applyLevel(builtin, builtin.name);
-      gateOnboarding(showStartScreen);
-    } else {
-      void mountPicker(); // unknown id → fall back to the picker
-    }
+    if (!edited) return false;
+    applyLevel(edited, edited.name || 'Editor level');
   } else {
-    void mountPicker();
+    const builtin = getBuiltin(id);
+    if (!builtin) return false;
+    applyLevel(builtin, builtin.name);
   }
+  // First-run onboarding (calibration → tutorial) runs once, then the Begin screen.
+  gateOnboarding(showStartScreen);
+  return true;
 }
+
+// --- ROUTING. `router.render` maps a screen state (from a navigation, the initial
+// URL, or a Back/Forward popstate) to the right screen. Navigation goes through
+// `navigate`, which pushes a history entry + updates the URL so reload restores the
+// place and Back walks the screen history. Onboarding stays a transient gate (not a
+// route), so gateOnboarding is untouched. ---
+const router = new Router({
+  render: (state: ScreenState) => {
+    if (state.screen === 'picker') {
+      showPicker();
+    } else if (state.screen === 'progress') {
+      showProgress();
+    } else if (state.screen === 'level' && state.level) {
+      // An unknown/unloadable id → bounce to the picker (and fix the URL).
+      if (!loadLevelById(state.level)) navigate({ screen: 'picker' }, { replace: true });
+    } else {
+      showPicker();
+    }
+  },
+});
+/** Navigate to a screen: pushes history + updates the URL, then renders it. */
+function navigate(state: ScreenState, opts: { replace?: boolean } = {}) {
+  router.go(state, opts);
+}
+// Seed the app from the initial URL (deep-link, progress, or picker), replacing the
+// entry so Back never lands on a blank pre-app state.
+router.start();
 
 startButton.addEventListener('click', async () => {
   startButton.disabled = true;
@@ -506,6 +565,12 @@ startButton.addEventListener('click', async () => {
 
     startScreen.hidden = true;
     gameScreen.hidden = false;
+
+    // Teardown registry for THIS run: every loop/listener/audio resource registers
+    // its cleanup here, so "back to levels" (stopActiveRun) can stop the whole run
+    // cleanly — no leaked audio nodes, rAF loops, or keydown handlers.
+    const teardowns: Array<() => void> = [];
+    activeRun = { teardown: () => { for (const t of teardowns) { try { t(); } catch { /* noop */ } } } };
 
     // CLICK-FREE INTERPOLATING HRTF beacon (DEFAULT). The beacon — both the direct
     // path and its strongest reflections — is rendered through an AudioWorklet that
@@ -616,12 +681,14 @@ startButton.addEventListener('click', async () => {
       },
     }, undefined, steam, interpRenderer, { levelId, clapsUsed: () => clapsUsed });
 
+    teardowns.push(() => game.destroy());
+
     // Apply the persisted "getting warmer" cue preference to this run.
     game.setWarmerCue(settings.warmerCueEnabled());
 
     // --- Settings panel (audio mix + preferences). Opened from the ⚙ button or the
     // S key; every control wired to its existing hook, every change spoken. ---
-    setupSettings(graph, game);
+    setupSettings(graph, game, teardowns);
 
     // DEBUG (?debug=1): top-down minimap + live audio readout overlay. Dev aid only;
     // dynamically imported so it costs nothing on the normal path.
@@ -646,7 +713,7 @@ startButton.addEventListener('click', async () => {
     // --- Turn control: the compass dial AND keyboard arrows (both drive the same
     // slewed heading, so audio + dial stay in sync). `turnBy` lets the keydown
     // handler nudge the heading; it announces the new heading via the live region. ---
-    const turnBy = setupTurning(game);
+    const turnBy = setupTurning(game, teardowns);
 
     // --- Step buttons ---
     const stepLeft = document.getElementById('step-left') as HTMLButtonElement;
@@ -657,12 +724,25 @@ startButton.addEventListener('click', async () => {
       updateFeet(game); // refresh immediately after a step
     };
     // pointerdown (not click) for tight rhythm response.
-    stepLeft.addEventListener('pointerdown', (e) => { e.preventDefault(); doStep('L'); });
-    stepRight.addEventListener('pointerdown', (e) => { e.preventDefault(); doStep('R'); });
-    // Keyboard controls. A = left step, L = right step; Left/Right arrows turn
+    const onLeft = (e: PointerEvent) => { e.preventDefault(); doStep('L'); };
+    const onRight = (e: PointerEvent) => { e.preventDefault(); doStep('R'); };
+    stepLeft.addEventListener('pointerdown', onLeft);
+    stepRight.addEventListener('pointerdown', onRight);
+    teardowns.push(() => {
+      stepLeft.removeEventListener('pointerdown', onLeft);
+      stepRight.removeEventListener('pointerdown', onRight);
+    });
+    // Leave the current run mid-level and return to the picker. Stops the game
+    // cleanly (stopActiveRun tears down audio + loops) and routes to the picker so
+    // the URL/history reflect it. Announced for eyes-free use.
+    const backToPicker = () => {
+      alert('Leaving the level. Back to level select.');
+      navigate({ screen: 'picker' });
+    };
+    // Keyboard controls. A = left step, D = right step; Left/Right arrows turn
     // (the CRITICAL keyboard-turning fix — without this the game is uncompletable
-    // without a pointer drag); ? or H speaks the controls.
-    window.addEventListener('keydown', (e) => {
+    // without a pointer drag); B = back to level select; ? or H speaks the controls.
+    const onKeyDown = (e: KeyboardEvent) => {
       // While the settings dialog is open it owns the keyboard (its own Escape/Tab/
       // control handlers) — don't let game keys (step/turn/decoy/help/S) leak through.
       if (settingsPanel?.isOpen()) return;
@@ -686,23 +766,34 @@ startButton.addEventListener('click', async () => {
         if (!ended && !game.throwDecoy()) alert('No decoys left.');
       }
       else if (k === 's') settingsPanel?.toggle();
+      else if (k === 'b') backToPicker();
       else if (k === '?' || k === 'h') speakControls();
-    });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    teardowns.push(() => window.removeEventListener('keydown', onKeyDown));
+
+    // In-game "back to level select" button (also reachable via the B key). Visible
+    // + focusable so it works for pointer and keyboard alike.
+    const gameBackBtn = document.getElementById('game-back-to-picker');
+    gameBackBtn?.addEventListener('click', backToPicker);
+    teardowns.push(() => gameBackBtn?.removeEventListener('click', backToPicker));
 
     // --- Clap to hear the room (echo button) ---
-    setupClap(graph, renderer, game, () => { clapsUsed += 1; });
+    setupClap(graph, renderer, game, () => { clapsUsed += 1; }, teardowns);
 
     // Foot display loop: only the expected foot shows while walking; after the
     // player settles (idle ~1.4s) BOTH feet appear so either can lead. Polled so
     // the time-based settle transition happens on its own.
+    let footRaf: number | null = null;
     const footLoop = () => {
       // Advance the audio-only listener glide each frame (no-op when idle), so the
       // HRTF listener + beacon sweep smoothly between footfalls instead of teleporting.
       game.tick();
       updateFeet(game);
-      requestAnimationFrame(footLoop);
+      footRaf = requestAnimationFrame(footLoop);
     };
     footLoop();
+    teardowns.push(() => { if (footRaf != null) cancelAnimationFrame(footRaf); });
     // First-time, in-context mode primer (teaches the verb/goal the FIRST time a
     // player meets a special mode), then the mode-aware objective. The primer is
     // remembered per-mode in onboardingStore so it never re-walls a returning
@@ -780,8 +871,11 @@ function updateFootHints(distance: number) {
  * audio and the visible dial always agree. Keyboard turns are announced (debounced)
  * via the live region so an eyes-free user hears their new heading.
  */
-function setupTurning(game: Game): (delta: number) => void {
+function setupTurning(game: Game, teardowns: Array<() => void>): (delta: number) => void {
   const turnPad = document.getElementById('turn-pad')!;
+  // Clear any compass left by a previous run, so returning to a level doesn't stack
+  // dials in the turn pad.
+  turnPad.replaceChildren();
 
   // Rate-limited heading: the compass sets a TARGET; the actual heading slews
   // toward it at a capped angular speed (physically plausible, and it keeps the
@@ -812,6 +906,7 @@ function setupTurning(game: Game): (delta: number) => void {
   // turn's settle announcement (below) supersedes it when the turn stops.
   let lastT = performance.now();
   let lastDetentSpokenAt = 0;
+  let slewRaf: number | null = null;
   const loop = (now: number) => {
     const dt = Math.min(0.05, (now - lastT) / 1000);
     lastT = now;
@@ -827,9 +922,13 @@ function setupTurning(game: Game): (delta: number) => void {
         say(`Facing ${COMPASS_POINTS[detent]}.`);
       }
     }
-    requestAnimationFrame(loop);
+    slewRaf = requestAnimationFrame(loop);
   };
-  requestAnimationFrame(loop);
+  slewRaf = requestAnimationFrame(loop);
+  teardowns.push(() => {
+    if (slewRaf != null) cancelAnimationFrame(slewRaf);
+    turnPad.replaceChildren();
+  });
 
   // Keyboard turning: nudge the target heading, sync the dial, and announce the
   // new heading after a short idle so a held/repeated key doesn't spam the live
@@ -896,7 +995,7 @@ function speakControls() {
  * single place that applies + persists each pref. Reset clears trainer + daily
  * streak + onboarding/primer flags so first-run onboarding replays.
  */
-function setupSettings(graph: AudioGraph, game: Game) {
+function setupSettings(graph: AudioGraph, game: Game, teardowns: Array<() => void> = []) {
   const host = document.getElementById('settings-screen');
   if (!host) return;
   settingsPanel = mountSettings(host, {
@@ -954,7 +1053,10 @@ function setupSettings(graph: AudioGraph, game: Game) {
       onboarding.clearAll();
     },
   });
-  document.getElementById('open-settings')?.addEventListener('click', () => settingsPanel?.open());
+  const openBtn = document.getElementById('open-settings');
+  const onOpen = () => settingsPanel?.open();
+  openBtn?.addEventListener('click', onOpen);
+  teardowns.push(() => openBtn?.removeEventListener('click', onOpen));
 }
 
 function setupClap(
@@ -962,6 +1064,7 @@ function setupClap(
   renderer: HrtfRenderer,
   game: Game,
   onClap: () => void = () => {},
+  teardowns: Array<() => void> = [],
 ) {
   const clapRoom = new ClapRoom(graph, renderer);
   const listenBtn = document.getElementById('listen') as HTMLButtonElement | null;
@@ -999,7 +1102,7 @@ function setupClap(
     setTimeout(() => alert(budgetIntroAnnouncement(budget.remaining())), 1800);
   }
 
-  listenBtn?.addEventListener('click', () => {
+  const onListen = () => {
     const nowMs = performance.now();
     const res = budget.consume(nowMs);
     if (!res.ok) {
@@ -1028,7 +1131,9 @@ function setupClap(
       alert(clapFiredAnnouncement(budget.remaining(), true));
     }
     refreshClapUi();
-  });
+  };
+  listenBtn?.addEventListener('click', onListen);
+  teardowns.push(() => listenBtn?.removeEventListener('click', onListen));
 
   // --- Moving walls: advance an animation clock, re-derive WALLS, and drive the
   // AMBIENT room IR continuously so you HEAR the space change. The throttle +

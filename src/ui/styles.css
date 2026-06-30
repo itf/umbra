@@ -251,6 +251,12 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   background: transparent; border: 1px solid #555; color: #ccc;
   padding: 8px 12px; font-size: 0.9rem;
 }
+/* In-game "back to level select" control (top-left, mirroring Settings top-right). */
+.game-back {
+  position: absolute; top: 8px; left: 8px; z-index: 5;
+  background: transparent; border: 1px solid #555; color: #ccc;
+  padding: 8px 12px; font-size: 0.9rem;
+}
 /* The settings section, when shown, fixed-overlays everything. */
 #settings-screen:not([hidden]) {
   position: fixed; inset: 0; z-index: 50;
