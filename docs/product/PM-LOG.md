@@ -111,3 +111,9 @@ absorber round-trip bug fix, validate-on-save, autosave+guard. +11 tests (350 to
 - **4C Daily Challenge + streak** (agent `adb19ce8…`): seed-of-the-day + localStorage
   streak + shareable score, spoken. Pure product layer. Touches trainer + a new daily module.
 - Disjoint → parallel. Then **4B Stealth** (evade noise-hunter + decoy) after 4A frees game.ts.
+
+**4A Sonar-budget SHIPPED** (`f977fd0`): spoken clap economy (routed to assertive region),
+out-of-sonar tension, Sonar Vault level. +9 tests +3 e2e (391 unit, 11 e2e).
+- **4C Daily Challenge** still building (agent `adb19ce8…`, trainer/daily.* — held).
+- **4B Stealth mode** dispatched (agent `a9e4034a…`, game.ts/monster + stealth-escape level
+  + throw-a-sound decoy). game.ts freed by 4A. Watch index.ts contention (4B adds a level).
