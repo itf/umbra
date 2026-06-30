@@ -22,7 +22,9 @@ import {
   type Question,
   type ExerciseType,
 } from './exercises';
-import { Staircase, difficultyBand } from './adaptive';
+import { Staircase, difficultyBand, progressAnnouncement } from './adaptive';
+import { DistanceLadder, ladderAnnouncement } from './distanceLadder';
+import { TrainerStore, summarizeProgress } from './trainerStore';
 import { selectBackendFromSearch } from '../engine/steamaudio/toggle';
 import type { SpatialBackend } from '../game/game';
 
@@ -44,6 +46,44 @@ let loadedRoom: 'A' | 'B' | null = null;
  * discrimination threshold. The manual "Fixed — …" picker overrides it.
  */
 const staircase = new Staircase();
+
+/**
+ * Thaler distance ladder for the `distance` exercise: backs the target away in
+ * 33 cm steps once accuracy hits ≥90% over a window. Only consulted when the
+ * selected exercise type is `distance` (it parameterises the near-panel distance).
+ */
+const distanceLadder = new DistanceLadder();
+
+/** Trainer progress persistence (localStorage; degrades to memory). */
+const trainerStore = new TrainerStore();
+/** The exercise type this session is drilling (fixed at Begin). 'all' for mixed. */
+let sessionType = 'all';
+/** Per-session counters folded into a stored session sample on flush. */
+let sessionTrials = 0;
+let sessionCorrect = 0;
+/** Whether this session has produced anything worth persisting yet. */
+let sessionDirty = false;
+/** One-shot returning-user greeting, spoken with the first question. */
+let pendingGreeting = '';
+
+/**
+ * Persist the current sitting as ONE stored session: the first flush appends a
+ * session sample; later flushes UPDATE that same sample in place (so a long
+ * sitting is one session, not one-per-trial). Checkpointing on settle + on unload
+ * means a returning user's "last session" reflects the work they actually did.
+ */
+let sessionRecorded = false;
+function flushSession() {
+  if (!sessionDirty || sessionTrials === 0) return;
+  const sample = { threshold: staircase.threshold(), trials: sessionTrials, correct: sessionCorrect };
+  if (sessionRecorded) {
+    trainerStore.updateLastSession(sessionType, sample);
+  } else {
+    trainerStore.recordSession(sessionType, sample);
+    sessionRecorded = true;
+  }
+  sessionDirty = false;
+}
 
 function announce(msg: string) {
   ($('live') as HTMLElement).textContent = msg;
@@ -127,7 +167,13 @@ function nextQuestion() {
   asked++;
   answered = false;
   loadedRoom = null;
-  current = makeRandomQuestion(seedCounter++, { difficulty: difficulty(), types: typeFilter() });
+  current = makeRandomQuestion(seedCounter++, {
+    difficulty: difficulty(),
+    types: typeFilter(),
+    // Distance ladder feeds the near-panel distance for the `distance` drill in
+    // adaptive mode; ignored by every other exercise.
+    nearDistanceM: fixedDifficulty() === null ? distanceLadder.distance() : undefined,
+  });
   renderQuestion(current);
 }
 
@@ -153,7 +199,11 @@ function renderQuestion(q: Question) {
 
   ($('feedback') as HTMLElement).textContent = '';
   ($('next') as HTMLButtonElement).disabled = true;
-  announce(`Question ${asked}. ${q.prompt} Play the sounds, then choose.`);
+  // A one-shot greeting (returning-user progress) rides along on the first question
+  // so the live region speaks it without a competing announcement clobbering it.
+  const lead = pendingGreeting ? `${pendingGreeting} ` : '';
+  pendingGreeting = '';
+  announce(`${lead}Question ${asked}. ${q.prompt} Play the sounds, then choose.`);
 }
 
 async function playRoom(room: 'A' | 'B') {
@@ -198,6 +248,22 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
   if (adaptive) staircase.record(correct);
   const reversal = adaptive && staircase.reversals > reversalsBefore;
 
+  // Distance-ladder stepping (Thaler 90%-over-window → step back) for the distance
+  // drill in adaptive mode; other types ignore the ladder distance entirely.
+  let ladderNote = '';
+  if (adaptive && current.type === 'distance') {
+    ladderNote = ladderAnnouncement(distanceLadder.record(correct));
+  }
+
+  // Fold into the persisted session sample (adaptive only — fixed practice
+  // shouldn't masquerade as a threshold measurement).
+  if (adaptive) {
+    sessionTrials++;
+    if (correct) sessionCorrect++;
+    sessionDirty = true;
+    if (staircase.settled) flushSession(); // checkpoint once the estimate is stable
+  }
+
   for (const el of Array.from($('answers').children) as HTMLButtonElement[]) {
     el.disabled = true;
     if (el.textContent === current.correctAnswer) el.classList.add('correct');
@@ -221,10 +287,24 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
     progress = ` Fixed level ${difficultyBand(difficulty())}.`;
   }
 
+  // Terse, polite extras for the live region: a reversal turn / streak count
+  // (from the staircase) and any distance-ladder step-back, only in adaptive mode.
+  let extra = '';
+  if (adaptive) {
+    const note = progressAnnouncement({
+      correct,
+      reversal,
+      lastMove: staircase.lastMove,
+      streak: staircase.streak,
+    });
+    if (note) extra += ` ${note}`;
+    if (ladderNote) extra += ` ${ladderNote}`;
+  }
+
   ($('feedback') as HTMLElement).textContent = verdict;
   ($('score') as HTMLElement).textContent = `Score ${score} / ${asked}`;
   ($('next') as HTMLButtonElement).disabled = false;
-  announce(`${verdict} Score ${score} of ${asked}.${progress} Press Next to continue.`);
+  announce(`${verdict} Score ${score} of ${asked}.${extra}${progress} Press Next to continue.`);
   ($('next') as HTMLButtonElement).focus();
 }
 
@@ -270,12 +350,24 @@ function main() {
   // Pre-check the high-fidelity toggle when ?engine=steam is in the URL.
   const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
   if (engineToggle) engineToggle.checked = selectBackendFromSearch(location.search) === 'steam';
+  // Flush the in-progress session sample when the user navigates away/reloads, so
+  // a returning user's "last session" reflects the work they actually did.
+  window.addEventListener('beforeunload', flushSession);
+  window.addEventListener('pagehide', flushSession);
+
   $('begin').addEventListener('click', async () => {
     ($('begin') as HTMLButtonElement).disabled = true;
     announce('Loading audio…');
     await ensurePlayer();
     ($('begin') as HTMLElement).hidden = true;
     ($('drill') as HTMLElement).hidden = false;
+
+    // Greet returning users with their stored progress for this exercise type.
+    const typeSel = $('type') as HTMLSelectElement;
+    sessionType = typeSel.value;
+    const label = typeSel.options[typeSel.selectedIndex].text;
+    pendingGreeting = summarizeProgress(label, trainerStore.get(sessionType));
+
     nextQuestion();
   });
 

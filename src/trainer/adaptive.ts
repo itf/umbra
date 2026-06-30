@@ -50,6 +50,8 @@ export class Staircase {
   private lastDir: 0 | 1 | -1 = 0;
   private consecCorrect = 0;
   private consecIncorrect = 0;
+  /** Consecutive corrects since the last miss (does NOT reset on a step-up). */
+  private streakCount = 0;
   /** Difficulty at each reversal, in order. */
   private reversalDifficulties: number[] = [];
 
@@ -73,6 +75,19 @@ export class Staircase {
     return this.reversalDifficulties.length;
   }
 
+  /** Consecutive correct answers right now (resets to 0 on a miss). */
+  get streak(): number {
+    return this.streakCount;
+  }
+
+  /**
+   * Direction of the LAST move: +1 harder (stepping up), -1 easier (stepping
+   * down), 0 if no move has happened yet. Used to phrase reversal announcements.
+   */
+  get lastMove(): 0 | 1 | -1 {
+    return this.lastDir;
+  }
+
   /** Current step size (shrinks at reversals). */
   get stepSize(): number {
     return this.step;
@@ -86,9 +101,11 @@ export class Staircase {
     if (correct) {
       this.consecCorrect++;
       this.consecIncorrect = 0;
+      this.streakCount++;
     } else {
       this.consecIncorrect++;
       this.consecCorrect = 0;
+      this.streakCount = 0;
     }
 
     let dir: 0 | 1 | -1 = 0;
@@ -133,6 +150,37 @@ export class Staircase {
   get settled(): boolean {
     return this.reversalDifficulties.length >= this.thresholdReversals;
   }
+}
+
+/**
+ * PURE: the extra spoken phrase to append after a verdict, given what just
+ * happened on the staircase. Kept deliberately TERSE so the polite aria-live
+ * region isn't spammed:
+ *
+ *   - On a REVERSAL we announce the turn and its new direction ("Reversal —
+ *     stepping up." / "… stepping down."). Reversals are the meaningful events
+ *     (the staircase bracketing the threshold), so they're always worth a word.
+ *   - Otherwise, on a CORRECT answer, we only call out a streak once it's
+ *     genuinely a streak (≥2 in a row) — "3 in a row." — for intrinsic reward
+ *     without nagging on every single hit.
+ *   - A miss with no reversal says nothing extra (the verdict already covered it).
+ *
+ * `lastMove` is the staircase's direction after recording (+1 harder, -1 easier).
+ */
+export function progressAnnouncement(opts: {
+  correct: boolean;
+  reversal: boolean;
+  lastMove: 0 | 1 | -1;
+  streak: number;
+}): string {
+  if (opts.reversal) {
+    const dir = opts.lastMove > 0 ? 'stepping up' : 'stepping down';
+    return `Reversal — ${dir}.`;
+  }
+  if (opts.correct && opts.streak >= 2) {
+    return `${opts.streak} in a row.`;
+  }
+  return '';
 }
 
 /** Human-readable band for a difficulty/threshold in [0,1]. */

@@ -40,10 +40,10 @@ export function makeRng(seed: number): Rng {
 
 export type ExerciseType =
   | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector'
-  | 'distance' | 'gap' | 'material' | 'metal';
+  | 'distance' | 'gap' | 'material' | 'metal' | 'orientation';
 
 export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector', 'distance', 'material', 'metal'];
-export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction', 'gap'];
+export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction', 'gap', 'orientation'];
 
 export type Direction = 'forward' | 'behind' | 'left' | 'right';
 
@@ -66,6 +66,13 @@ export interface Question {
 export interface GenOptions {
   /** 0 = easiest (big contrast) .. 1 = hardest (subtle contrast). */
   difficulty?: number;
+  /**
+   * DISTANCE ladder (Thaler): listener-to-nearer-target distance in metres. When
+   * set, the `distance` exercise places its NEAR panel this far away (and the far
+   * panel proportionally beyond), so backing away with mastery shrinks the cue —
+   * the adaptive 33→66→99 cm progression. Ignored by other exercises.
+   */
+  nearDistanceM?: number;
 }
 
 // --- Difficulty helpers ------------------------------------------------------
@@ -462,6 +469,104 @@ function genReflector(rng: Rng, difficulty: number): Question {
   };
 }
 
+// --- 4-way orientation classification (Thaler plank task) --------------------
+
+/**
+ * The four panel orientations from Thaler's orientation-perception task: judge a
+ * plank as VERTICAL / 45° / 135° / HORIZONTAL — a 4-alternative forced choice,
+ * harder than the A/B reflector drill.
+ *
+ * `tiltDeg` is the panel's tilt about its horizontal (left-right) axis, measured
+ * from upright: 0° = a wall facing you, 90° = lying flat (floor/ceiling-like).
+ * 45° tips the top toward you; 135° tips it away (past flat). Different tilts aim
+ * the clap's specular reflection at different elevations (up vs back vs down), the
+ * engine-supported acoustic cue that distinguishes them.
+ */
+export type Orientation = 'vertical' | '45' | '135' | 'horizontal';
+
+export const ORIENTATIONS: { key: Orientation; label: string; tiltDeg: number }[] = [
+  { key: 'vertical', label: 'Vertical', tiltDeg: 0 },
+  { key: '45', label: '45 degrees', tiltDeg: 45 },
+  { key: '135', label: '135 degrees', tiltDeg: 135 },
+  { key: 'horizontal', label: 'Horizontal', tiltDeg: 90 },
+];
+
+const ORIENTATION_CHOICES = ORIENTATIONS.map((o) => o.label);
+
+/**
+ * PURE scoring: map a chosen label back to its Orientation key and compare to the
+ * truth. Returns whether the pick is exactly correct (4AFC: only the exact class
+ * counts — no partial credit), so chance is 25%, distinctly harder than A/B's 50%.
+ */
+export function classifyOrientation(chosenLabel: string, truth: Orientation): boolean {
+  const picked = ORIENTATIONS.find((o) => o.label === chosenLabel)?.key;
+  return picked === truth;
+}
+
+/**
+ * Build a ~1 m square panel directly ahead of the listener (engine front = -z),
+ * tilted about its left-right (x) axis by `tiltDeg` from upright. Double-sided so
+ * it reflects regardless of tilt. The panel's centre stays at ear height; only the
+ * face's elevation changes, so distance/direction are held constant and the ONLY
+ * varying cue is the reflection's elevation — a fair 4-way discrimination.
+ */
+function makeTiltedPanel(
+  listener: [number, number, number],
+  distAhead: number,
+  tiltDeg: number,
+  material: keyof typeof MATERIALS,
+  sizeM = 1,
+): WallDef[] {
+  const h = sizeM / 2;
+  const [lx, ly, lz] = listener;
+  const cx = lx;
+  const cz = lz - distAhead; // straight ahead (front = -z)
+  const t = (tiltDeg * Math.PI) / 180;
+  // Width axis: left-right (x). Height axis: tilts in the z-y plane. At tilt 0 the
+  // up axis is +y (upright wall); at tilt 90 it lies flat (up axis along z).
+  const upY = Math.cos(t);
+  const upZ = Math.sin(t);
+  const vert = (sx: number, sUp: number): [number, number, number] =>
+    [cx + sx, ly + sUp * upY, cz + sUp * upZ];
+  return [{
+    verts: [vert(-h, -h), vert(h, -h), vert(h, h), vert(-h, h)],
+    absorption: [...MATERIALS[material]],
+    doubleSided: true,
+  }];
+}
+
+function genOrientation(rng: Rng, difficulty: number): Question {
+  const roomSize: [number, number, number] = [16, 4, 16];
+  const center: [number, number, number] = [8, 1.6, 8];
+  const faint = allMat('acoustic_foam');
+
+  // Panel close so its tilted reflection is the dominant early cue. Harder
+  // difficulty pulls it slightly farther (cue weaker), keeping a gentle ramp.
+  const dist = contrast(difficulty, 1.6, 2.6);
+  const chosen = ORIENTATIONS[Math.floor(rng() * ORIENTATIONS.length) % ORIENTATIONS.length];
+
+  const sceneA: Scene = {
+    id: 'orientation',
+    title: 'Orientation',
+    description: 'Clap and judge the tilt of the panel ahead.',
+    listener: center,
+    roomSize,
+    materials: faint, // big absorbent room → no size cue, just the panel echo
+    extraWalls: makeTiltedPanel(center, dist, chosen.tiltDeg, 'concrete'),
+    sources: [{ pos: center, kind: 'clap', label: 'clap' }],
+    maxOrder: 1,
+  };
+
+  return {
+    type: 'orientation',
+    id: '',
+    prompt: 'How is the panel ahead TILTED? Clap and classify: vertical, 45°, 135°, or horizontal.',
+    choices: ORIENTATION_CHOICES,
+    correctAnswer: chosen.label,
+    sceneA,
+  };
+}
+
 // --- Distance-to-wall (echo DELAY → distance) --------------------------------
 
 /**
@@ -480,13 +585,15 @@ function genReflector(rng: Rng, difficulty: number): Question {
  * faint and far-off, and the discriminating hard concrete panel (double-sided)
  * stands out. Both panels straight ahead so direction is held constant.
  */
-function genDistance(rng: Rng, difficulty: number): Question {
+function genDistance(rng: Rng, difficulty: number, opts: GenOptions = {}): Question {
   const roomSize: [number, number, number] = [16, 4, 16];
   const center: [number, number, number] = [8, 1.6, 8];
   const faint = allMat('acoustic_foam');
 
   // Near wall close-ish; far wall = near * ratio. Ratio big when easy → ~1 hard.
-  const near = 1.5;
+  // The DISTANCE LADDER (Thaler) backs the near panel away (33→66→99 cm…) via
+  // `nearDistanceM`; clamped so the far panel still fits in the 16 m room.
+  const near = Math.max(0.5, Math.min(6, opts.nearDistanceM ?? 1.5));
   const ratio = contrast(difficulty, 2.0, 1.3); // far/near distance ratio
   const far = near * ratio;
 
@@ -582,7 +689,7 @@ function genGap(rng: Rng, difficulty: number): Question {
 
 // --- Entry point -------------------------------------------------------------
 
-const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Question> = {
+const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number, opts: GenOptions) => Question> = {
   larger: genLarger,
   wider: genWider,
   longer: genLonger,
@@ -594,10 +701,11 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number) => Questio
   gap: genGap,
   material: genMaterial,
   metal: genMetal,
+  orientation: genOrientation,
 };
 
 /** Single-scene exercises (one room, play once) rather than A/B. */
-export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap'];
+export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap', 'orientation'];
 
 /**
  * Build a question of the given type, deterministic in `seed`. Same (type, seed,
@@ -605,7 +713,7 @@ export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap'];
  */
 export function makeQuestion(type: ExerciseType, seed: number, opts: GenOptions = {}): Question {
   const rng = makeRng(seed);
-  const q = GENERATORS[type](rng, opts.difficulty ?? 0);
+  const q = GENERATORS[type](rng, opts.difficulty ?? 0, opts);
   q.id = `${type}-${seed >>> 0}`;
   return q;
 }
