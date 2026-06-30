@@ -60,3 +60,19 @@ easy→hard material-ID ladder + "which wall is metal" drill, +10 tests (328 tot
 **#1 Accessibility** still building (agent `a56c898f…`); its files (index.html,
 beaconSounds.ts, game.ts, heading.ts, main.ts, tests/heading.test.ts) held uncommitted
 until it finishes, then commit + run full suite + playtest-review meeting.
+
+### Cycle 2 — Build COMPLETE
+- **#1 Accessibility SHIPPED** (`006e625`): keyboard turning [the gate], warmer cue,
+  win chime, help key. +21 tests. 339 total.
+- **#2 Materials SHIPPED** (`5066fe2`).
+- Playtest-review meeting held (`meetings/2026-06-29-cycle2-playtest-review.md`).
+
+### Cycle 3 — Build (in progress, 2 parallel agents)
+- **3A Editor authoring** (agent `a2833af0…`, USER PRIORITY): fix absorber silent-hide
+  bug, goal-mode selector, clap-budget fields, primary-beacon badge, absorber-patch tool,
+  validate-on-save, autosave+guard. Touches editor/* + schema.
+- **3B Trainer progression** (agent `a5f3dc5c…`): persist sessions (localStorage),
+  announce reversals/streaks, Thaler adaptive distance ladder + 4-way orientation drill.
+  Touches trainer/*.
+- Disjoint → parallel-safe. Then **3C** e2e smoke harness (keyboard completion path +
+  absorber mode). Commit each on green; reconvene for Cycle-3 review.
