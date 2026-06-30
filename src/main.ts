@@ -26,6 +26,7 @@ import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
+import { companionLine, modeForLevel, type CompanionEvent, type CompanionContext } from './game/companion';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
@@ -52,6 +53,23 @@ if (engineToggle) {
 }
 
 const onboarding = new OnboardingStore();
+
+// Companion-voice preference. OPTIONAL + remembered: defaults ON for first-timers
+// (stored pref), but `?companion=off` / `?companion=on` overrides AND persists the
+// choice — a clean way for 6C's settings UI (or a URL) to flip it. `setCompanion`
+// is the single enable/disable others can call.
+function setCompanion(on: boolean) {
+  onboarding.setCompanionEnabled(on);
+}
+{
+  const param = new URLSearchParams(location.search).get('companion');
+  if (param === 'off') setCompanion(false);
+  else if (param === 'on') setCompanion(true);
+}
+/** Whether the companion voice is currently enabled (URL param + stored pref). */
+function companionEnabled(): boolean {
+  return onboarding.companionEnabled();
+}
 
 // Session L/R channel swap (from calibration / persisted preference). Inverts the
 // master output channels for the whole session by inserting a crossed
@@ -82,6 +100,74 @@ function say(msg: string) {
 }
 function alert(msg: string) {
   alertsEl.textContent = msg;
+}
+
+/**
+ * A thin, DOM-bound adapter over the pure companion module (companion.ts). It
+ * maps game events to spoken lines and enforces everything the pure module
+ * deliberately doesn't: it's a NO-OP when the companion is disabled; it
+ * rate-limits/dedupes (progress only on a band CHANGE, one line per event); it
+ * rotates the line variety with a per-event call counter (the deterministic
+ * `seed`); and it NEVER clobbers a critical announcement — urgent/critical lines
+ * are spoken on a short delay AFTER the game's own assertive cue (win/caught/
+ * heard) so the companion augments rather than overwrites it. Most lines ride the
+ * polite #status region via say(); urgent stealth lines ride assertive alert().
+ */
+function makeCompanion(mode: ReturnType<typeof modeForLevel>) {
+  // Per-event rotation counters → deterministic, non-repeating variety.
+  const seeds: Partial<Record<CompanionEvent, number>> = {};
+  let lastBand = -1;
+  let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const speak = (line: string, urgent: boolean) => {
+    if (urgent) alert(line);
+    else say(line);
+  };
+
+  /**
+   * Speak a companion line for `event`, if enabled and one exists. `urgent`
+   * routes to the assertive region; `afterCriticalMs` delays the line so the
+   * game's own critical announcement (already fired by the caller) lands first
+   * and isn't clobbered.
+   */
+  const fire = (
+    event: CompanionEvent,
+    ctx: CompanionContext = {},
+    opts: { urgent?: boolean; afterCriticalMs?: number } = {},
+  ) => {
+    if (!companionEnabled()) return;
+    const seed = seeds[event] ?? 0;
+    const line = companionLine(mode, event, { ...ctx, seed });
+    if (line == null) return;
+    seeds[event] = seed + 1; // rotate next time this event fires
+    const urgent = opts.urgent ?? false;
+    if (opts.afterCriticalMs && opts.afterCriticalMs > 0) {
+      if (pendingTimer != null) clearTimeout(pendingTimer);
+      pendingTimer = setTimeout(() => speak(line, urgent), opts.afterCriticalMs);
+    } else {
+      speak(line, urgent);
+    }
+  };
+
+  return {
+    /** Objective framing at level start (polite). */
+    start: () => fire('start'),
+    /**
+     * Progress milestone. DEDUPED: only speaks when the coarse closeness band
+     * actually changes (not per step). Polite.
+     */
+    progress: (band: number) => {
+      if (band === lastBand) return;
+      lastBand = band;
+      fire('progress', { band });
+    },
+    /** Arrival line — sequenced AFTER the win alert so it doesn't clobber it. */
+    win: () => fire('win', {}, { afterCriticalMs: 1200 }),
+    /** Caught line — sequenced after the caught alert. */
+    caught: () => fire('caught', {}, { afterCriticalMs: 1200 }),
+    /** Urgent stealth "it heard you" — assertive, after the game's own cue. */
+    heard: () => fire('heard', {}, { urgent: true, afterCriticalMs: 900 }),
+  };
 }
 
 // Default level: a 8×10 m room; start at one end, beacon at the far end. If the
@@ -344,6 +430,10 @@ startButton.addEventListener('click', async () => {
     };
     // Throttle the "You were heard!" cue (loud floors fire it on every step).
     let lastHeardMs = -Infinity;
+    // The OPTIONAL companion-voice adapter for THIS level's mode. A no-op when the
+    // companion preference is off (checked per-fire), so the game behaves exactly
+    // as before when disabled — it only ever AUGMENTS the existing cues below.
+    const companion = makeCompanion(modeForLevel(LEVEL));
     const game = new Game(graph, renderer, LEVEL, {
       onStep: (foot, stride) =>
         say(`Step ${foot === 'L' ? 'left' : 'right'} (${stride.toFixed(2)} m).`),
@@ -364,11 +454,14 @@ startButton.addEventListener('click', async () => {
           : LEVEL.goal === 'escape'
             ? 'You slipped past — escaped!'
             : 'You reached the beacon. Level complete!');
+        // Companion arrival line — sequenced AFTER the win alert (never clobbers it).
+        companion.win();
       },
       onCaught: () => {
         // The monster physically reached you — a loss, distinct from a win.
         endRun('caught');
         alert('A monster caught you. Press start to try again.');
+        companion.caught();
       },
       // Stealth feedback: the player made a noise loud enough to be heard. Assertive
       // so it cuts through routine step chatter. Throttled so a loud floor doesn't
@@ -379,6 +472,8 @@ startButton.addEventListener('click', async () => {
         if (now - lastHeardMs < 1500) return;
         lastHeardMs = now;
         alert('You were heard!');
+        // Urgent companion follow-up, sequenced after the assertive cue above.
+        companion.heard();
       },
       // The decoy verb landed: announce it (eyes-free), with remaining budget when limited.
       onDecoy: (remaining) => {
@@ -387,7 +482,12 @@ startButton.addEventListener('click', async () => {
           : '';
         alert(`Decoy thrown.${left}`);
       },
-      onProgress: (d) => updateFootHints(d),
+      onProgress: (d) => {
+        updateFootHints(d);
+        // Companion milestone, keyed to the SAME coarse band as the status hint
+        // (deduped to band changes, so it's not per-step). 0=almost…3=far.
+        companion.progress(companionBand(d));
+      },
     }, undefined, steam, interpRenderer);
 
     // DEBUG (?debug=1): top-down minimap + live audio readout overlay. Dev aid only;
@@ -481,6 +581,10 @@ startButton.addEventListener('click', async () => {
     } else {
       say('Walk to the beacon ahead. Alternate left and right steps — and don\'t rush.');
     }
+    // Companion objective-framing line, AFTER the plain objective above so it
+    // augments (and doesn't clobber) it. No-op when the companion is disabled.
+    // A short delay lets the objective land first in the polite region.
+    setTimeout(() => companion.start(), 1400);
   } catch (err) {
     console.error(err);
     alert('Could not start audio: ' + (err as Error).message);
@@ -508,10 +612,18 @@ function updateFeet(game: Game) {
   r.classList.toggle('active', rightShown);
 }
 
+/**
+ * Coarse closeness band for distance (0 almost…3 far). Shared by the status hint
+ * and the companion so the two agree about "how close" the player is.
+ */
+function companionBand(distance: number): number {
+  return distance < 1 ? 0 : distance < 3 ? 1 : distance < 6 ? 2 : 3;
+}
+
 /** Announce closing distance at coarse thresholds (eyes-free progress feedback). */
 let lastBand = -1;
 function updateFootHints(distance: number) {
-  const band = distance < 1 ? 0 : distance < 3 ? 1 : distance < 6 ? 2 : 3;
+  const band = companionBand(distance);
   if (band !== lastBand) {
     lastBand = band;
     const labels = ['Almost there', 'Close', 'Getting closer', 'Far'];

@@ -9,6 +9,13 @@
 export const CALIBRATION_DONE_KEY = 'ps.onboarding.calibrationDone';
 export const TUTORIAL_DONE_KEY = 'ps.onboarding.tutorialDone';
 export const SWAP_KEY = 'ps.onboarding.swapLR';
+/**
+ * Companion-voice preference. The optional spoken "guide" (companion.ts) is
+ * OPT-IN-but-default-ON for first-timers; some players want pure acoustics, so
+ * it MUST be toggleable and the choice remembered. Stored separately from the
+ * onboarding "done" flags so 6C's settings UI can flip it cleanly.
+ */
+export const COMPANION_KEY = 'ps.onboarding.companion';
 
 /**
  * Per-mode first-time primers. Each special mode (absorber, sonar-budget,
@@ -90,6 +97,21 @@ export class OnboardingStore {
   }
   setSwap(on: boolean) {
     this.setFlag(SWAP_KEY, on);
+  }
+
+  /**
+   * Companion-voice on/off. DEFAULTS TO ON when the player has never expressed a
+   * preference (no stored key) — first-timers get the guide, but it's fully
+   * toggleable and, once set, remembered. Returns the stored choice otherwise.
+   */
+  companionEnabled(): boolean {
+    const v = this.read(COMPANION_KEY);
+    if (v == null) return true; // unset ⇒ default ON for first-timers
+    return v === '1';
+  }
+  /** Set + remember the companion-voice preference (6C's settings toggle calls this). */
+  setCompanionEnabled(on: boolean) {
+    this.setFlag(COMPANION_KEY, on);
   }
 
   /** Has this mode's first-time primer already been shown? */
