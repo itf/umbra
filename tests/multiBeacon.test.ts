@@ -217,4 +217,32 @@ d('Game multi-beacon construction (OfflineAudioContext)', () => {
     game.setAmbientModulation('nope', 0.4, 600); // unknown id is a no-op (no throw)
     game.destroy();
   });
+
+  it('reaction events: react() while active scores a HIT, drives modulation + transients', () => {
+    const { graph, renderer } = makeGraph();
+    const lvl: Level = {
+      ...emptyLevel('react'),
+      beacons: [],
+      winPoint: { x: 6, z: 2 },
+      ambience: [{ id: 'fountain', x: 3, z: 5, sound: 'fountain', gain: 1 }],
+      events: [{ id: 'e1', type: 'crossing', sourceId: 'fountain', start: 1, end: 3 }],
+      requiredReactions: 1,
+    };
+    let outcome: string | null = null;
+    const game = new Game(graph, renderer, loadLevel(lvl).game, {
+      onReaction: (o) => { outcome = o; },
+    });
+    const base = (graph.ctx.currentTime * 1000);
+    // Before the window: a press is a false alarm.
+    expect(game.react(base + 0)).toBe('false-alarm');
+    // Drive tick into the active window (start transient + duck applied), then react.
+    game.tick(base + 2000);
+    expect(game.react(base + 2000)).toBe('hit');
+    expect(outcome).toBe('hit');
+    expect(game.reactionScore().hits).toBe(1);
+    // Tick past the window end → the source restores (no throw); miss count stays 0.
+    game.tick(base + 3500);
+    expect(game.reactionScore().misses).toBe(0);
+    game.destroy();
+  });
 });

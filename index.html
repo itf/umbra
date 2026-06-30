@@ -84,6 +84,10 @@
         <!-- Echo: small button between the compass and the feet. -->
         <button id="listen" class="listen" aria-label="Listen — clap to hear the room">echo</button>
 
+        <!-- React: press when you DETECT a reaction event (a crossing / a door).
+             Hidden unless the level has events; shown by main.ts. Also the R key. -->
+        <button id="react" class="listen" type="button" hidden aria-label="React — press when you detect an event (press R)">React</button>
+
         <div class="step-row">
           <!-- LEFT foot, matching the reference: big toe on the INNER edge (left of
                this graphic), toes descending outward to the right, a smooth full

@@ -12,6 +12,7 @@
 import type { MATERIALS } from '../engine/acoustics/materials';
 import type { BeaconPreset } from '../game/beaconSounds';
 import { resolveBeaconPreset } from '../game/beaconSounds';
+import type { ReactionEvent } from '../game/events';
 
 export type MaterialName = keyof typeof MATERIALS;
 
@@ -288,6 +289,18 @@ export interface Level {
    * like beacons but never win targets. Absent ⇒ none (back-compat). See game.ts.
    */
   ambience?: AmbientSource[];
+  /**
+   * REACTION EVENTS (Part C) — timed events the player must react to (press the
+   * react key while active). Each names an ambient source it modulates. Absent ⇒
+   * none. The pure timing/scoring model is src/game/events.ts.
+   */
+  events?: ReactionEvent[];
+  /**
+   * Win gate for reaction levels: require at least this many HITS to win (in
+   * addition to reaching the win area). Absent ⇒ reacting is scored but not gated
+   * (reaching the area alone wins). See game.ts.
+   */
+  requiredReactions?: number;
 
   start: StartPoint;
   beacons: BeaconObj[];
@@ -329,6 +342,7 @@ export function isLevel(v: unknown): v is Level {
   if (!Array.isArray(l.ceilings)) l.ceilings = [];
   if (!Array.isArray(l.absorbers)) l.absorbers = [];
   if (!Array.isArray(l.ambience)) l.ambience = [];
+  if (l.events != null && !Array.isArray(l.events)) l.events = [];
   // Back-fill beacon sound preset: beacons with no `sound` get DEFAULT_BEACON_PRESET.
   if (Array.isArray(l.beacons)) {
     for (const b of l.beacons as BeaconObj[]) {

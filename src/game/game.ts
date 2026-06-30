@@ -15,6 +15,7 @@ import { Footsteps, type StepRoomCtx } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
 import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
+import { ReactionScorer, type ReactionEvent, type ReactionScore } from './events';
 import {
   makeMonster,
   updateMonster,
@@ -76,6 +77,14 @@ export interface GameLevel {
    * event can occlude/leak a named source. See Part B/C.
    */
   ambience?: AmbientSpec[];
+  /**
+   * REACTION EVENTS (Part C) — timed events to react to. Driven from tick(); each
+   * occludes ('crossing') or leaks ('door') its named ambient source while active and
+   * plays a transient at start/end. Scored via the pure ReactionScorer. Empty ⇒ none.
+   */
+  events?: ReactionEvent[];
+  /** Win gate: minimum HITS required to win (with reaching the area). 0/undefined ⇒ ungated. */
+  requiredReactions?: number;
   /**
    * DECOUPLED WIN TARGET — the place to reach to win in normal ('beacon') mode,
    * independent of any beacon. Absent ⇒ defaults to `beacons[0]` (today's
@@ -213,6 +222,17 @@ export interface GameCallbacks {
   onHeard?: (event: NoiseEvent) => void;
   /** Fired when a decoy is thrown (for the spoken "Decoy thrown." cue + budget). */
   onDecoy?: (remaining: number) => void;
+  /**
+   * Fired on each react() press with its signal-detection outcome (Part C), so the
+   * host can speak "Detected." / "False alarm." (eyes-free). 'ignored' = a redundant
+   * press during an already-credited event (no cue needed).
+   */
+  onReaction?: (outcome: 'hit' | 'false-alarm' | 'ignored', score: ReactionScore) => void;
+  /**
+   * Fired when a reaction event ENDS with no press (a MISS), so the host can speak
+   * "Missed one." Part C.
+   */
+  onMissed?: (score: ReactionScore) => void;
 }
 
 export class Game {
@@ -296,6 +316,15 @@ export class Game {
     /** Duck/leak lowpass (high cutoff = normal/bright; low = muffled). */
     lp: BiquadFilterNode;
   }[] = [];
+  /**
+   * Reaction mechanic (Part C). The pure scorer + the set of event ids currently in
+   * their active window (to apply modulation/transients on the rising/falling edge)
+   * and the set already finalized as MISS (to fire onMissed once). Inert when the
+   * level has no events.
+   */
+  private readonly reaction: ReactionScorer;
+  private reactionActive = new Set<string>();
+  private reactionMissed = new Set<string>();
   /** True once the game has ended, to veto late-arriving custom-audio loops. */
   private get ended() { return this.won || this.caught; }
   /** ms timestamp of the previous tick, for per-frame dt. */
@@ -342,6 +371,7 @@ export class Game {
       this.footsteps.setRoom(this.footstepRoom);
     }
     this.noise = new NoiseTracker(cb.onNoise);
+    this.reaction = new ReactionScorer(level.events ?? []);
     this.audioYaw = level.start.yaw;
     // The glide sink applies an interpolated x/z (with the current audioYaw) to the
     // HRTF listener and repositions the beacon — the actual per-frame audio update.
@@ -719,7 +749,142 @@ export class Game {
       const p = this.glide.current;
       this.refreshBeacon(p.x, p.z);
     }
+    this.tickReactions(nowMs);
     this.tickMonsters(nowMs);
+  }
+
+  /**
+   * Drive the reaction events off the elapsed level clock: on an event's RISING edge
+   * apply its occlusion/leak to the named ambient source + play its start transient;
+   * on the FALLING edge restore the source + play the end transient; and finalize
+   * any passed-by event as a MISS (spoken once). Inert when the level has no events.
+   */
+  private tickReactions(nowMs: number) {
+    const events = this.level.events;
+    if (!events || events.length === 0 || this.ended) return;
+    const t = Math.max(0, (nowMs - this.startMs) / 1000);
+    this.reaction.advance(t);
+    // Edge-detect active windows to fire start/end audio exactly once.
+    const nowActive = new Set<string>();
+    for (const e of events) {
+      if (t >= e.start && t < e.end) nowActive.add(e.id);
+    }
+    for (const e of events) {
+      const wasActive = this.reactionActive.has(e.id);
+      const isActive = nowActive.has(e.id);
+      if (isActive && !wasActive) this.onEventStart(e);
+      else if (!isActive && wasActive) this.onEventEnd(e);
+    }
+    this.reactionActive = nowActive;
+    // Fire onMissed once per newly-finalized miss.
+    const sc = this.reaction.score();
+    if (sc.misses > this.reactionMissed.size) {
+      // Find which events are now missed (not active, ended, never hit). We can't see
+      // the scorer's internals, so just announce per new miss using the count delta.
+      const newMisses = sc.misses - this.reactionMissed.size;
+      for (let i = 0; i < newMisses; i++) {
+        this.reactionMissed.add(`miss-${this.reactionMissed.size}`);
+        this.cb.onMissed?.(sc);
+      }
+    }
+  }
+
+  /**
+   * An event's active window OPENED: 'crossing' DUCKS + muffles its source (a body
+   * passes between you and it) and plays a moving pass-by swoosh; 'door' OPENS so its
+   * source LEAKS (louder + brighter) and plays a click/creak. Audio-only; ear-verified.
+   */
+  private onEventStart(e: ReactionEvent) {
+    if (e.type === 'crossing') {
+      this.setAmbientModulation(e.sourceId, 0.35, 700); // duck + muffle (occluded)
+      this.playPassBy(e.sourceId);
+    } else {
+      this.setAmbientModulation(e.sourceId, 1.6, 18000); // leak louder + brighter
+      this.playDoorClick(this.ambientPos(e.sourceId), true);
+    }
+  }
+
+  /** An event's window CLOSED: restore the source to normal + play the end transient. */
+  private onEventEnd(e: ReactionEvent) {
+    this.setAmbientModulation(e.sourceId, 1, 18000); // back to normal
+    if (e.type === 'door') this.playDoorClick(this.ambientPos(e.sourceId), false);
+  }
+
+  /** World xz of a named ambient source (for placing a transient), or the listener. */
+  private ambientPos(id: string): { x: number; z: number } {
+    const a = this.ambience.find((e) => e.spec.id === id);
+    return a ? { x: a.spec.x, z: a.spec.z } : { x: this.player.state.x, z: this.player.state.z };
+  }
+
+  /**
+   * REACT — the player pressed the react key/button. Scores the press against the
+   * active events (hit / false-alarm / ignored) and reports it for a spoken cue.
+   * No-op once the run has ended. Returns the outcome.
+   */
+  react(nowMs = this.graph.ctx.currentTime * 1000): 'hit' | 'false-alarm' | 'ignored' {
+    if (this.ended) return 'ignored';
+    const t = Math.max(0, (nowMs - this.startMs) / 1000);
+    const outcome = this.reaction.press(t);
+    this.cb.onReaction?.(outcome, this.reaction.score());
+    return outcome;
+  }
+
+  /** The current reaction tally (Part C). */
+  reactionScore(): ReactionScore {
+    return this.reaction.score();
+  }
+
+  /**
+   * A faint pass-by SWOOSH at the source — a short filtered-noise whoosh, panned to
+   * the source's direction via a transient HrtfSource. The DETECTION CUE rides mostly
+   * on the occlusion dip; this is the subtle physical "something moved past" hint.
+   */
+  private playPassBy(sourceId: string) {
+    const ctx = this.graph.ctx;
+    const pos = this.ambientPos(sourceId);
+    const src = this.makePositionedSource();
+    src.setPosition(pos.x, this.headHeight, pos.z);
+    const t = ctx.currentTime;
+    const n = Math.floor(ctx.sampleRate * 0.6);
+    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1);
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(900, t);
+    bp.frequency.exponentialRampToValueAtTime(1800, t + 0.5);
+    bp.Q.value = 1.2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.25, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+    noise.connect(bp).connect(g).connect(src.input);
+    noise.start(t);
+    noise.stop(t + 0.6);
+    noise.onended = () => { try { src.teardown(); } catch { /* noop */ } };
+  }
+
+  /** A short door click/creak transient at the source position (open vs close pitch). */
+  private playDoorClick(pos: { x: number; z: number }, opening: boolean) {
+    const ctx = this.graph.ctx;
+    const src = this.makePositionedSource();
+    src.setPosition(pos.x, this.headHeight, pos.z);
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    const f0 = opening ? 220 : 180;
+    osc.frequency.setValueAtTime(f0, t);
+    osc.frequency.exponentialRampToValueAtTime(f0 * (opening ? 1.4 : 0.6), t + 0.12);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    osc.connect(g).connect(src.input);
+    osc.start(t);
+    osc.stop(t + 0.2);
+    osc.onended = () => { try { src.teardown(); } catch { /* noop */ } };
   }
 
   /**
@@ -1096,7 +1261,11 @@ export class Game {
   private checkWin() {
     const t = this.winTarget();
     const d = this.player.distanceTo(t.x, t.z);
-    if (d <= this.level.goalRadius && !this.won) {
+    // Reaction gate: a level with `requiredReactions` only wins once that many HITS
+    // are scored AND the player is in the win area. 0/undefined ⇒ ungated.
+    const need = this.level.requiredReactions ?? 0;
+    const reactionsMet = need <= 0 || this.reaction.score().hits >= need;
+    if (d <= this.level.goalRadius && reactionsMet && !this.won) {
       this.won = true;
       // Fade ALL beacons out on win.
       const ft = this.graph.ctx.currentTime;

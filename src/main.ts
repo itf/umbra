@@ -746,6 +746,13 @@ startButton.addEventListener('click', async () => {
         // (deduped to band changes, so it's not per-step). 0=almost…3=far.
         companion.progress(companionBand(d));
       },
+      // Reaction mechanic (Part C): spoken, eyes-free signal-detection feedback.
+      onReaction: (outcome) => {
+        if (outcome === 'hit') alert('Detected.');
+        else if (outcome === 'false-alarm') alert('False alarm.');
+        // 'ignored' (a redundant press) is intentionally silent.
+      },
+      onMissed: () => alert('Missed one.'),
     }, undefined, steam, interpRenderer, { levelId, clapsUsed: () => clapsUsed });
 
     // Expose the running game + its engine state for the live Settings "Apply now"
@@ -841,6 +848,7 @@ startButton.addEventListener('click', async () => {
         // (and a spoken cue) when out of decoys; announcement is via onDecoy.
         if (!ended && !game.throwDecoy()) alert('No decoys left.');
       }
+      else if (k === 'r') { if (!ended) game.react(); }
       else if (k === 's') settingsPanel?.toggle();
       else if (k === 'b') backToPicker();
       else if (k === '?' || k === 'h') speakControls();
@@ -866,6 +874,16 @@ startButton.addEventListener('click', async () => {
     const gameBackBtn = document.getElementById('game-back-to-picker');
     gameBackBtn?.addEventListener('click', backToPicker);
     teardowns.push(() => gameBackBtn?.removeEventListener('click', backToPicker));
+
+    // --- React button (Part C): visible only when the level has reaction events.
+    const reactBtn = document.getElementById('react') as HTMLButtonElement | null;
+    if (reactBtn) {
+      const hasEvents = (SRC_LEVEL?.events?.length ?? 0) > 0;
+      reactBtn.hidden = !hasEvents;
+      const onReact = () => { if (!ended) game.react(); };
+      reactBtn.addEventListener('click', onReact);
+      teardowns.push(() => reactBtn.removeEventListener('click', onReact));
+    }
 
     // --- Clap to hear the room (echo button) ---
     setupClap(graph, renderer, game, () => { clapsUsed += 1; }, teardowns);
