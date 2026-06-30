@@ -15,12 +15,15 @@ echoes of the room around you.
 
 It has two intertwined goals:
 
-1. **A game** — walk to the beacon through rooms and (eventually) past hazards,
-   using the signature step-by-step movement that made the original special.
+1. **A game** — move through rooms using the signature step-by-step movement that
+   made the original special, across **four modes**: walk to a beacon, hunt down a
+   sound-absorbing dead spot, map a space with a limited "sonar" clap budget, or
+   sneak past noise-hunting monsters to an exit.
 2. **An echolocation trainer** — practice estimating the size of a room from its
    echoes, judging materials by how they reflect sound, and locating objects by
    their reflections. The acoustics are physically modeled, so what you learn
-   transfers to how real spaces sound.
+   transfers to how real spaces sound. A **daily challenge** and **streak** keep
+   you coming back.
 
 It runs in any modern browser, installs as an app (PWA), and works offline.
 
@@ -56,14 +59,29 @@ playing:
 Both are skippable, remembered so they don't repeat, and replayable any time from
 the picker. See [`docs/onboarding.md`](onboarding.md).
 
+A **companion voice** (optional, toggleable) frames each level's goal when you
+start and reacts as you play — getting warmer, a near miss, a win — adapting its
+lines to the level's mode. A **settings panel** lets you set master volume, toggle
+the companion and the "getting warmer" proximity cue, swap left/right channels, and
+reset your progress — all spoken and keyboard-operable.
+
+### The four game modes
+- **Beacon** — the classic: a beacon pulses somewhere ahead; navigate to it to win.
+- **Absorber** — find the **dead spot**: a patch of wall that swallows sound. Clap
+  and move toward where the echo goes quiet.
+- **Sonar** — flash echolocation with a **limited clap budget**; spend your claps
+  wisely to map the space and reach the goal.
+- **Stealth** — reach the **exit** uncaught, evading monsters that hunt the last
+  place you made noise (see below).
+
 ### Play the game
 - Put on headphones and **choose a level** from the picker on the start screen. It
-  lists a set of **bundled demo levels** — a curated tour of the engine (small vs.
-  large rooms, dead vs. live surfaces, a sliding door you hear open, a beacon
-  garden, a monster cellar, an open street, a cathedral alcove) — plus any levels
-  you've **saved** in the editor. (You can also deep-link a demo with `?level=<id>`.)
-- Press **Begin**, and you're in the chosen space with a **beacon** pulsing
-  somewhere ahead.
+  groups the **~26 bundled levels** by mode with per-mode difficulty arcs — a
+  curated tour of the engine (small vs. large rooms, dead vs. live surfaces, a
+  sliding door you hear open, beacon gardens, dead-spot hunts, sonar labyrinths,
+  stealth escapes, an open street, a cathedral) — plus any levels you've **saved**
+  in the editor. (You can also deep-link one with `?level=<id>`.)
+- Press **Begin**, and you're in the chosen space, with the goal for that mode.
 - **Walk** by tapping the **left and right footprints**, alternating your feet like
   real steps. Find a steady rhythm: walk too fast and you **stumble**; only the foot
   you're meant to step with is shown, and both reappear when you pause.
@@ -92,8 +110,10 @@ asks a single fair question: which is **larger**, which is **wider**, which is
 A separate **direction** drill plays one positioned sound and asks whether it's
 **forward, behind, left, or right**. Each pair of rooms differs in *only* the thing
 being tested, so the cue you learn is the real one. You get instant spoken
-feedback, a running score, and difficulty that ramps with your streak. It's
-eyes-free and screen-reader-first. See [`docs/trainer.md`](trainer.md).
+feedback, a running score, and **adaptive difficulty** (a staircase that parks you
+right at your threshold). A **daily challenge** gives everyone the same
+deterministic drill each calendar day, and a **streak** tracks your consecutive
+days. It's eyes-free and screen-reader-first. See [`docs/trainer.md`](trainer.md).
 
 ### Explore the acoustics (debug page)
 A set of **listenable scenes** lets you hear the engine directly: a beacon to turn
@@ -105,7 +125,8 @@ and without a room around it, so you can isolate what the object alone sounds li
 A **top-down map editor** where you build spaces and play them instantly:
 - Place the **start point**, **beacons**, **walls**, **floor zones** (different
   materials), **ceiling zones** (different heights — a low alcove inside a tall
-  hall), and **monsters** (with their chase **speed** and **sound**).
+  hall), **monsters** (with their chase **speed** and **sound**), **absorber
+  patches** (the dead spots for absorber mode), and a stealth **exit**.
 - Give each beacon its own **sound** — a tone, bell, music box, drip, or low hum
   preset, or point it at your **own audio file** — and **preview** it in the editor.
 - Make walls **move**: a wall that ping-pongs back and forth, or a **sliding door**
@@ -143,15 +164,24 @@ A **top-down map editor** where you build spaces and play them instantly:
 
 ## Current status
 
-A complete, playable core:
-- The game loop — walk, turn, stumble, clap, reach the beacon — works end to end.
-- The acoustics engine models reflections, materials, scattering, and diffraction.
-- The level editor lets you author and play custom spaces, indoor or open-air.
+A complete, accessible, multi-mode audio game:
+- The game loop — walk, turn, stumble, clap, reach the goal — works end to end
+  across **four modes** (beacon, absorber, sonar, stealth) and **~26 levels**.
+- The acoustics engine models reflections, materials, scattering, and diffraction;
+  the default beacon renderer is a **click-free interpolating HRTF** (no swap
+  artifacts when you turn).
+- A **companion voice** and a spoken **settings panel** wrap the experience;
+  **onboarding** (calibration + tutorial) gets newcomers playing eyes-free.
+- The level editor lets you author and play custom spaces (all four modes),
+  indoor or open-air.
 - The echolocation trainer drills room size, width, depth, materials, and sound
-  direction with fair A/B comparisons, scoring, and ramping difficulty.
+  direction with fair A/B comparisons, scoring, adaptive difficulty, and a
+  **daily challenge + streak**.
+- **Quality**: a large unit suite plus a Playwright e2e harness gating every flow
+  (game completion, each mode, onboarding, settings, editor, daily challenge,
+  accessibility/help).
 
-It is an early but solid foundation. The headline experience (navigate to a beacon
-by sound, in a room whose echoes are real) is there.
+For the controls and a per-mode primer, see [`docs/HOWTOPLAY.md`](HOWTOPLAY.md).
 
 ---
 

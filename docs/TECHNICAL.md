@@ -12,10 +12,12 @@ limitations, and where to extend things.
 ## 1. What this is
 
 An audio-only navigation game + echolocation trainer, played by sound through
-headphones. The player walks toward a beacon using binaural spatial audio; rooms
-have real geometry and materials so echoes encode size, shape, and surfaces. It
-ships as an offline-capable PWA with three pages: the **game**, a **level
-editor**, and a **debug** page.
+headphones. The player moves through rooms using binaural spatial audio; rooms
+have real geometry and materials so echoes encode size, shape, and surfaces. The
+game has **four modes** (beacon / absorber / sonar / stealth — see §13a) and ships
+as an offline-capable PWA with **four pages**: the **game**, the **trainer**, a
+**level editor**, and a **debug** page. Around the core sit onboarding
+(calibration + tutorial), an optional companion voice, and a spoken settings panel.
 
 The defining technical constraint: **there is no off-the-shelf browser engine for
 this.** The W3C deliberately scoped geometry/reflections/diffraction out of Web
@@ -178,6 +180,24 @@ index isn't worth the complexity yet.)
 ### 5.4 Renderer (`renderer.ts`)
 `HrtfRenderer` holds the listener pose. Each positioned source is an `HrtfSource`:
 `input → distanceGain → airLowpass → [two convolver chains] → output`.
+
+**The interpolating renderer (`interpolatingRenderer.ts`) is the DEFAULT for the
+beacon.** Even with the dual-convolver crossfade below, swapping a `ConvolverNode`
+buffer at each measured-direction bucket crossing leaves a faint onset-transient
+*click* while turning. The interpolating renderer eliminates it: it runs **one
+continuous convolution inside an AudioWorklet** and **continuously interpolates the
+measured HRIRs** (min-phase magnitude + a separate ITD, `interpolatingDsp.ts`) as a
+smooth function of direction — the IR changes block-to-block but the convolution
+state is never reset, so there is no click. The per-source pre-chain
+(`propDelay → distanceGain → airLowpass`) is unchanged; only the directional HRTF
+moves into the worklet. HRIR data is transferred once at init via
+`processorOptions` (no `SharedArrayBuffer` → **no cross-origin-isolation
+requirement**, unlike the Steam path). The worklet is pre-bundled to
+`public/hrtf-worklet.js` by the `worklet` npm script (esbuild) and copied to
+`dist/`. `main.ts` uses it by default for the beacon (and its modeled reflections);
+`?hrtf=legacy` opts back into the dual-convolver below for A/B, and any init failure
+falls back to it automatically. The dual-convolver `HrtfRenderer` is still used for
+the clap/room IR and as the fallback.
 
 **The dual-convolver crossfade** is the key subtlety. Swapping a `ConvolverNode`'s
 `buffer` mid-signal produces an audible **click** (the in-flight IR tail jumps).
@@ -426,6 +446,53 @@ WASM, or FFT convolution — 10–50× expected) or throttle to ~10 Hz and cross
   per-user personalization is a future lever (the main fix for front/back confusion).
 - **The debug page's `turnControl.ts`** is the legacy drag-anywhere control; the game
   uses the compass only.
+
+---
+
+## 13a. Game modes, app shell, and quality
+
+### Modes
+A level's mode is derived from its authored data (`schema.ts`); `companion.ts`'s
+`modeForLevel` maps a level to one of four modes that select the goal logic and the
+companion's framing:
+
+- **beacon** (`goal: 'beacon'`) — navigate to a pulsing beacon; win within
+  `goalRadius`. The original mode (§7).
+- **absorber** (`goal: 'absorber'`) — find a wall-mounted **absorptive patch**
+  (`WallPatch` in `schema.ts`): the spot where the room's echo goes dead. The first
+  patch is the win target.
+- **sonar** (`clapBudget` / `clapCooldownMs`) — flash echolocation with a **limited
+  number of claps** (and a cooldown); reach the goal on a clap budget.
+- **stealth** (`goal: 'escape'`, `exit`) — reach the **exit** uncaught while
+  monsters hunt your last noise (`monster.ts`, §7.2a). Stealth levels and their AI
+  sim live in the parallel 7A track.
+
+### App shell (`src/ui/`, `src/game/companion.ts`, `src/trainer/`)
+- **Onboarding** — `calibration.ts` (+ `calibrationMachine.ts`): headphone L/R
+  check via positioned tones + volume/swap; `tutorial.ts` (+ `tutorialMachine.ts`):
+  graduated localization → turning → stepping → clapping with practice gates. State
+  in `onboardingStore.ts`; both skippable, remembered, replayable. See
+  `docs/onboarding.md`.
+- **Companion voice** — `companion.ts`: a **pure** catalog/selector (no DOM/audio;
+  seed-rotated for variety, no RNG/clock) that returns spoken lines for `start`,
+  `progress` (coarse closeness bands), `win`, `caught`, `heard`, `stumble`,
+  `absorberFound`, per mode. Wired (and gated by the preference) in `main.ts`; a
+  no-op when off, so the game behaves identically when disabled.
+- **Settings** — `settings.ts` (+ `settingsStore.ts`): spoken, keyboard/SR-operable
+  panel — master volume, companion toggle, "getting warmer" proximity-cue toggle,
+  L/R channel swap, two-step reset-progress. Focus-trapped.
+- **Trainer** — `src/trainer/`: pure exercise generators (`exercises.ts`) over the
+  shared `ScenePlayer`; **adaptive staircase** (`adaptive.ts`, 2-down/1-up) and a
+  Thaler-style distance ladder (`distanceLadder.ts`); a deterministic **daily
+  challenge** (`daily.ts`, seeded by calendar date) with a **streak**
+  (`dailyStreakStore.ts`). See `docs/trainer.md`.
+
+### Quality / e2e
+Unit tests (vitest, §10) cover the engine + pure logic. On top, a **Playwright e2e
+harness** (`e2e/`, `playwright.config.ts`) gates the real flows in a browser:
+`keyboard-completion`, `find-the-absorber`, `sonar-vault`, `stealth-escape`,
+`onboarding`, `settings`, `editor`, `daily-challenge`, `companion`, `a11y-help`.
+Run with `npm run e2e` (NOT collected by vitest — see the vitest `exclude`).
 
 ---
 

@@ -1,0 +1,14 @@
+# Cross-origin isolation headers for static hosts that honour a `_headers` file
+# (Cloudflare Pages, Netlify). Vite copies `public/` to the dist root, so this
+# ships as `dist/_headers`.
+#
+# These enable `crossOriginIsolated` (SharedArrayBuffer), which the OPTIONAL
+# Steam Audio backend (`?engine=steam`) needs for its threaded reflection sim.
+# The DEFAULT game engine does NOT need these headers and runs fine without them;
+# only `?engine=steam` requires them and otherwise falls back to the default engine.
+#
+# Hosts that do NOT support `_headers` must send the same two headers via their own
+# server/CDN config (see docs/DEPLOY.md).
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
