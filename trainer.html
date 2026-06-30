@@ -68,7 +68,7 @@
           <option value="gap">Find the gap (which side is open)</option>
           <option value="material">Identify the material (easy→hard)</option>
           <option value="metal">Which wall is metal (inverted tilt)</option>
-          <option value="orientation">Panel orientation (4-way: vertical / 45° / 135° / horizontal)</option>
+          <option value="orientation" id="type-orientation" hidden>Panel orientation (4-way: vertical / 45° / 135° / horizontal)</option>
         </select>
       </label>
       <label style="margin-top:14px">Difficulty
@@ -97,6 +97,12 @@
         <label style="flex-direction:row; align-items:center; gap:8px; color:#bbb; font-size:14px">
           <input type="checkbox" id="engine-steam-toggle" style="width:1.1rem;height:1.1rem" />
           High-fidelity audio (Steam Audio, experimental) — affects the direction / tone exercises
+        </label>
+      </p>
+      <p style="margin-top:10px">
+        <label style="flex-direction:row; align-items:center; gap:8px; color:#bbb; font-size:14px">
+          <input type="checkbox" id="orientation-toggle" style="width:1.1rem;height:1.1rem" />
+          Panel-orientation drill (4-way tilt — subtle, relies on up/down echo cues)
         </label>
       </p>
       <button id="begin" class="big" style="margin-top:14px">▶ Begin (headphones on)</button>

@@ -19,6 +19,7 @@ import { PROBE_PRESETS, isProbeName } from '../debug/probes';
 import {
   makeRandomQuestion,
   hasRoomB,
+  ALL_TYPES,
   type Question,
   type ExerciseType,
 } from './exercises';
@@ -207,9 +208,36 @@ async function ensurePlayer(): Promise<ScenePlayer> {
   return player;
 }
 
+/** Is the (default-off) panel-orientation drill enabled in settings? */
+function orientationEnabled(): boolean {
+  const t = document.getElementById('orientation-toggle') as HTMLInputElement | null;
+  return t ? t.checked : false;
+}
+
+/** Room-size A/B drills whose answer is best understood by revealing dimensions. */
+const SIZE_TYPES: ReadonlySet<ExerciseType> = new Set(['larger', 'wider', 'longer']);
+
+/** "7.2 × 4.0 × 6.1 m" for a roomSize triple. */
+function fmtRoom(size: [number, number, number]): string {
+  return `${size.map((m) => m.toFixed(1)).join(' × ')} m`;
+}
+
+/**
+ * For a room-size question, a post-answer reveal of both rooms' actual dimensions
+ * (W × H × D) so the learner can connect what they heard to the geometry. Empty
+ * for non-size drills or if a scene is missing.
+ */
+function sizeReveal(q: Question): string {
+  if (!SIZE_TYPES.has(q.type) || !q.sceneA?.roomSize || !q.sceneB?.roomSize) return '';
+  return ` Room A: ${fmtRoom(q.sceneA.roomSize)}. Room B: ${fmtRoom(q.sceneB.roomSize)}.`;
+}
+
 function typeFilter(): ExerciseType[] | undefined {
   const sel = $('type') as HTMLSelectElement;
-  return sel.value === 'all' ? undefined : ([sel.value] as ExerciseType[]);
+  if (sel.value !== 'all') return [sel.value] as ExerciseType[];
+  // Mixed mode: the orientation drill (subtle elevation cue) only joins the
+  // rotation when explicitly enabled in settings; otherwise drop it from ALL_TYPES.
+  return orientationEnabled() ? undefined : ALL_TYPES.filter((t) => t !== 'orientation');
 }
 
 function nextQuestion() {
@@ -346,9 +374,9 @@ function onAnswer(choice: string, btn: HTMLButtonElement) {
     else if (el === btn) el.classList.add('wrong');
   }
 
-  const verdict = correct
+  const verdict = (correct
     ? 'Correct.'
-    : `Incorrect. The answer was ${current.correctAnswer}.`;
+    : `Incorrect. The answer was ${current.correctAnswer}.`) + sizeReveal(current);
 
   // Eyes-free progress cue: the level band, and at reversals / settled, a mastery
   // readout ("discriminating at ~70% of full difficulty").
@@ -401,9 +429,9 @@ function onDailyAnswer(correct: boolean, _choice: string, btn: HTMLButtonElement
     else if (el === btn) el.classList.add('wrong');
   }
 
-  const verdict = correct
+  const verdict = (correct
     ? 'Correct.'
-    : `Incorrect. The answer was ${challenge.question.correctAnswer}.`;
+    : `Incorrect. The answer was ${challenge.question.correctAnswer}.`) + sizeReveal(challenge.question);
   const result = dailyResultAnnouncement({ correct, transition, alreadyDoneToday });
 
   // A direction/orientation challenge can fold its precise cue (e.g. the bearing)
@@ -628,6 +656,19 @@ function main() {
   $('play-b').addEventListener('click', () => playRoom('B'));
   $('play-s').addEventListener('click', () => playSingle());
   $('next').addEventListener('click', () => nextQuestion());
+
+  // The orientation drill is gated behind its settings toggle: only reveal it as a
+  // pickable exercise-type option while enabled. Disabling it while it's the chosen
+  // type falls the picker back to Mixed so we never queue a hidden exercise.
+  const orientToggle = $('orientation-toggle') as HTMLInputElement;
+  const syncOrientation = () => {
+    const opt = document.getElementById('type-orientation') as HTMLOptionElement | null;
+    if (opt) opt.hidden = !orientToggle.checked;
+    const typeSel = $('type') as HTMLSelectElement;
+    if (!orientToggle.checked && typeSel.value === 'orientation') typeSel.value = 'all';
+  };
+  orientToggle.addEventListener('change', syncOrientation);
+  syncOrientation();
 }
 
 // Auto-start only in a real browser. Guarded so the module can be imported by unit
