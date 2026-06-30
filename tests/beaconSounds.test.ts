@@ -14,19 +14,22 @@ describe('proximityGain ("getting warmer" cue)', () => {
     expect(near).toBeGreaterThan(mid);
     expect(mid).toBeGreaterThan(far);
   });
-  it('clamps to baseline 1.0 at/beyond the far distance', () => {
-    expect(proximityGain(8)).toBeCloseTo(1, 6);
-    expect(proximityGain(50)).toBeCloseTo(1, 6);
+  it('NEVER exceeds unity — it ducks toward farGain when far, returns to unity up close', () => {
+    // Regression guard: a >1 boost overdrove the master limiter (crackle at rest).
+    expect(proximityGain(0.8)).toBeCloseTo(1.0, 6); // near = unity, not 1.8
+    expect(proximityGain(0)).toBeCloseTo(1.0, 6);
+    expect(proximityGain(8)).toBeCloseTo(0.55, 6); // far = ducked default
+    expect(proximityGain(50)).toBeCloseTo(0.55, 6);
   });
-  it('reaches the configured max at/within the near distance', () => {
-    expect(proximityGain(0.8, 0.8, 8, 1.8)).toBeCloseTo(1.8, 6);
-    expect(proximityGain(0, 0.8, 8, 1.8)).toBeCloseTo(1.8, 6);
+  it('honors configured near/far gains', () => {
+    expect(proximityGain(0.8, 0.8, 8, 1.0, 0.4)).toBeCloseTo(1.0, 6);
+    expect(proximityGain(8, 0.8, 8, 1.0, 0.4)).toBeCloseTo(0.4, 6);
   });
-  it('stays bounded and finite for degenerate input', () => {
-    expect(proximityGain(Infinity)).toBe(1);
+  it('stays bounded ≤ unity and finite for degenerate input', () => {
+    expect(proximityGain(Infinity)).toBe(1); // nearGain default
     const g = proximityGain(3);
-    expect(g).toBeGreaterThanOrEqual(1);
-    expect(g).toBeLessThanOrEqual(1.8);
+    expect(g).toBeGreaterThanOrEqual(0.55);
+    expect(g).toBeLessThanOrEqual(1.0);
   });
 });
 
