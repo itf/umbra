@@ -142,3 +142,10 @@ shareable score, spoken. +26 tests +2 e2e (417 unit, 13 e2e).
 decoy-budget field, monster labels + sound preview, lint, lossless round-trip. +12 tests (436).
 - **5A Guided onboarding** still building (agent `abdb7b14…`, src/ui/* + main onboarding
   gate + per-mode primers) — held until done. Then 5C a11y polish.
+
+**5A Guided onboarding SHIPPED** (`a06ca3e`): localization-first lesson (L/R/front on real
+HRTF) + controls surfacing + per-mode primers (remembered, never re-wall). +4 tests +3 e2e
+(436 unit, 19 e2e). Both 5A+5B done.
+- **5C a11y polish** (agent `a2c1dbaa…`): compass aria-valuenow/valuetext, cardinal
+  detents/ticks, custom-audio beacon warmer cue. Closes logged G1/G2/compass follow-ups.
+- Then Cycle-5 review → more levels per mode + narrative/companion voice + async-ghost.
