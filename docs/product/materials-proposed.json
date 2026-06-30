@@ -1,0 +1,162 @@
+{
+  "_meta": {
+    "bands_hz": [63, 125, 250, 500, 1000, 2000, 4000, 8000],
+    "format": "Matches MaterialProps in src/engine/acoustics/materials.ts: each material has `absorption` (8-band array) and `scattering` (8-band array). In materials.ts scattering is generated from a single mid-band value via scatterCurve(sMid); here we record that source value as `scattering_mid` so a reviewer can call scatterCurve(scattering_mid) when merging. The expanded 8-band `scattering` array shown is scatterCurve(scattering_mid) with shape [0.5,0.6,0.75,0.9,1.0,1.3,1.7,1.9].",
+    "band_mapping": "Source tables give 6 octave bands [125,250,500,1000,2000,4000] (ASTM C423 / ISO 354) or pyroomacoustics 7-band [125..8000]. We map to our 8 bands by: 63 Hz = copy of 125 Hz (no measured data below 125 in standard tables); 8 kHz = copy of 4 kHz UNLESS the source is a pyroomacoustics 7-band entry that already includes 8 kHz (then we use it). This matches the existing convention documented at the top of materials.ts.",
+    "sources": {
+      "pra": "pyroomacoustics materials database (LCAV), https://github.com/LCAV/pyroomacoustics/blob/master/pyroomacoustics/data/materials.json — itself compiled from standard architectural-acoustics tables.",
+      "acoustic_supplies": "https://www.acoustic-supplies.com/absorption-coefficient-chart/ (ASTM C423 compilation).",
+      "commercial_acoustics": "https://commercial-acoustics.com/sound-advice/sound-absorption-coefficient-chart/ and /common-absorption-coefficients-for-acoustical-treatments/.",
+      "cssbi": "Canadian Sheet Steel Building Institute Facts 16-18, bare metal deck field data, https://www.agwaymetals.com/wp-content/uploads/2020/04/CSSBI-Facts16-18.pdf.",
+      "snow": "Buser/Ishida in-situ snow acoustics; J. Sound & Vibration 1991 (deep snow), summarised: alpha<0.4 below 1kHz, ~0.85 above. ESTIMATE fitted to that description.",
+      "iso9613": "ISO 9613-2 ground classes (porous/hard) used by analogy for outdoor surfaces, as in existing materials.ts."
+    }
+  },
+
+  "wood_panel": {
+    "absorption": [0.18, 0.18, 0.12, 0.10, 0.09, 0.08, 0.07, 0.07],
+    "scattering_mid": 0.1,
+    "scattering": [0.05, 0.06, 0.075, 0.09, 0.10, 0.13, 0.17, 0.19],
+    "source": "pra wood_1.6cm/wood_16mm [0.18,0.12,0.10,0.09,0.08,0.07,0.07] at [125..8000]. 8k present in source. 63=125.",
+    "notes": "Thin wood paneling on studs: low-frequency panel resonance lifts the 63-250 Hz absorption. Warm, slightly bass-shy reflection."
+  },
+  "plywood_thin": {
+    "absorption": [0.42, 0.42, 0.21, 0.10, 0.08, 0.06, 0.06, 0.06],
+    "scattering_mid": 0.1,
+    "scattering": [0.05, 0.06, 0.075, 0.09, 0.10, 0.13, 0.17, 0.19],
+    "source": "pra plywood_thin [0.42,0.21,0.10,0.08,0.06,0.06] at [125..4000]. 63=125, 8k=4k.",
+    "notes": "Strong bass-trap behaviour (alpha 0.42 @125). Sounds boomy-room / drum-like vs solid wood. Distinct LOW-frequency cue."
+  },
+  "wooden_door": {
+    "absorption": [0.14, 0.14, 0.10, 0.06, 0.08, 0.10, 0.10, 0.10],
+    "scattering_mid": 0.08,
+    "scattering": [0.04, 0.048, 0.06, 0.072, 0.08, 0.104, 0.136, 0.152],
+    "source": "pra wooden_door [0.14,0.10,0.06,0.08,0.10,0.10,0.10] at [125..8000]. 63=125.",
+    "notes": "Solid, fairly reflective; nearly flat. Hard to distinguish from plaster by ear (see report)."
+  },
+
+  "sheet_metal": {
+    "absorption": [0.13, 0.13, 0.09, 0.09, 0.09, 0.11, 0.11, 0.11],
+    "scattering_mid": 0.05,
+    "scattering": [0.025, 0.03, 0.0375, 0.045, 0.05, 0.065, 0.085, 0.095],
+    "source": "cssbi bare metal deck field data [125=0.13,250=0.09,500=0.09,1k=0.09,2k=0.11,4k=0.11]. 63=125, 8k=4k.",
+    "notes": "Bare flat metal: very bright, near-mirror, slight panel ring at 125. Crisp metallic echo, very low scatter."
+  },
+  "perforated_metal_absorber": {
+    "absorption": [0.73, 0.73, 0.99, 0.99, 0.89, 0.52, 0.31, 0.31],
+    "scattering_mid": 0.1,
+    "scattering": [0.05, 0.06, 0.075, 0.09, 0.10, 0.13, 0.17, 0.19],
+    "source": "commercial_acoustics 'Perforated Metal Deck (75mm Batts)' [0.73,0.99,0.99,0.89,0.52,0.31] at [125..4000]. 63=125, 8k=4k.",
+    "notes": "Helmholtz/porous absorber: kills lows-mids but REFLECTS highs (opposite tilt to carpet/foam). Unusual bright-but-dead character."
+  },
+
+  "water": {
+    "absorption": [0.008, 0.008, 0.008, 0.013, 0.015, 0.020, 0.025, 0.025],
+    "scattering_mid": 0.05,
+    "scattering": [0.025, 0.03, 0.0375, 0.045, 0.05, 0.065, 0.085, 0.095],
+    "source": "acoustic_supplies water surface [0.008,0.008,0.013,0.015,0.020,0.025] at [125..4000]. 63=125, 8k=4k. (Refines existing materials.ts 'water' estimate.)",
+    "notes": "Near-perfect specular mirror, marginally absorptive at HF. Acoustically almost identical to marble/glazed tile."
+  },
+  "marble": {
+    "absorption": [0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.02],
+    "scattering_mid": 0.04,
+    "scattering": [0.02, 0.024, 0.03, 0.036, 0.04, 0.052, 0.068, 0.076],
+    "source": "pra marble_floor + acoustic_supplies 'marble or glazed tile' [0.01,0.01,0.01,0.01,0.02,0.02]. 63=125,8k=4k. (Matches/confirms existing.)",
+    "notes": "Hardest reflector; flat near-zero absorption. The reference 'bright' surface."
+  },
+  "ceramic_tile": {
+    "absorption": [0.01, 0.01, 0.01, 0.01, 0.02, 0.02, 0.02, 0.02],
+    "scattering_mid": 0.05,
+    "scattering": [0.025, 0.03, 0.0375, 0.045, 0.05, 0.065, 0.085, 0.095],
+    "source": "pra ceramic_tiles [0.01,0.01,0.01,0.02,0.02,0.02] at [125..8000]. 63=125.",
+    "notes": "Acoustically indistinguishable from marble; differs only in scattering if grout/relief present."
+  },
+
+  "plaster_smooth": {
+    "absorption": [0.01, 0.01, 0.02, 0.02, 0.03, 0.04, 0.05, 0.05],
+    "scattering_mid": 0.04,
+    "scattering": [0.02, 0.024, 0.03, 0.036, 0.04, 0.052, 0.068, 0.076],
+    "source": "acoustic_supplies 'plaster on masonry' [0.01,0.02,0.02,0.03,0.04,0.05]. 63=125,8k=4k.",
+    "notes": "Hard, very slightly HF-absorbing. Close to existing 'plaster'."
+  },
+  "plasterboard": {
+    "absorption": [0.29, 0.29, 0.10, 0.06, 0.05, 0.04, 0.04, 0.04],
+    "scattering_mid": 0.04,
+    "scattering": [0.02, 0.024, 0.03, 0.036, 0.04, 0.052, 0.068, 0.076],
+    "source": "acoustic_supplies 'plasterboard 12mm on studs' [0.29,0.10,0.06,0.05,0.04,0.04]. 63=125,8k=4k.",
+    "notes": "Drywall: panel resonance eats bass (0.29@125), bright above. Hollow-wall character vs solid plaster_smooth."
+  },
+  "gypsum_acoustic_perforated": {
+    "absorption": [0.30, 0.30, 0.69, 1.0, 0.81, 0.66, 0.62, 0.62],
+    "scattering_mid": 0.1,
+    "scattering": [0.05, 0.06, 0.075, 0.09, 0.10, 0.13, 0.17, 0.19],
+    "source": "pra gypsum_board (perforated, mineral-fibre backing) [0.30,0.69,1.0,0.81,0.66,0.62] at [125..4000]. 63=125,8k=4k.",
+    "notes": "Broadband absorber peaking at 500-1k. Mid-heavy dead sound."
+  },
+  "acoustical_plaster": {
+    "absorption": [0.17, 0.17, 0.36, 0.66, 0.65, 0.62, 0.68, 0.68],
+    "scattering_mid": 0.06,
+    "scattering": [0.03, 0.036, 0.045, 0.054, 0.06, 0.078, 0.102, 0.114],
+    "source": "pra acoustical_plaster_25mm [0.17,0.36,0.66,0.65,0.62,0.68] at [125..4000]. 63=125,8k=4k.",
+    "notes": "Looks hard but is broadband-absorptive — deceptive surface, good 'trick' material for trainer."
+  },
+
+  "drapes_heavy": {
+    "absorption": [0.14, 0.14, 0.35, 0.53, 0.75, 0.70, 0.60, 0.60],
+    "scattering_mid": 0.4,
+    "scattering": [0.20, 0.24, 0.30, 0.36, 0.40, 0.52, 0.68, 0.76],
+    "source": "acoustic_supplies 'drapery 18oz/yd2 pleated 50%' [0.14,0.35,0.53,0.75,0.70,0.60]. 63=125,8k=4k.",
+    "notes": "Pleated heavy fabric: high scatter (folds) + strong mid/HF absorption. Soft, diffuse, fuzzy reflection."
+  },
+  "curtains_velvet": {
+    "absorption": [0.05, 0.05, 0.12, 0.35, 0.45, 0.38, 0.36, 0.36],
+    "scattering_mid": 0.4,
+    "scattering": [0.20, 0.24, 0.30, 0.36, 0.40, 0.52, 0.68, 0.76],
+    "source": "pra curtains_velvet [0.05,0.12,0.35,0.45,0.38,0.36] at [125..4000]. 63=125,8k=4k.",
+    "notes": "Lighter absorber than drapes_heavy; lets more bass through. Similar timbre to existing 'curtain'."
+  },
+  "panel_fabric_rockwool": {
+    "absorption": [0.46, 0.46, 0.93, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "scattering_mid": 0.2,
+    "scattering": [0.10, 0.12, 0.15, 0.18, 0.20, 0.26, 0.34, 0.38],
+    "source": "pra panel_fabric_covered_6pcf [0.46,0.93,1.0,1.0,1.0,1.0,1.0] at [125..8000]. 63=125.",
+    "notes": "Near-total broadband absorber (anechoic-like). The 'deadest' material — no usable echo. Reference dead surface."
+  },
+  "fiberglass_board": {
+    "absorption": [0.18, 0.18, 0.76, 0.99, 0.99, 0.99, 0.99, 0.99],
+    "scattering_mid": 0.15,
+    "scattering": [0.075, 0.09, 0.1125, 0.135, 0.15, 0.195, 0.255, 0.285],
+    "source": "acoustic_supplies 'fiberglass board 50mm' [0.18,0.76,0.99,0.99,0.99,0.99]. 63=125,8k=4k.",
+    "notes": "Like acoustic_foam but passes more bass (0.18@125). Distinct only at low frequency from foam."
+  },
+
+  "audience_seated": {
+    "absorption": [0.26, 0.26, 0.46, 0.87, 0.99, 0.99, 0.99, 0.99],
+    "scattering_mid": 0.6,
+    "scattering": [0.30, 0.36, 0.45, 0.54, 0.60, 0.78, 1.0, 1.0],
+    "source": "pra audience_2_m2 [0.26,0.46,0.87,0.99,0.99,0.99] at [125..4000]. 63=125,8k=4k. Scatter>0.5 (Cox/ODEON audiences).",
+    "notes": "Highly absorptive + highly diffuse (people-as-rough-surface). Could signal a crowded room."
+  },
+  "ceiling_tile_fissured": {
+    "absorption": [0.49, 0.49, 0.53, 0.53, 0.75, 0.92, 0.99, 0.99],
+    "scattering_mid": 0.15,
+    "scattering": [0.075, 0.09, 0.1125, 0.135, 0.15, 0.195, 0.255, 0.285],
+    "source": "pra ceiling_fissured_tile [0.49,0.53,0.53,0.75,0.92,0.99] at [125..4000]. 63=125,8k=4k.",
+    "notes": "Suspended ceiling: broadband, rising-with-freq absorption. Typical office-ceiling cue."
+  },
+
+  "snow_fresh": {
+    "absorption": [0.15, 0.15, 0.25, 0.40, 0.65, 0.85, 0.90, 0.90],
+    "scattering_mid": 0.4,
+    "scattering": [0.20, 0.24, 0.30, 0.36, 0.40, 0.52, 0.68, 0.76],
+    "source": "snow (ESTIMATE). Fitted to literature: alpha<0.4 below 1kHz rising to ~0.85-0.9 above 1kHz for high-porosity fresh snow. No standard ISO 354 row exists.",
+    "notes": "ESTIMATE. Behaves like a porous outdoor absorber — kills highs, passes some bass. The classic 'silent after snowfall' surface. High scatter (granular)."
+  },
+  "vegetation_dense": {
+    "absorption": [0.10, 0.10, 0.20, 0.40, 0.60, 0.70, 0.75, 0.75],
+    "scattering_mid": 0.5,
+    "scattering": [0.25, 0.30, 0.375, 0.45, 0.50, 0.65, 0.85, 0.95],
+    "source": "iso9613 (ESTIMATE by analogy to porous ground / existing 'grass', pushed higher for dense foliage). No single authoritative ISO 354 row.",
+    "notes": "ESTIMATE. Anchored to existing 'grass' [0.1,0.2,0.35,0.5,0.6,0.65]; raised mid/HF absorption + very high scatter (leaves) for hedges/bushes."
+  }
+}
