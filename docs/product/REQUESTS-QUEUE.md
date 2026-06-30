@@ -32,3 +32,13 @@ Tracked so nothing is lost across context compaction. Status as of the keybindin
    proper fix for maze navigation). Separate track.
 
 Crackle-at-rest (default engine) was FIXED in 747168c.
+
+## Dispatch plan (parallel where safe)
+- Agent A (navigation, `a6f7db83…`): RUNNING — owns main.ts routing + levelPicker.
+- Agent B (trainer A/B bug + keyboard, `aa80bd50…`): RUNNING — owns trainer/* + scenePlayer + trainer.html.
+- C (settings engine toggle + warmer-cue clarity, items 3+4): coordinator does AFTER A
+  (shares main.ts/settings — can't run parallel to A safely).
+- D (fork packaging, item 5): DEFERRED until the Steam head-tracked-reflections fork work
+  (`a58b2403…`) settles — no point vendoring a WASM that's about to be rebuilt; also avoids
+  concurrent edits in the three-steam-audio repo.
+- Steam head-tracked reflections (`a58b2403…`): RUNNING in the fork (item 7).
