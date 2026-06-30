@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { selectBackend, selectBackendFromSearch } from './toggle';
 
 describe('backend selection', () => {
-  it('picks steam only for engine=steam', () => {
+  it('picks steam for engine=steam and engine=steam-sofa', () => {
     expect(selectBackend('steam')).toBe('steam');
+    expect(selectBackend('steam-sofa')).toBe('steam'); // SOFA variant also selects steam
   });
 
   it('defaults to ours for absent / unknown / explicit ours', () => {

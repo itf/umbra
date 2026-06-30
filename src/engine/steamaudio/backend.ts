@@ -44,6 +44,41 @@ export interface SteamBackendOpts {
   /** Representative scattering for walls (our `acousticScattering`). */
   scattering?: number;
   reflections?: { maxDuration?: number; maxOrder?: number; maxRays?: number; diffuseSamples?: number };
+  /**
+   * Feed OUR measured SADIE SOFA to Steam Audio's custom-HRTF API instead of its
+   * generic built-in HRTF. Requires the SOFA-capable `three-steam-audio` fork
+   * (feat/sofa-hrtf) as the resolved dependency — the published package doesn't
+   * support it and may reject it, so this is OPT-IN (off by default).
+   */
+  sofaHrtf?: boolean;
+}
+
+/** URL of OUR measured SADIE SOFA (48 kHz), served from the copied assets tree. */
+export const SADIE_SOFA_URL = '/assets/hrtf/sadie_h3_48k.sofa';
+
+/** The fork's `{ type:'sofa', data }` HRTF setting; `null` means use the generic HRTF. */
+export type SofaHrtfSetting = { type: 'sofa'; data: ArrayBuffer } | null;
+
+/**
+ * Fetch OUR SADIE SOFA as an ArrayBuffer for Steam Audio's custom-HRTF path.
+ * Best-effort: any failure (asset missing, non-OK response, fetch throws) resolves to
+ * `null` so the caller falls back to Steam's generic HRTF rather than breaking the
+ * steam path. Pure-ish + injectable `fetchFn` so the fetch-or-fallback decision is
+ * unit-testable without a real network.
+ */
+export async function loadSofaHrtf(
+  fetchFn: typeof fetch = fetch,
+  url: string = SADIE_SOFA_URL,
+): Promise<SofaHrtfSetting> {
+  try {
+    const res = await fetchFn(url);
+    if (!res.ok) return null;
+    const data = await res.arrayBuffer();
+    if (!data || data.byteLength === 0) return null;
+    return { type: 'sofa', data };
+  } catch {
+    return null;
+  }
 }
 
 export class SteamAudioBackend {
@@ -86,8 +121,21 @@ export class SteamAudioBackend {
       import('three'),
     ]);
     const r = opts.reflections ?? {};
+    // Use OUR measured SADIE HRTF (the same dataset that feeds the default engine)
+    // instead of Steam's generic built-in HRTF, so the steam path spatializes with the
+    // same ears. The fork's `createWorld` accepts an in-memory SOFA via
+    // `hrtf: { type: 'sofa', data }`.
+    //
+    // OPT-IN (`opts.sofaHrtf`): the published `three-steam-audio` does NOT support
+    // custom SOFA — only our fork (feat/sofa-hrtf) does — and the published version may
+    // REJECT an unrecognized `{type:'sofa'}` HRTF. So this is gated OFF by default to
+    // keep `npm install` against the published package working. Enable it (via
+    // `?engine=steam-sofa`) only when the SOFA-capable fork is the resolved dependency.
+    // Even then it's best-effort: a failed fetch falls back to the generic HRTF.
+    const hrtf = opts.sofaHrtf ? await loadSofaHrtf() : null;
     const world = await createWorld({
       audioContext,
+      ...(hrtf ? { hrtf } : {}),
       reflections: {
         maxDuration: r.maxDuration ?? 1.0,
         maxOrder: r.maxOrder ?? 2,

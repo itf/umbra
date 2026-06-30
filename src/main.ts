@@ -488,11 +488,16 @@ startButton.addEventListener('click', async () => {
       say('Loading Steam Audio backend…');
       try {
         const { SteamAudioBackend } = await import('./engine/steamaudio/backend');
+        // ?engine=steam-sofa opts into feeding OUR SADIE SOFA to Steam Audio's custom-HRTF
+        // API (needs the SOFA-capable three-steam-audio fork as the resolved dependency).
+        // Plain ?engine=steam uses Steam's generic HRTF — works against the published pkg.
+        const wantSofa = new URLSearchParams(location.search).get('engine') === 'steam-sofa';
         steam = await SteamAudioBackend.create(ctx, graph.master, {
           hrtf: true,
           scattering: SCATTER,
+          sofaHrtf: wantSofa,
         });
-        console.info('[papasangre] Steam Audio backend active (?engine=steam).');
+        console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}).`);
       } catch (e) {
         console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
         steam = null;

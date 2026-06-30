@@ -19,9 +19,14 @@ function copyAssets(): Plugin {
       const src = resolve(__dirname, 'assets');
       const out = resolve(__dirname, 'dist/assets');
       if (!existsSync(src)) return;
-      // Ship everything EXCEPT the raw .sofa dataset — it's the 11 MB build-time
-      // source that `bake-hrtf` converts into the 5.5 MB .hrtf the app loads.
-      cpSync(src, out, { recursive: true, filter: (p) => !p.endsWith('.sofa') });
+      // Ship the baked .hrtf the default engine loads. The raw .sofa is normally the
+      // 11 MB build-time source (`bake-hrtf` converts it to the 5.5 MB .hrtf), so we
+      // skip OTHER .sofa files — but the SADIE SOFA the optional Steam path feeds to
+      // Steam Audio's custom-HRTF API must ship, since Steam consumes SOFA directly.
+      cpSync(src, out, {
+        recursive: true,
+        filter: (p) => !p.endsWith('.sofa') || p.endsWith('sadie_h3_48k.sofa'),
+      });
     },
   };
 }

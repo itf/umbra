@@ -11,9 +11,11 @@
  */
 export type SpatialBackendChoice = 'ours' | 'steam';
 
-/** Resolve the backend choice from a raw `engine` query-param value (or null). */
+/** Resolve the backend choice from a raw `engine` query-param value (or null).
+ *  Both `steam` (generic HRTF) and `steam-sofa` (our SADIE SOFA, fork-only) select
+ *  the Steam backend; which HRTF it uses is decided downstream. */
 export function selectBackend(engineParam: string | null | undefined): SpatialBackendChoice {
-  return engineParam === 'steam' ? 'steam' : 'ours';
+  return engineParam === 'steam' || engineParam === 'steam-sofa' ? 'steam' : 'ours';
 }
 
 /** Read the choice from a query string (e.g. `location.search`). */
