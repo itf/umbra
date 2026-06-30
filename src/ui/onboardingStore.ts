@@ -10,6 +10,19 @@ export const CALIBRATION_DONE_KEY = 'ps.onboarding.calibrationDone';
 export const TUTORIAL_DONE_KEY = 'ps.onboarding.tutorialDone';
 export const SWAP_KEY = 'ps.onboarding.swapLR';
 
+/**
+ * Per-mode first-time primers. Each special mode (absorber, sonar-budget,
+ * stealth) teaches its verb/goal in context the FIRST time a player loads it,
+ * then sets its flag so it never re-walls a returning player. Keyed by the
+ * GameLevel `goal`/mode id so the flags are stable and forward-compatible.
+ */
+export type PrimerMode = 'absorber' | 'sonar' | 'stealth';
+export const MODE_PRIMER_KEY: Record<PrimerMode, string> = {
+  absorber: 'ps.onboarding.primer.absorber',
+  sonar: 'ps.onboarding.primer.sonar',
+  stealth: 'ps.onboarding.primer.stealth',
+};
+
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 /** Resolve a storage backend; null when unavailable. Overridable for tests. */
@@ -77,6 +90,15 @@ export class OnboardingStore {
   }
   setSwap(on: boolean) {
     this.setFlag(SWAP_KEY, on);
+  }
+
+  /** Has this mode's first-time primer already been shown? */
+  modePrimerSeen(mode: PrimerMode): boolean {
+    return this.flag(MODE_PRIMER_KEY[mode]);
+  }
+  /** Mark a mode's first-time primer as shown (so it never shows again). */
+  setModePrimerSeen(mode: PrimerMode, on = true) {
+    this.setFlag(MODE_PRIMER_KEY[mode], on);
   }
 
   /** True when the player has never done onboarding (first run). */

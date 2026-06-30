@@ -19,7 +19,7 @@ import { getBuiltin, builtinLevels } from './level/builtins';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
-import { OnboardingStore } from './ui/onboardingStore';
+import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
@@ -455,12 +455,21 @@ startButton.addEventListener('click', async () => {
       requestAnimationFrame(footLoop);
     };
     footLoop();
+    // First-time, in-context mode primer (teaches the verb/goal the FIRST time a
+    // player meets a special mode), then the mode-aware objective. The primer is
+    // remembered per-mode in onboardingStore so it never re-walls a returning
+    // player; it's the assertive `alert`, the objective the polite `say`.
+    const primerShown = maybeShowModePrimer();
     // Mode-aware objective, spoken (eyes-free). Escape/stealth gets its own brief.
+    // The stealth brief shares the assertive region with the primer, so skip it on
+    // the first run (the primer just taught the same thing and would be clobbered).
     if (LEVEL.goal === 'escape') {
-      alert(
-        'Reach the exit without being heard. A monster hunts the noise you make — ' +
-        'tread on carpet to stay quiet, avoid the gravel, and press T to throw a decoy.',
-      );
+      if (!primerShown) {
+        alert(
+          'Reach the exit without being heard. A monster hunts the noise you make — ' +
+          'tread on carpet to stay quiet, avoid the gravel, and press T to throw a decoy.',
+        );
+      }
     } else if (LEVEL.goal === 'absorber') {
       say('Clap to hear the room, then walk to the dead spot where the echo is swallowed.');
     } else {
@@ -559,6 +568,46 @@ function setupTurning(game: Game): (delta: number) => void {
     if (announceTimer != null) clearTimeout(announceTimer);
     announceTimer = setTimeout(() => say(announceHeading(heading.desired)), 250);
   };
+}
+
+/**
+ * Classify the current level into a special mode that warrants a first-time
+ * primer, or null for a plain beacon level (which the tutorial already covered).
+ * Stealth = escape goal; absorber = absorber goal; sonar = a clap-budgeted level.
+ */
+function currentPrimerMode(): PrimerMode | null {
+  if (LEVEL.goal === 'escape') return 'stealth';
+  if (LEVEL.goal === 'absorber') return 'absorber';
+  if (LEVEL.clapBudget != null) return 'sonar';
+  return null;
+}
+
+/** One-line, in-context teaching for each special mode's verb/goal. */
+function modePrimerText(mode: PrimerMode): string {
+  switch (mode) {
+    case 'stealth':
+      return 'New mode — Stealth. A monster hunts the NOISE you make, not your position. ' +
+        'Step softly on carpet, avoid loud floors, and press T to throw a decoy that lures it away.';
+    case 'absorber':
+      return 'New mode — Find the absorber. There is no beacon to follow. Clap with the Echo ' +
+        'button to hear the room, then walk to the dead spot where one wall swallows the echo.';
+    case 'sonar':
+      return 'New mode — Sonar budget. Your claps are limited, so spend them wisely. ' +
+        'Each Echo costs a clap; the button tells you how many remain.';
+  }
+}
+
+/**
+ * Show the current mode's primer the FIRST time it's encountered, then remember
+ * it so it never shows again (per-mode flag in onboardingStore). No-op for plain
+ * beacon levels or for a mode already seen.
+ */
+function maybeShowModePrimer(): boolean {
+  const mode = currentPrimerMode();
+  if (!mode || onboarding.modePrimerSeen(mode)) return false;
+  alert(modePrimerText(mode));
+  onboarding.setModePrimerSeen(mode);
+  return true;
 }
 
 /** Speak the keyboard control scheme via the live region (the ? / H help key). */

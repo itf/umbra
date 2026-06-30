@@ -2,6 +2,7 @@ import { type Page, expect } from '@playwright/test';
 import {
   CALIBRATION_DONE_KEY,
   TUTORIAL_DONE_KEY,
+  MODE_PRIMER_KEY,
 } from '../src/ui/onboardingStore';
 
 /**
@@ -12,15 +13,18 @@ import {
  */
 export async function skipOnboarding(page: Page) {
   await page.addInitScript(
-    ([calKey, tutKey]) => {
+    ([calKey, tutKey, primerKeys]) => {
       try {
         localStorage.setItem(calKey, '1');
         localStorage.setItem(tutKey, '1');
+        // Returning/expert users have already met every mode, so suppress the
+        // first-time per-mode primers too — tests assert the steady-state objective.
+        for (const k of primerKeys as string[]) localStorage.setItem(k, '1');
       } catch {
         /* private mode — the in-memory fallback still gates, just not persisted */
       }
     },
-    [CALIBRATION_DONE_KEY, TUTORIAL_DONE_KEY],
+    [CALIBRATION_DONE_KEY, TUTORIAL_DONE_KEY, Object.values(MODE_PRIMER_KEY)] as const,
   );
 }
 

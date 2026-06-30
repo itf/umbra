@@ -6,6 +6,7 @@ import {
   CALIBRATION_DONE_KEY,
   TUTORIAL_DONE_KEY,
   SWAP_KEY,
+  MODE_PRIMER_KEY,
 } from '../src/ui/onboardingStore';
 
 describe('CalibrationMachine (pure)', () => {
@@ -77,17 +78,21 @@ describe('CalibrationMachine (pure)', () => {
 });
 
 describe('TutorialMachine (pure)', () => {
-  it('starts on the first lesson', () => {
+  it('starts on the first lesson (localizing — the Kish/Thaler seated start)', () => {
     const m = new TutorialMachine();
-    expect(m.lesson).toBe('stepping');
+    expect(m.lesson).toBe('localizing');
     expect(m.done).toBe(false);
+  });
+
+  it('follows the graduated order localizing → turning → stepping → clapping', () => {
+    expect(LESSONS).toEqual(['localizing', 'turning', 'stepping', 'clapping']);
   });
 
   it('gate requires the lesson goal before next advances', () => {
     const m = new TutorialMachine();
     expect(m.gateMet()).toBe(false);
-    expect(m.next()).toBe('stepping'); // gate unmet ⇒ no advance
-    for (let i = 0; i < LESSON_GOAL.stepping; i++) m.recordAction();
+    expect(m.next()).toBe('localizing'); // gate unmet ⇒ no advance
+    for (let i = 0; i < LESSON_GOAL.localizing; i++) m.recordAction();
     expect(m.gateMet()).toBe(true);
     expect(m.next()).toBe('turning');
   });
@@ -95,7 +100,7 @@ describe('TutorialMachine (pure)', () => {
   it('progress caps at the goal', () => {
     const m = new TutorialMachine();
     m.recordAction(100);
-    expect(m.snapshot().progress).toBe(LESSON_GOAL.stepping);
+    expect(m.snapshot().progress).toBe(LESSON_GOAL.localizing);
   });
 
   it('completes after the last lesson', () => {
@@ -111,7 +116,7 @@ describe('TutorialMachine (pure)', () => {
 
   it('skip bypasses the gate; skipAll finishes immediately', () => {
     const m = new TutorialMachine();
-    expect(m.skip()).toBe('turning'); // forced past unmet gate
+    expect(m.skip()).toBe('turning'); // forced past unmet gate (localizing → turning)
     m.skipAll();
     expect(m.done).toBe(true);
     expect(m.lesson).toBe(null);
@@ -121,7 +126,7 @@ describe('TutorialMachine (pure)', () => {
     const m = new TutorialMachine();
     m.skipAll();
     m.reset();
-    expect(m.lesson).toBe('stepping');
+    expect(m.lesson).toBe('localizing');
     expect(m.done).toBe(false);
   });
 });
@@ -162,6 +167,27 @@ describe('OnboardingStore (persistence)', () => {
     expect(fake._map.get(CALIBRATION_DONE_KEY)).toBe('1');
     expect(fake._map.get(TUTORIAL_DONE_KEY)).toBe('1');
     expect(fake._map.get(SWAP_KEY)).toBe('1');
+  });
+
+  it('per-mode primers default unseen, then remember once shown', () => {
+    const fake = fakeStorage();
+    const s = new OnboardingStore(fake);
+    for (const mode of ['absorber', 'sonar', 'stealth'] as const) {
+      expect(s.modePrimerSeen(mode)).toBe(false);
+      s.setModePrimerSeen(mode);
+      expect(s.modePrimerSeen(mode)).toBe(true);
+      expect(fake._map.get(MODE_PRIMER_KEY[mode])).toBe('1');
+    }
+  });
+
+  it('mode primer flags are independent of each other and of tutorial/calibration', () => {
+    const s = new OnboardingStore(fakeStorage());
+    s.setModePrimerSeen('stealth');
+    expect(s.modePrimerSeen('stealth')).toBe(true);
+    expect(s.modePrimerSeen('absorber')).toBe(false);
+    expect(s.modePrimerSeen('sonar')).toBe(false);
+    expect(s.tutorialDone()).toBe(false);
+    expect(s.isFirstRun()).toBe(true); // primers don't affect first-run gating
   });
 
   it('degrades to memory when storage is null', () => {

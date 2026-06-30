@@ -1,23 +1,34 @@
 /**
- * Tutorial sequencer — the PURE, testable controller for the 3-lesson guided
- * first-run (STEPPING → TURNING → CLAPPING). It owns NO audio and NO DOM: it
- * tracks which lesson we're on, whether the lesson's gate has been satisfied
- * (e.g. the player took enough practice steps / turned far enough / clapped),
- * and advance/skip/complete. The spoken instructions + practice harness wiring
- * live in tutorial.ts (ear/screen-reader-verified).
+ * Tutorial sequencer — the PURE, testable controller for the guided first-run.
+ * The lesson ORDER is the Kish/Thaler echolocation-training progression: start
+ * seated and learn the core spatial cue (is the sound LEFT / RIGHT / FRONT?),
+ * THEN add turning, THEN walking-rhythm (stepping), THEN clapping/echolocation:
+ *
+ *   LOCALIZING → TURNING → STEPPING → CLAPPING
+ *
+ * It owns NO audio and NO DOM: it tracks which lesson we're on, whether the
+ * lesson's gate has been satisfied (the player answered the localization prompt
+ * correctly / turned toward the tone / took enough steps / clapped), and
+ * advance/skip/complete. The spoken instructions + practice harness wiring live
+ * in tutorial.ts (ear/screen-reader-verified).
  *
  * Completion persistence (localStorage) lives in onboardingStore.ts.
  */
 
-export type Lesson = 'stepping' | 'turning' | 'clapping';
+export type Lesson = 'localizing' | 'turning' | 'stepping' | 'clapping';
 
-/** Ordered lessons. `complete()` runs off the end of this. */
-export const LESSONS: Lesson[] = ['stepping', 'turning', 'clapping'];
+/**
+ * Ordered lessons (`complete()` runs off the end). LOCALIZING goes first — the
+ * Kish/Thaler "seated, identify left/right/front before you move" start — then
+ * turning so the player can centre what they localize, then walking, then clap.
+ */
+export const LESSONS: Lesson[] = ['localizing', 'turning', 'stepping', 'clapping'];
 
 /** How many qualifying actions satisfy each lesson's practice gate. */
 export const LESSON_GOAL: Record<Lesson, number> = {
-  stepping: 4, // a few alternating steps
+  localizing: 3, // correctly place left, right, and front
   turning: 1, // turn toward the tone once
+  stepping: 4, // a few alternating steps
   clapping: 1, // one clap
 };
 

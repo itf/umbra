@@ -1,14 +1,19 @@
 /**
  * Guided tutorial screen — a gentle, spoken, eyes-free first-run that teaches the
- * three controls one at a time, each behind a practice gate:
+ * core spatial cue and the controls one at a time, each behind a practice gate.
+ * The ORDER follows the Kish/Thaler echolocation-training progression (seated
+ * localization first, only then movement):
  *
- *   1. STEPPING — alternate left/right in a steady rhythm (rushing stumbles).
- *   2. TURNING  — drag the compass; the soundscape rotates. Turn toward a tone.
- *   3. CLAPPING — tap echo to clap and hear the room.
+ *   1. LOCALIZING — a beacon plays on your LEFT, then RIGHT, then straight AHEAD;
+ *      you confirm where you heard it. Teaches the real HRTF cue the game runs on.
+ *   2. TURNING    — drag the compass / arrow keys; the soundscape rotates. Turn a
+ *      front-right tone until it is straight ahead.
+ *   3. STEPPING   — alternate left/right in a steady rhythm (rushing stumbles).
+ *   4. CLAPPING   — tap echo to clap and hear the room (echolocation).
  *
  * It is a SCRIPTED sequence (a lightweight practice harness), not the full Game:
  * it owns its own startAudio + HrtfRenderer + a single positioned tone, and a
- * Compass for the turn lesson. The pure step ordering / gate / completion logic
+ * Compass for the turn lesson. The pure lesson ordering / gate / completion logic
  * is the unit-tested `TutorialMachine`; the audio + DOM here are ear-verified.
  */
 import { startAudio, type AudioGraph } from '../engine/audioGraph';
@@ -107,8 +112,100 @@ export function mountTutorial(root: HTMLElement, deps: TutorialDeps) {
   }
 
   function intro() {
-    deps.say('A short tutorial teaches the three controls. Press Start to enable sound.');
+    deps.say(
+      'A short tutorial. First you learn to hear where a sound is — left, right, or ahead — ' +
+      'then turning, walking, and clapping. The controls: Left and Right arrows turn, ' +
+      'A steps left and L steps right, the Echo button claps, T throws a decoy, and ' +
+      'question mark or H repeats the controls at any time. Press Start to enable sound.',
+    );
     controls.append(btn('Start (enable sound)', onStart, true), btn('Skip tutorial', () => { machine.skipAll(); finish(true); }));
+    focusFirst();
+  }
+
+  // --- Lesson 1: localizing (Kish/Thaler seated start) ----------------------
+  // A short beacon plays from a fixed direction; the player confirms which side
+  // they heard it on. We walk LEFT → RIGHT → FRONT so the player learns the three
+  // anchor directions before any movement. Uses the REAL HRTF beacon path so the
+  // cue is exactly what the game uses. Each correct answer satisfies one gate unit.
+  type Dir = 'left' | 'right' | 'front';
+  const LOCALIZE_DIRS: Dir[] = ['left', 'right', 'front'];
+  /** Listener-relative position for a localization direction (engine: +x right, −z front). */
+  function dirPosition(dir: Dir): [number, number, number] {
+    if (dir === 'left') return [-3, 1.6, 0];
+    if (dir === 'right') return [3, 1.6, 0];
+    return [0, 1.6, -3]; // front
+  }
+  /** Play a ~700 ms beacon pulse at `dir` through the real HRTF source. */
+  function playLocalizeTone(dir: Dir) {
+    if (!graph || !renderer) return;
+    stopTone();
+    tone = renderer.createSource();
+    tone.output.connect(graph.master);
+    renderer.setListener({ x: 0, y: 1.6, z: 0, yaw: 0 });
+    const [x, y, z] = dirPosition(dir);
+    tone.setPosition(x, y, z);
+    const ctx = graph.ctx;
+    toneOsc = ctx.createOscillator();
+    const g = ctx.createGain();
+    toneOsc.type = 'triangle';
+    toneOsc.frequency.value = 440;
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.35, t + 0.02);
+    g.gain.setValueAtTime(0.35, t + 0.65);
+    g.gain.linearRampToValueAtTime(0, t + 0.7);
+    toneOsc.connect(g);
+    g.connect(tone.input);
+    toneOsc.start(t);
+    toneOsc.stop(t + 0.72);
+  }
+
+  function localizing() {
+    deps.say(
+      'Localizing. A sound will play. Tell me where you hear it — on your LEFT, ' +
+      'on your RIGHT, or straight AHEAD. We will do all three.',
+    );
+    let idx = 0;
+    const prompt = document.createElement('p');
+    prompt.className = 'tut-localize-prompt';
+    body.append(prompt);
+
+    const row = document.createElement('div');
+    row.className = 'tut-localize';
+    const left = btn('LEFT', () => answer('left'));
+    const front = btn('AHEAD', () => answer('front'));
+    const right = btn('RIGHT', () => answer('right'));
+    const replay = btn('Play it again', () => playLocalizeTone(LOCALIZE_DIRS[idx]));
+    row.append(left, front, right, replay);
+    body.append(row);
+
+    const adv = nextButton();
+    skipAll();
+
+    function present() {
+      if (idx >= LOCALIZE_DIRS.length) return;
+      prompt.textContent = `Where is the sound? (${idx + 1} of ${LOCALIZE_DIRS.length})`;
+      playLocalizeTone(LOCALIZE_DIRS[idx]);
+    }
+    function answer(heard: Dir) {
+      const want = LOCALIZE_DIRS[idx];
+      if (heard === want) {
+        idx++;
+        machine.recordAction();
+        adv.disabled = !machine.gateMet();
+        if (machine.gateMet()) {
+          stopTone();
+          deps.alert('You localized all three. Press Next.');
+        } else {
+          deps.say('Correct. Listen again.');
+          present();
+        }
+      } else {
+        deps.alert(`Not quite — listen again. That sound was on your ${want === 'front' ? 'front' : want}.`);
+        playLocalizeTone(want);
+      }
+    }
+    present();
     focusFirst();
   }
 
@@ -191,7 +288,10 @@ export function mountTutorial(root: HTMLElement, deps: TutorialDeps) {
 
   // --- Lesson 3: clapping ---------------------------------------------------
   function clapping() {
-    deps.say('Clapping. Tap Echo to clap and hear the room around you. Try it once.');
+    deps.say(
+      'Clapping, or echolocation. Tap Echo to clap and hear the room — surfaces echo ' +
+      'the clap back so you can sense walls and openings. Try it once.',
+    );
     const echo = btn('Echo (clap)', () => {
       // A simple, un-spatialized clap burst so the lesson is self-contained.
       if (graph) {
@@ -223,12 +323,15 @@ export function mountTutorial(root: HTMLElement, deps: TutorialDeps) {
 
   function render() {
     if (cleanup) { cleanup(); cleanup = null; }
-    if (machine.lesson !== 'turning') stopTone();
+    // Both the localizing and turning lessons own a live tone; stop it before any
+    // other lesson so a probe/source doesn't linger.
+    if (machine.lesson !== 'turning' && machine.lesson !== 'localizing') stopTone();
     clear();
     if (!graph) { intro(); return; }
     const lesson = machine.lesson;
-    if (lesson === 'stepping') stepping();
+    if (lesson === 'localizing') localizing();
     else if (lesson === 'turning') turning();
+    else if (lesson === 'stepping') stepping();
     else if (lesson === 'clapping') clapping();
     else finish(false);
   }
@@ -237,7 +340,12 @@ export function mountTutorial(root: HTMLElement, deps: TutorialDeps) {
     if (cleanup) { cleanup(); cleanup = null; }
     stopTone();
     deps.store.setTutorialDone();
-    deps.alert(skipped ? 'Tutorial skipped.' : 'Tutorial complete. Have fun.');
+    deps.alert(
+      skipped
+        ? 'Tutorial skipped.'
+        : 'Tutorial complete. Remember: arrows turn, A and L step, Echo claps, ' +
+          'T throws a decoy, and question mark or H repeats the controls. Have fun.',
+    );
     deps.onDone();
   }
 
