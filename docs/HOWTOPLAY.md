@@ -20,8 +20,8 @@ replayable from the picker. See [`onboarding.md`](onboarding.md).
 
 | Action | How | What it does |
 |---|---|---|
-| **Step** | Tap the **left** / **right** footprints, or press **A** (left) / **L** (right), alternating | Walk forward one stride. Keep a steady rhythm — rushing or stepping the wrong foot makes you **stumble**. Pause and both feet reappear (either foot may go next). |
-| **Turn** | Drag the **compass dial**, or the **Left / Right arrows** (hold **Shift** to turn farther) | Rotates your heading smoothly; the whole soundscape turns with you so you can face a sound and walk to it. |
+| **Step** | Tap the **left** / **right** footprints, or press **A** (left) / **D** (right), alternating | Walk forward one stride. Keep a steady rhythm — rushing or stepping the wrong foot makes you **stumble**. Pause and both feet reappear (either foot may go next). |
+| **Turn** | Drag the **compass dial**, or the **arrow keys** (**Left**/**Up** left, **Right**/**Down** right) or **Q**/**E** (hold **Shift** to turn farther) | Rotates your heading smoothly; the whole soundscape turns with you so you can face a sound and walk to it. |
 | **Clap / echo** | Tap **echo** | A clap whose reflections reveal the room's size and surfaces. In **sonar** levels claps are limited. |
 | **Decoy** | Press **T** | Throws a sound decoy to lure a monster away from you (stealth levels). |
 | **Settings** | Press **S**, or open the settings panel | Master volume, companion-voice toggle, "getting warmer" proximity cue, swap left/right channels, and reset progress. |

@@ -19,9 +19,12 @@ export interface Control {
 
 /** The canonical keyboard controls, in the order they're spoken. */
 export const CONTROLS: readonly Control[] = [
-  { keys: 'Left and Right arrows', action: 'turn; hold Shift to turn farther' },
   {
-    keys: 'A and L',
+    keys: 'Arrow keys, or Q and E',
+    action: 'turn — left or up turns left, right or down turns right; hold Shift to turn farther',
+  },
+  {
+    keys: 'A and D',
     action: 'step with your left and right foot — alternate them and do not rush',
   },
   { keys: 'Echo button', action: 'claps to hear the room' },

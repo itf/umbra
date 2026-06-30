@@ -13,16 +13,21 @@ import {
 const DEG = Math.PI / 180;
 
 describe('keyTurnDelta (keyboard turning)', () => {
-  it('Right turns positive (clockwise), Left negative', () => {
-    expect(keyTurnDelta('ArrowRight', false)).toBeCloseTo(5 * DEG, 9);
-    expect(keyTurnDelta('ArrowLeft', false)).toBeCloseTo(-5 * DEG, 9);
+  it('Right/Down arrows and E turn positive (right); Left/Up and Q turn negative (left)', () => {
+    for (const k of ['ArrowRight', 'ArrowDown', 'e', 'E']) {
+      expect(keyTurnDelta(k, false)).toBeCloseTo(5 * DEG, 9);
+    }
+    for (const k of ['ArrowLeft', 'ArrowUp', 'q', 'Q']) {
+      expect(keyTurnDelta(k, false)).toBeCloseTo(-5 * DEG, 9);
+    }
   });
   it('Shift makes a larger step', () => {
     expect(keyTurnDelta('ArrowRight', true)).toBeCloseTo(15 * DEG, 9);
-    expect(keyTurnDelta('ArrowLeft', true)).toBeCloseTo(-15 * DEG, 9);
+    expect(keyTurnDelta('q', true)).toBeCloseTo(-15 * DEG, 9);
   });
-  it('non-arrow keys produce no turn', () => {
-    expect(keyTurnDelta('a', false)).toBe(0);
+  it('non-turn keys (incl. the A/D step keys) produce no turn', () => {
+    expect(keyTurnDelta('a', false)).toBe(0); // step-left, not a turn
+    expect(keyTurnDelta('d', false)).toBe(0); // step-right, not a turn
     expect(keyTurnDelta(' ', true)).toBe(0);
   });
   it('accumulated key turns drive a Heading toward the intended yaw', () => {

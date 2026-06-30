@@ -11,8 +11,8 @@ describe('CONTROLS canonical list', () => {
   it('includes every expected control', () => {
     const keys = CONTROLS.map((c) => c.keys);
     expect(keys).toEqual([
-      'Left and Right arrows',
-      'A and L',
+      'Arrow keys, or Q and E',
+      'A and D',
       'Echo button',
       'T',
       'S',

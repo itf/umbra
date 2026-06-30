@@ -666,22 +666,27 @@ startButton.addEventListener('click', async () => {
       // While the settings dialog is open it owns the keyboard (its own Escape/Tab/
       // control handlers) — don't let game keys (step/turn/decoy/help/S) leak through.
       if (settingsPanel?.isOpen()) return;
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        // Prevent the page from scrolling, and let key-repeat keep turning.
+      // TURN: Left/Right and Up/Down arrows (up=left, down=right), plus Q (left) / E
+      // (right). keyTurnDelta returns 0 for non-turn keys, so a single check covers all.
+      const turnDelta = keyTurnDelta(e.key, e.shiftKey);
+      if (turnDelta !== 0) {
+        // Prevent the page from scrolling (arrows), and let key-repeat keep turning.
         e.preventDefault();
-        if (!ended) turnBy(keyTurnDelta(e.key, e.shiftKey));
+        if (!ended) turnBy(turnDelta);
         return;
       }
       if (e.repeat) return;
-      if (e.key === 'a' || e.key === 'A') doStep('L');
-      else if (e.key === 'l' || e.key === 'L') doStep('R');
-      else if (e.key === 't' || e.key === 'T') {
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      // STEP: A = left foot, D = right foot.
+      if (k === 'a') doStep('L');
+      else if (k === 'd') doStep('R');
+      else if (k === 't') {
         // Throw a sound decoy — pulls the noise-hunter toward where it lands. No-op
         // (and a spoken cue) when out of decoys; announcement is via onDecoy.
         if (!ended && !game.throwDecoy()) alert('No decoys left.');
       }
-      else if (e.key === 's' || e.key === 'S') settingsPanel?.toggle();
-      else if (e.key === '?' || e.key === 'h' || e.key === 'H') speakControls();
+      else if (k === 's') settingsPanel?.toggle();
+      else if (k === '?' || k === 'h') speakControls();
     });
 
     // --- Clap to hear the room (echo button) ---
