@@ -26,7 +26,7 @@
  */
 
 /** The routable screens. `level` carries an id (builtin id, or 'current'). */
-export type ScreenName = 'landing' | 'picker' | 'level' | 'progress';
+export type ScreenName = 'landing' | 'picker' | 'level' | 'progress' | 'clicks' | 'credits';
 
 export interface ScreenState {
   screen: ScreenName;
@@ -84,6 +84,10 @@ export function screenToUrl(state: ScreenState, currentSearch = ''): string {
     path = `${base}level/${encodeURIComponent(state.level)}`;
   } else if (state.screen === 'progress') {
     path = `${base}progress`;
+  } else if (state.screen === 'clicks') {
+    path = `${base}clicks`;
+  } else if (state.screen === 'credits') {
+    path = `${base}credits`;
   } else if (state.screen === 'picker') {
     path = `${base}play`;
   } else {
@@ -104,11 +108,13 @@ export function urlToScreen(pathname: string, _search = ''): ScreenState {
   if (path === '') return { screen: 'landing' };
   if (path === 'play') return { screen: 'picker' };
   if (path === 'progress') return { screen: 'progress' };
+  if (path === 'clicks') return { screen: 'clicks' };
+  if (path === 'credits') return { screen: 'credits' };
   if (path.startsWith('level/')) {
     const id = decodeURIComponent(path.slice('level/'.length));
     if (id) return { screen: 'level', level: id };
   }
-  // Anything else (a stray /credits, a typo) falls back to landing — never throws.
+  // Anything else (a typo) falls back to landing — never throws.
   return { screen: 'landing' };
 }
 

@@ -29,6 +29,8 @@ import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { Router, type ScreenState } from './ui/router';
 import { renderProgressScreen } from './ui/progress';
 import { renderLandingScreen } from './ui/landing';
+import { mountClickTypes } from './ui/clickTypes';
+import { renderCreditsScreen } from './ui/credits';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
@@ -439,6 +441,8 @@ function hideOnboardingScreens() {
   calibrationScreen.hidden = true;
   tutorialScreen.hidden = true;
   progressScreen.hidden = true;
+  const ct = document.getElementById('click-types-screen'); if (ct) ct.hidden = true;
+  const cr = document.getElementById('credits-screen'); if (cr) cr.hidden = true;
 }
 
 /** Reveal the Begin screen for a chosen level (hides the other screens). */
@@ -506,6 +510,8 @@ function showLanding() {
     // picker's "Echolocation trainer" link, so "Train" sends the visitor to the picker.
     onTrain: () => navigate({ screen: 'picker' }),
     onProgress: () => navigate({ screen: 'progress' }),
+    onCredits: () => navigate({ screen: 'credits' }),
+    onClicks: () => navigate({ screen: 'clicks' }),
     say,
   });
 }
@@ -518,6 +524,28 @@ function showPicker() {
   // Re-render into a fresh host on EVERY show, so the picker is never empty.
   void mountPicker();
   say('Choose a level.');
+}
+
+/** "Types of clicks" help page (/clicks): mount the click-types screen. */
+function showClicks() {
+  stopActiveRun();
+  hideOnboardingScreens();
+  gameScreen.hidden = true;
+  const section = document.getElementById('click-types-screen');
+  if (!section) { navigate({ screen: 'landing' }, { replace: true }); return; }
+  section.hidden = false;
+  void mountClickTypes(section, { say, onBack: () => navigate({ screen: 'landing' }) });
+}
+
+/** Credits / licenses page (/credits): third-party attributions (CC clicks, HRTF…). */
+function showCredits() {
+  stopActiveRun();
+  hideOnboardingScreens();
+  gameScreen.hidden = true;
+  const section = document.getElementById('credits-screen');
+  if (!section) { navigate({ screen: 'landing' }, { replace: true }); return; }
+  section.hidden = false;
+  void renderCreditsScreen(section, { say, onBack: () => navigate({ screen: 'landing' }) });
 }
 
 /** Human labels for the trainer exercise types shown on the progress screen. */
@@ -666,6 +694,10 @@ const router = new Router({
       showPicker();
     } else if (state.screen === 'progress') {
       showProgress();
+    } else if (state.screen === 'clicks') {
+      showClicks();
+    } else if (state.screen === 'credits') {
+      showCredits();
     } else if (state.screen === 'level' && state.level) {
       // An unknown/unloadable id → bounce to the picker (and fix the URL).
       if (!loadLevelById(state.level)) navigate({ screen: 'picker' }, { replace: true });

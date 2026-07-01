@@ -20,6 +20,10 @@ export interface LandingScreenOptions {
   onTrain: () => void;
   /** Go to the progress screen (→ /progress). */
   onProgress: () => void;
+  /** Go to the credits/licenses screen (→ /credits). Optional. */
+  onCredits?: () => void;
+  /** Go to the "types of clicks" help page (→ /clicks). Optional. */
+  onClicks?: () => void;
   /** Polite live-region announcer (the app's say()). */
   say: (msg: string) => void;
 }
@@ -109,12 +113,32 @@ export function renderLandingScreen(
   progressLink.addEventListener('click', opts.onProgress);
   nav.appendChild(progressLink);
 
-  // Credits is a plain link to a route added separately; harmless if it 404s to landing.
-  const creditsLink = document.createElement('a');
-  creditsLink.className = 'landing-credits';
-  creditsLink.href = 'credits'; // relative → resolves under BASE_URL
-  creditsLink.textContent = 'Credits';
-  nav.appendChild(creditsLink);
+  // "Types of clicks" learn page (→ /clicks), when wired.
+  if (opts.onClicks) {
+    const clicksLink = document.createElement('button');
+    clicksLink.type = 'button';
+    clicksLink.className = 'linklike landing-clicks';
+    clicksLink.textContent = 'Learn: types of clicks';
+    clicksLink.addEventListener('click', opts.onClicks);
+    nav.appendChild(clicksLink);
+  }
+
+  // Credits (→ /credits). A router button when wired; else a plain link that still
+  // resolves via the SPA fallback (harmless full-load) under BASE_URL.
+  if (opts.onCredits) {
+    const creditsBtn = document.createElement('button');
+    creditsBtn.type = 'button';
+    creditsBtn.className = 'linklike landing-credits';
+    creditsBtn.textContent = 'Credits';
+    creditsBtn.addEventListener('click', opts.onCredits);
+    nav.appendChild(creditsBtn);
+  } else {
+    const creditsLink = document.createElement('a');
+    creditsLink.className = 'landing-credits';
+    creditsLink.href = 'credits'; // relative → resolves under BASE_URL
+    creditsLink.textContent = 'Credits';
+    nav.appendChild(creditsLink);
+  }
 
   container.appendChild(nav);
 

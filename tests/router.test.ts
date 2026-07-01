@@ -67,9 +67,13 @@ describe('urlToScreen', () => {
   it('ignores a query string on the path', () => {
     expect(urlToScreen('/level/foo?engine=steam')).toEqual({ screen: 'level', level: 'foo' });
   });
-  it('unknown paths (e.g. /credits) fall back to landing, not throw', () => {
-    expect(urlToScreen('/credits')).toEqual({ screen: 'landing' });
+  it('/clicks and /credits are real screens', () => {
+    expect(urlToScreen('/clicks')).toEqual({ screen: 'clicks' });
+    expect(urlToScreen('/credits')).toEqual({ screen: 'credits' });
+  });
+  it('unknown paths fall back to landing, not throw', () => {
     expect(urlToScreen('/nope/nope')).toEqual({ screen: 'landing' });
+    expect(urlToScreen('/random')).toEqual({ screen: 'landing' });
   });
   it('round-trips through screenToUrl for every screen', () => {
     const states: ScreenState[] = [
@@ -78,6 +82,8 @@ describe('urlToScreen', () => {
       { screen: 'level', level: 'demo' },
       { screen: 'level', level: 'a b/c' },
       { screen: 'progress' },
+      { screen: 'clicks' },
+      { screen: 'credits' },
     ];
     for (const s of states) expect(urlToScreen(screenToUrl(s))).toEqual(s);
   });
