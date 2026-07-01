@@ -26,7 +26,8 @@
  * Pure & synchronous — no Web Audio, no DOM. Unit-tested in
  * tests/personalize.test.ts.
  */
-import type { MinPhaseHrtf } from './interpolatingDsp';
+import { fft, minPhase, type MinPhaseHrtf } from './interpolatingDsp';
+import { type HrtfPcaModel, vecToCipicAzEl, nearestDirIndex, deformationCurve } from './hrtfPca';
 
 export interface HrtfPersonalization {
   /** Interaural-time-difference multiplier ("head width"). 1 = measured. */
@@ -193,4 +194,78 @@ export function personalizeMinPhase(
   }
 
   return { sampleRate, taps, count, dirs, irs, itdL, itdR };
+}
+
+/**
+ * Apply a PCA magnitude DEFORMATION (from the CIPIC model) to a min-phase set, morphing
+ * each direction's magnitude spectrum along the real-ear principal axes by `weights`
+ * (std-dev units, ±2 ≈ the extremes of the population). Timing (ITD) is untouched —
+ * PCA is magnitude-only by design. Returns a new set; `weights` all-zero returns a
+ * structural copy. This is the "refine along how ears actually vary" warp the PCA A/B
+ * search tunes; it composes AFTER the parametric warp (personalizeMinPhase).
+ *
+ * Per direction: FFT the min-phase IR → multiply |spectrum| by exp(Δlogmag), where
+ * Δlogmag is the PCA curve for the nearest CIPIC direction interpolated across bins →
+ * re-derive a min-phase IR from the new magnitude (keeps it causal + same length).
+ */
+export function personalizePcaMinPhase(
+  set: MinPhaseHrtf,
+  model: HrtfPcaModel,
+  weights: number[],
+): MinPhaseHrtf {
+  const { sampleRate, taps, count, dirs, itdL, itdR } = set;
+  if (!weights.some((w) => w !== 0)) {
+    return { sampleRate, taps, count, dirs, irs: new Float32Array(set.irs), itdL: new Float32Array(itdL), itdR: new Float32Array(itdR) };
+  }
+  const irs = new Float32Array(set.irs);
+  const stride = 2 * taps;
+  // FFT size ≥ taps, power of two.
+  let nfft = 1; while (nfft < taps) nfft <<= 1;
+  const half = nfft / 2;
+  const re = new Float64Array(nfft), im = new Float64Array(nfft);
+
+  // Cache deformation curves per nearest-dir index so repeated directions are cheap.
+  const curveCache = new Map<number, Float32Array>();
+  const curveFor = (dirIdx: number) => {
+    let c = curveCache.get(dirIdx);
+    if (!c) { c = deformationCurve(model, weights, dirIdx); curveCache.set(dirIdx, c); }
+    return c;
+  };
+
+  const applyEar = (base: number, dirIdx: number) => {
+    const curve = curveFor(dirIdx);
+    // Build a per-bin magnitude multiplier exp(Δlogmag), interpolating the (bins)-length
+    // curve across the (half+1) FFT bins.
+    re.fill(0); im.fill(0);
+    for (let i = 0; i < taps; i++) re[i] = irs[base + i];
+    fft(re, im, false);
+    for (let b = 0; b <= half; b++) {
+      const frac = b / half; // 0..1
+      const cf = frac * (model.bins - 1);
+      const ci = Math.floor(cf), cfr = cf - ci;
+      const d0 = curve[Math.min(model.bins - 1, ci)];
+      const d1 = curve[Math.min(model.bins - 1, ci + 1)];
+      const delta = d0 * (1 - cfr) + d1 * cfr;
+      const g = Math.exp(delta);
+      re[b] *= g; im[b] *= g;
+      if (b > 0 && b < half) { re[nfft - b] *= g; im[nfft - b] *= g; } // mirror
+    }
+    // Inverse FFT → magnitude spectrum in time; re-derive a clean min-phase IR so the
+    // result stays causal and the same length (matches the rest of the set).
+    fft(re, im, true);
+    const timeIr = new Float32Array(taps);
+    for (let i = 0; i < taps; i++) timeIr[i] = re[i];
+    const { mp } = minPhase(timeIr, nfft);
+    for (let i = 0; i < taps; i++) irs[base + i] = mp[i];
+  };
+
+  for (let m = 0; m < count; m++) {
+    const { az, el } = vecToCipicAzEl(dirs[m * 3], dirs[m * 3 + 1], dirs[m * 3 + 2]);
+    const dirIdx = nearestDirIndex(model, az, el);
+    const base = m * stride;
+    applyEar(base, dirIdx);
+    applyEar(base + taps, dirIdx);
+  }
+
+  return { sampleRate, taps, count, dirs, irs, itdL: new Float32Array(itdL), itdR: new Float32Array(itdR) };
 }

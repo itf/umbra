@@ -41,7 +41,7 @@ export interface MinPhaseHrtf {
 // FFT (radix-2, in-place) — small, self-contained; used only at precompute.
 // ----------------------------------------------------------------------------
 
-function fft(re: Float64Array, im: Float64Array, inverse: boolean): void {
+export function fft(re: Float64Array, im: Float64Array, inverse: boolean): void {
   const n = re.length;
   // bit reversal
   for (let i = 1, j = 0; i < n; i++) {
