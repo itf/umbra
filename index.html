@@ -26,6 +26,11 @@
            visit at "/"; deep links (/play, /level/x, /progress) bypass it. -->
       <section id="landing-screen" aria-label="About Audio Navigator" hidden></section>
 
+      <!-- "Types of clicks" help page. Content mounted by src/ui/clickTypes.ts
+           (mountClickTypes / showClickTypes). Wire from a "/clicks" route or a
+           landing/credits link in main.ts (see TODO in src/ui/clickTypes.ts). -->
+      <section id="click-types-screen" aria-label="Types of clicks" hidden></section>
+
       <!-- Level picker: shown at /play (or when a deep-link resolves back to it).
            Pick a level, then the Begin screen appears. Eyes-free: real buttons with
            descriptive labels under headings. -->
