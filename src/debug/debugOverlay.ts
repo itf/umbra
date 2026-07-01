@@ -18,6 +18,7 @@ export class DebugOverlay {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   private readout: HTMLElement;
+  private box: HTMLElement;
   private raf = 0;
 
   constructor(game: Game) {
@@ -39,13 +40,20 @@ export class DebugOverlay {
     box.appendChild(this.readout);
 
     document.body.appendChild(box);
+    this.box = box;
     this.ctx = this.canvas.getContext('2d')!;
 
     const loop = () => { this.draw(); this.raf = requestAnimationFrame(loop); };
     this.raf = requestAnimationFrame(loop);
   }
 
-  dispose() { cancelAnimationFrame(this.raf); }
+  /** Stop the draw loop and remove the overlay DOM. Idempotent. */
+  dispose() {
+    cancelAnimationFrame(this.raf);
+    this.box.remove();
+  }
+  /** Alias so callers can use either name. */
+  destroy() { this.dispose(); }
 
   /** Map a floor material name → a translucent fill so zones read apart at a glance. */
   private floorColor(mat: string): string {

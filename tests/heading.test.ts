@@ -13,13 +13,17 @@ import {
 const DEG = Math.PI / 180;
 
 describe('keyTurnDelta (keyboard turning)', () => {
-  it('Right/Down arrows and E turn positive (right); Left/Up and Q turn negative (left)', () => {
-    for (const k of ['ArrowRight', 'ArrowDown', 'e', 'E']) {
+  it('Right arrow and E turn positive (right); Left and Q turn negative (left)', () => {
+    for (const k of ['ArrowRight', 'e', 'E']) {
       expect(keyTurnDelta(k, false)).toBeCloseTo(5 * DEG, 9);
     }
-    for (const k of ['ArrowLeft', 'ArrowUp', 'q', 'Q']) {
+    for (const k of ['ArrowLeft', 'q', 'Q']) {
       expect(keyTurnDelta(k, false)).toBeCloseTo(-5 * DEG, 9);
     }
+  });
+  it('Up/Down arrows are NOT turns (Up = forward, Down = probe)', () => {
+    expect(keyTurnDelta('ArrowUp', false)).toBe(0);
+    expect(keyTurnDelta('ArrowDown', false)).toBe(0);
   });
   it('Shift makes a larger step', () => {
     expect(keyTurnDelta('ArrowRight', true)).toBeCloseTo(15 * DEG, 9);

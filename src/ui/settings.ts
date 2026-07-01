@@ -27,6 +27,21 @@ export interface SettingsHooks {
   setCompanion: (on: boolean) => void;
 
   /**
+   * AUTO-STEP: hold the forward key (W) to walk at a steady medium-slow cadence
+   * instead of one step per press. A movement-input convenience; applies immediately.
+   */
+  getAutoStep: () => boolean;
+  setAutoStep: (on: boolean) => void;
+
+  /**
+   * DEBUG OVERLAY (minimap + audio readout). Setter persists AND toggles the live
+   * overlay for the running level (main.ts wires `onDebugOverlay`). Also toggleable
+   * in-game with the G key.
+   */
+  getDebugOverlay: () => boolean;
+  setDebugOverlay: (on: boolean) => void;
+
+  /**
    * Room CLUTTER (0..1): adds scattering + absorption to tame a hard, fluttery room
    * (affects BOTH audio engines). Applies on the next level load. Setter persists.
    */
@@ -232,6 +247,20 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     hooks.say(on ? 'Companion voice on.' : 'Companion voice off.');
   });
   dialog.append(companion.row);
+
+  // --- Auto-step (hold W to walk) ---
+  const autoStep = checkboxRow('Auto-step (hold forward to walk)', hooks.getAutoStep(), (on) => {
+    hooks.setAutoStep(on);
+    hooks.say(on ? 'Auto-step on. Hold the forward key to walk.' : 'Auto-step off.');
+  });
+  dialog.append(autoStep.row);
+
+  // --- Debug overlay (minimap) ---
+  const debugOverlay = checkboxRow('Debug overlay (minimap)', hooks.getDebugOverlay(), (on) => {
+    hooks.setDebugOverlay(on);
+    hooks.say(on ? 'Debug overlay on.' : 'Debug overlay off.');
+  });
+  dialog.append(debugOverlay.row);
 
   // --- Room clutter (both engines) ---
   // Adds scattering + absorption to tame a hard, fluttery/echoey room. Baked into the

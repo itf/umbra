@@ -104,6 +104,19 @@ let settingsPanel: SettingsPanel | null = null;
  */
 let currentGame: Game | null = null;
 /**
+ * The running level's debug-overlay setter (show/hide + persist), or null when no
+ * level is active. Lets the standalone Settings panel toggle the live overlay of the
+ * current run (the run registers this on start, clears it on teardown).
+ */
+let currentDebugOverlaySetter: ((on: boolean) => void) | null = null;
+/**
+ * The running level's PROBE trigger — fires a clap/probe to hear the room (the same
+ * action as the on-screen echo button), or null when no level is active. Lets the
+ * Down-arrow key and the dedicated probe button fire it. Registered by setupClap on
+ * start, cleared on teardown.
+ */
+let currentProbeTrigger: (() => void) | null = null;
+/**
  * Whether the live run currently has the Steam Audio engine. Tracked alongside
  * `currentGame` so Apply can decide LIGHT (level tweak on a running Steam backend)
  * vs HEAVY (engine toggled) without reaching into Game internals.
@@ -848,19 +861,42 @@ startButton.addEventListener('click', async () => {
     // S key; every control wired to its existing hook, every change spoken. ---
     setupSettings(graph, teardowns);
 
-    // DEBUG (?debug=1): top-down minimap + live audio readout overlay. Dev aid only;
-    // dynamically imported so it costs nothing on the normal path.
-    if (new URLSearchParams(location.search).get('debug') === '1') {
-      void import('./debug/debugOverlay').then(({ DebugOverlay }) => new DebugOverlay(game));
-      // E2E TEST HOOK (debug-only): expose read-only game state + a deterministic
-      // step driver so the Playwright smoke harness can drive the keyboard-completion
-      // path with explicit timestamps (the normal step clock is the audio context,
-      // which doesn't advance reliably headless). NEVER attached on the normal path —
-      // gated behind ?debug=1, identical to the overlay above, so it never ships in play.
+    // DEBUG overlay: top-down minimap + live audio readout. Enabled by EITHER the
+    // `?debug=1` URL (dev deep-link, unchanged) OR the Settings "debug overlay" pref,
+    // and toggleable live with the G key (see keydown). Dynamically imported so it
+    // costs nothing when off. `debugOverlay` holds the live instance (null = hidden).
+    const urlDebug = new URLSearchParams(location.search).get('debug') === '1';
+    let debugOverlay: import('./debug/debugOverlay').DebugOverlay | null = null;
+    const showDebugOverlay = () => {
+      if (debugOverlay) return;
+      void import('./debug/debugOverlay').then(({ DebugOverlay }) => {
+        // Guard against a teardown that raced the dynamic import.
+        if (activeRun == null && !urlDebug) return;
+        debugOverlay = new DebugOverlay(game);
+      });
+    };
+    const hideDebugOverlay = () => { debugOverlay?.destroy?.(); debugOverlay = null; };
+    // Set the overlay on/off + persist. Used by the G key (toggle) and the Settings
+    // panel (via currentDebugOverlaySetter). `announce` lets the key path speak while
+    // the Settings path stays quiet (the panel speaks its own confirmation).
+    const setDebugOverlayState = (on: boolean, announce = false) => {
+      if (on) showDebugOverlay(); else hideDebugOverlay();
+      settings.setDebugOverlay(on);
+      if (announce) alert(on ? 'Debug overlay on.' : 'Debug overlay off.');
+    };
+    const toggleDebugOverlay = () => setDebugOverlayState(debugOverlay == null, true);
+    if (urlDebug || settings.debugOverlay()) showDebugOverlay();
+    // Let the standalone Settings panel drive this run's overlay (no announce — the
+    // panel speaks its own line); cleared on teardown.
+    currentDebugOverlaySetter = (on) => setDebugOverlayState(on, false);
+    teardowns.push(() => { hideDebugOverlay(); currentDebugOverlaySetter = null; });
+    // E2E TEST HOOK: expose read-only game state + a deterministic step driver so the
+    // Playwright smoke harness can drive the keyboard-completion path with explicit
+    // timestamps (the normal step clock is the audio context, which doesn't advance
+    // reliably headless). Gated behind the ?debug=1 URL only (never on the normal path).
+    if (urlDebug) {
       (window as unknown as { __ps?: unknown }).__ps = {
         debugState: () => game.debugState(),
-        // Step with an explicit monotonic timestamp so alternation/cadence rules are
-        // satisfied deterministically (no real-time flakiness). Mirrors a key press.
         step: (foot: 'L' | 'R', nowMs: number) => { if (!ended) game.step(foot, nowMs); },
         throwDecoy: (nowMs?: number) => game.throwDecoy(nowMs),
         won: () => outcome === 'won',
@@ -959,9 +995,34 @@ startButton.addEventListener('click', async () => {
       vHarder?.removeEventListener('click', onVHarder);
       vLevels?.removeEventListener('click', backToPicker);
     });
-    // Keyboard controls. A = left step, D = right step; Left/Right arrows turn
-    // (the CRITICAL keyboard-turning fix — without this the game is uncompletable
-    // without a pointer drag); B = back to level select; ? or H speaks the controls.
+    // AUTO-STEP (hold-W-to-walk). A single alternating step, and a steady timer that
+    // fires them while W is held. `autoFoot` alternates L/R just like manual stepping;
+    // the game's own cadence/alternation rules still apply (auto-step just presses the
+    // keys for you). MEDIUM-SLOW cadence so it reads as a calm walk, not a sprint.
+    const AUTO_STEP_MS = 700; // one footfall every 0.7 s ≈ a relaxed walking pace
+    let autoFoot: 'L' | 'R' = 'L';
+    let autoTimer: ReturnType<typeof setInterval> | null = null;
+    const autoStepOnce = () => {
+      if (ended) return;
+      doStep(autoFoot);
+      autoFoot = autoFoot === 'L' ? 'R' : 'L';
+    };
+    const startAutoWalk = () => {
+      if (autoTimer != null || ended) return;
+      autoStepOnce(); // immediate first step, then a steady cadence
+      autoTimer = setInterval(autoStepOnce, AUTO_STEP_MS);
+    };
+    const stopAutoWalk = () => {
+      if (autoTimer != null) { clearInterval(autoTimer); autoTimer = null; }
+    };
+    teardowns.push(stopAutoWalk);
+    // Auto-step is a KEYBOARD convenience only (hold W / Up). On mobile the footprint
+    // buttons (one step per tap) are the movement affordance — no hold-to-walk gesture.
+
+    // Keyboard controls. A = left step, D = right step, W = forward (single step, or
+    // hold-to-walk with the auto-step setting); Left/Right arrows turn (the CRITICAL
+    // keyboard-turning fix — the game is uncompletable without a pointer drag otherwise);
+    // B = back to level select; G = toggle debug overlay; ? or H speaks the controls.
     const onKeyDown = (e: KeyboardEvent) => {
       // While the settings dialog is open it owns the keyboard (its own Escape/Tab/
       // control handlers) — don't let game keys (step/turn/decoy/help/S) leak through.
@@ -978,8 +1039,25 @@ startButton.addEventListener('click', async () => {
         if (!ended && !e.repeat) setTurnDir(Math.sign(turnDelta));
         return;
       }
-      if (e.repeat) return;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      // FORWARD (W or Up arrow): does NOTHING by default — stepping is A/D. ONLY when the
+      // AUTO-STEP setting is enabled does HOLDING it walk forward at a steady medium-slow
+      // cadence (alternating feet). Handled before the `e.repeat` guard so key-repeat is
+      // irrelevant (the timer drives the cadence); startAutoWalk is idempotent.
+      if (k === 'w' || k === 'ArrowUp') {
+        e.preventDefault(); // never let Up scroll the page
+        if (settings.autoStep() && !ended) startAutoWalk();
+        return;
+      }
+      // DOWN arrow: fire the PROBE (clap to hear the room) — a dedicated key so the
+      // player doesn't need the pointer or the clashing Space bar. Swallow it so the
+      // page doesn't scroll. No-op once the run has ended.
+      if (k === 'ArrowDown') {
+        e.preventDefault();
+        if (!ended && !e.repeat) currentProbeTrigger?.();
+        return;
+      }
+      if (e.repeat) return;
       // STEP: A = left foot, D = right foot.
       if (k === 'a') doStep('L');
       else if (k === 'd') doStep('R');
@@ -991,6 +1069,7 @@ startButton.addEventListener('click', async () => {
       else if (k === 'r') { if (!ended) game.react(); }
       else if (k === 's') settingsPanel?.toggle();
       else if (k === 'b') backToPicker();
+      else if (k === 'g') toggleDebugOverlay();
       else if (k === '?' || k === 'h') speakControls();
     };
     window.addEventListener('keydown', onKeyDown);
@@ -1001,11 +1080,14 @@ startButton.addEventListener('click', async () => {
     // safely halts the turn if a dialog stole focus mid-hold.
     const onKeyUp = (e: KeyboardEvent) => {
       if (keyTurnDelta(e.key, e.shiftKey) !== 0) setTurnDir(0);
+      // Releasing the forward key (W or Up arrow) stops hold-to-walk at once.
+      const uk = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      if (uk === 'w' || uk === 'ArrowUp') stopAutoWalk();
     };
     window.addEventListener('keyup', onKeyUp);
     teardowns.push(() => window.removeEventListener('keyup', onKeyUp));
     // Safety: if focus leaves the window mid-hold, the keyup may never fire — stop then.
-    const onBlur = () => setTurnDir(0);
+    const onBlur = () => { setTurnDir(0); stopAutoWalk(); };
     window.addEventListener('blur', onBlur);
     teardowns.push(() => window.removeEventListener('blur', onBlur));
 
@@ -1354,6 +1436,17 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     },
     getCompanion: () => companionEnabled(),
     setCompanion: (on) => setCompanion(on),
+    // Auto-step (hold-W-to-walk): pure persisted pref; the in-game keydown reads it
+    // live, so no live wiring is needed.
+    getAutoStep: () => settings.autoStep(),
+    setAutoStep: (on) => settings.setAutoStep(on),
+    // Debug overlay: persist the pref AND, if a level is running, toggle the live
+    // overlay via the run's registered hook (mirrors the G key).
+    getDebugOverlay: () => settings.debugOverlay(),
+    setDebugOverlay: (on) => {
+      settings.setDebugOverlay(on);
+      currentDebugOverlaySetter?.(on);
+    },
     // Room clutter (both engines) — persisted; baked into geometry at level load, so
     // it applies on the next level (applyLevel reads settings.clutter()).
     getClutter: () => settings.clutter(),
@@ -1536,6 +1629,13 @@ function setupClap(
   };
   listenBtn?.addEventListener('click', onListen);
   teardowns.push(() => listenBtn?.removeEventListener('click', onListen));
+
+  // Dedicated PROBE key (Down arrow) fires the same clap/probe as the on-screen echo
+  // button — a keyboard shortcut so the player doesn't need the pointer or the clashing
+  // Space bar (which scrolls / activates focused controls). Registered module-level so
+  // the keydown handler (a separate closure) can call it; cleared on teardown.
+  currentProbeTrigger = onListen;
+  teardowns.push(() => { if (currentProbeTrigger === onListen) currentProbeTrigger = null; });
 
   // --- Moving walls: advance an animation clock, re-derive WALLS, and drive the
   // AMBIENT room IR continuously so you HEAR the space change. The throttle +

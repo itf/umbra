@@ -15,12 +15,13 @@
  */
 export function keyTurnDelta(key: string, shift: boolean): number {
   const step = (shift ? 15 : 5) * (Math.PI / 180);
-  // Turn RIGHT: Right/Down arrows, or E. Turn LEFT: Left/Up arrows, or Q.
-  // (Up/Down mirror Left/Right so either arrow axis turns; Q/E are a keyboard-home
-  // alternative.) Single letter keys are matched case-insensitively.
+  // Turn RIGHT: Right arrow or E. Turn LEFT: Left arrow or Q. The Up/Down arrows are
+  // deliberately NOT turns — Up is "forward" (does nothing unless Auto-step is on) and
+  // Down does nothing, so the vertical axis never rotates the player. Single letter
+  // keys matched case-insensitively.
   const k = key.length === 1 ? key.toLowerCase() : key;
-  if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'e') return step;
-  if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'q') return -step;
+  if (k === 'ArrowRight' || k === 'e') return step;
+  if (k === 'ArrowLeft' || k === 'q') return -step;
   return 0;
 }
 

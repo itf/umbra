@@ -40,6 +40,12 @@ export const STEAM_REVERB_BUS_KEY = 'ps.settings.steamReverbBus';
 /** Global room CLUTTER (0..1) added on top of each level's own clutter — tames a
  *  hard, fluttery room (more scattering + absorption). Default 0 (no extra). */
 export const CLUTTER_KEY = 'ps.settings.clutter';
+/** DEBUG OVERLAY (top-down minimap + live audio readout). Was URL-only (?debug=1);
+ *  this pref lets the Settings panel / a key toggle it too. Default OFF. */
+export const DEBUG_OVERLAY_KEY = 'ps.settings.debugOverlay';
+/** AUTO-STEP: holding the forward key walks at a constant medium-slow cadence
+ *  (accessibility / simplification) instead of one step per press. Default OFF. */
+export const AUTO_STEP_KEY = 'ps.settings.autoStep';
 
 /**
  * Per-user multi-band LOUDNESS-EQ correction curve (a utility, not a game): an
@@ -304,6 +310,35 @@ export class SettingsStore {
   }
   setClutter(v: number) {
     this.write(CLUTTER_KEY, String(clampLevel(v, 0)));
+  }
+
+  /**
+   * DEBUG OVERLAY on/off (minimap + audio readout). Default OFF. The URL `?debug=1`
+   * still force-enables it regardless (see main.ts) so the dev deep-link is unchanged;
+   * this pref is the in-app (Settings / key) toggle. `hasDebugOverlayPref` lets the URL
+   * win when the user has never expressed a preference.
+   */
+  hasDebugOverlayPref(): boolean {
+    return this.read(DEBUG_OVERLAY_KEY) != null;
+  }
+  debugOverlay(): boolean {
+    return this.read(DEBUG_OVERLAY_KEY) === '1';
+  }
+  setDebugOverlay(on: boolean) {
+    this.write(DEBUG_OVERLAY_KEY, on ? '1' : '0');
+  }
+
+  /**
+   * AUTO-STEP on/off: holding the forward key walks at a steady medium-slow cadence
+   * rather than requiring one keypress per step. Default OFF (the normal per-press
+   * alternating-foot cadence). Purely an input convenience — the game's step model is
+   * unchanged; auto-step just fires steps on a timer while the key is held.
+   */
+  autoStep(): boolean {
+    return this.read(AUTO_STEP_KEY) === '1';
+  }
+  setAutoStep(on: boolean) {
+    this.write(AUTO_STEP_KEY, on ? '1' : '0');
   }
 
   /**

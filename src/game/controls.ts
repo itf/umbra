@@ -27,12 +27,17 @@ export const CONTROLS: readonly Control[] = [
     keys: 'A and D',
     action: 'step with your left and right foot — alternate them and do not rush',
   },
-  { keys: 'Echo button', action: 'claps to hear the room' },
+  {
+    keys: 'W',
+    action: 'does nothing unless you turn on Auto-step in Settings — then hold it to walk forward at a steady pace',
+  },
+  { keys: 'Echo button, or the Down arrow', action: 'claps a probe to hear the room' },
   { keys: 'T', action: 'throws a sound decoy to lure a monster away from you' },
   {
     keys: 'S',
-    action: 'opens Settings — volume, companion voice, cues, and reset progress',
+    action: 'opens Settings — volume, companion voice, auto-step, cues, and reset progress',
   },
+  { keys: 'G', action: 'toggles the debug overlay minimap' },
   { keys: 'question mark or H', action: 'repeats these controls' },
 ] as const;
 

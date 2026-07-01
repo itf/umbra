@@ -13,9 +13,11 @@ describe('CONTROLS canonical list', () => {
     expect(keys).toEqual([
       'Arrow keys, or Q and E',
       'A and D',
-      'Echo button',
+      'W',
+      'Echo button, or the Down arrow',
       'T',
       'S',
+      'G',
       'question mark or H',
     ]);
   });
