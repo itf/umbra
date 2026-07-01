@@ -17,25 +17,13 @@
  *
  * The builder is split into a PURE `buildClickTypesDom(host, deps)` (no Web Audio,
  * injectable audio/say hooks) so it is unit-testable against a fake document, and a
- * thin `mountClickTypes(host)` that wires real audio + the app's say().
- *
- * NOTE (wiring): the router / main.ts are edited in parallel. This module only
- * builds the screen. See the TODO near `mountClickTypes` for the one-line hook
- * main.ts should add (a "/clicks" route or a landing/credits link).
+ * thin `mountClickTypes(host)` that wires real audio + the app's say(). Reached via
+ * the `/clicks` route (main.ts `showClicks`) and the landing "types of clicks" link.
  */
 import { CLICK_TYPES, type ClickType } from '../content/clickTypes';
 import { mouthClickBuffer, playMouthClick } from '../game/clickProbe';
-
-/** One recording's catalogue entry (subset of public/audio/clicks/manifest.json). */
-export interface ClickManifestEntry {
-  id: string;
-  file: string;
-  label: string;
-  author: string;
-  license: string;
-  licenseUrl: string;
-  sourceUrl: string;
-}
+import { loadClicksManifest } from '../game/clicksManifest';
+import { type ClickManifestEntry } from '../game/probeCatalog';
 
 /** Injectable hooks so the builder stays pure/testable (no Web Audio, no fetch). */
 export interface ClickTypesDeps {
@@ -51,8 +39,10 @@ export interface ClickTypesDeps {
   say: (msg: string) => void;
 }
 
-/** A CC0 license needs no attribution; anything else (CC BY-SA) does. */
-export function requiresAttribution(license: string): boolean {
+/** A CC0 license needs no attribution; anything else (CC BY-SA) does. An absent
+ *  license is treated as needing attribution (fail safe). */
+export function requiresAttribution(license: string | undefined): boolean {
+  if (!license) return true;
   return !/^\s*cc0\b/i.test(license) && !/public\s*domain/i.test(license);
 }
 
@@ -255,6 +245,8 @@ export function buildClickTypesDom(host: HTMLElement, deps: ClickTypesDeps): HTM
 
     // Attribution / credit line for recordings. REQUIRED for CC BY-SA files.
     if (entry) {
+      const author = entry.author ?? 'unknown';
+      const license = entry.license ?? 'unknown license';
       const credit = doc.createElement('p');
       credit.className = 'click-credit';
       if (requiresAttribution(entry.license)) {
@@ -262,24 +254,21 @@ export function buildClickTypesDom(host: HTMLElement, deps: ClickTypesDeps): HTM
       }
       const a = doc.createElement('a');
       a.className = 'click-source-link';
-      a.href = entry.sourceUrl;
+      a.href = entry.sourceUrl ?? '#';
       a.setAttribute('target', '_blank');
       a.setAttribute('rel', 'noopener noreferrer');
       a.textContent = entry.label;
       const lic = doc.createElement('a');
-      lic.href = entry.licenseUrl;
+      lic.href = entry.licenseUrl ?? '#';
       lic.setAttribute('target', '_blank');
       lic.setAttribute('rel', 'noopener noreferrer');
-      lic.textContent = entry.license;
+      lic.textContent = license;
       credit.appendChild(doc.createTextNode('Recording: '));
       credit.appendChild(a);
-      credit.appendChild(doc.createTextNode(` by ${entry.author}, licensed `));
+      credit.appendChild(doc.createTextNode(` by ${author}, licensed `));
       credit.appendChild(lic);
       credit.appendChild(doc.createTextNode('.'));
-      credit.setAttribute(
-        'aria-label',
-        `Recording ${entry.label} by ${entry.author}, licensed ${entry.license}.`,
-      );
+      credit.setAttribute('aria-label', `Recording ${entry.label} by ${author}, licensed ${license}.`);
       li.appendChild(credit);
     }
 
@@ -369,28 +358,15 @@ async function playSample(entry: ClickManifestEntry, say: (m: string) => void): 
 /**
  * Mount the "Types of clicks" screen into `host` with real audio + the app's say().
  * Loads the manifest, wires sample playback (fetch + decodeAudioData) and the
- * synthetic probe (playMouthClick), then builds the DOM.
- *
- * TODO(main.ts routing — parallel work): call this from a "/clicks" route (or a
- * link on the landing / credits page), e.g.:
- *     import { mountClickTypes } from './ui/clickTypes';
- *     // in the router's screen switch: hide others, then
- *     mountClickTypes(document.getElementById('click-types-screen')!, { say, onBack });
+ * synthetic probe (playMouthClick), then builds the DOM. Called by main.ts's
+ * `showClicks` (the /clicks route).
  */
 export async function mountClickTypes(
   host: HTMLElement,
   opts: { say?: (m: string) => void; onBack?: () => void } = {},
 ): Promise<void> {
   const say = opts.say ?? (() => {});
-  const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
-  let manifest: ClickManifestEntry[] = [];
-  try {
-    manifest = await fetch(`${base.replace(/\/?$/, '/')}audio/clicks/manifest.json`).then((r) =>
-      r.json(),
-    );
-  } catch {
-    manifest = [];
-  }
+  const manifest = await loadClicksManifest(); // shared, cached, BASE_URL-aware
 
   buildClickTypesDom(host, {
     manifest,
@@ -408,8 +384,8 @@ export async function mountClickTypes(
 
 /**
  * Convenience hook mirroring the `showXxx()` pattern: reveal the screen section and
- * mount it. main.ts (parallel work) owns hiding the other sections; this only
- * un-hides and mounts its own section. Safe no-op if the section is absent.
+ * mount it. The caller (main.ts) owns hiding the OTHER sections; this only un-hides
+ * and mounts its own section. Safe no-op if the section is absent.
  */
 export function showClickTypes(opts: { say?: (m: string) => void; onBack?: () => void } = {}): void {
   const section = document.getElementById('click-types-screen');

@@ -10,6 +10,8 @@
  * drift. CREDITS.md at the repo root carries the canonical text version.
  */
 
+import { loadClicksManifest } from '../game/clicksManifest';
+
 interface ClickCredit {
   label: string;
   author: string;
@@ -133,22 +135,14 @@ export async function renderCreditsScreen(
   host: HTMLElement,
   opts: { onBack: () => void; say?: (m: string) => void },
 ): Promise<void> {
-  const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
-  let clicks: ClickCredit[] = [];
-  try {
-    const manifest = (await fetch(`${base.replace(/\/?$/, '/')}audio/clicks/manifest.json`).then(
-      (r) => r.json(),
-    )) as Array<{ label: string; author: string; license: string; licenseUrl: string; sourceUrl: string }>;
-    clicks = manifest.map((m) => ({
-      label: m.label,
-      author: m.author,
-      license: m.license,
-      licenseUrl: m.licenseUrl,
-      sourceUrl: m.sourceUrl,
-    }));
-  } catch {
-    clicks = [];
-  }
+  const manifest = await loadClicksManifest(); // shared, cached, BASE_URL-aware
+  const clicks: ClickCredit[] = manifest.map((m) => ({
+    label: m.label,
+    author: m.author ?? 'unknown',
+    license: m.license ?? 'unknown license',
+    licenseUrl: m.licenseUrl ?? '#',
+    sourceUrl: m.sourceUrl ?? '#',
+  }));
   buildCreditsDom(host, { clicks, onBack: opts.onBack, say: opts.say });
   (host.querySelector('h1') as HTMLElement | null)?.focus();
   opts.say?.('Credits and licenses. Third-party sound and data attributions.');

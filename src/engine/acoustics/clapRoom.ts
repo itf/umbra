@@ -340,12 +340,11 @@ export class ClapRoom {
    *     resolveProbe() (game/debug share one catalog),
    *   - a pre-decoded AudioBuffer ⇒ played directly (recorded CC click probes; the
    *     caller loads + caches the .ogg since decode is async — see main.ts setupClap).
-   * Legacy `opts.mouthClick` is still honoured (⇒ probe 'mouthclick').
    */
-  clap(opts: { probe?: string | AudioBuffer; mouthClick?: boolean } = {}) {
+  clap(opts: { probe?: string | AudioBuffer } = {}) {
     const ctx = this.graph.ctx;
     let buf: AudioBuffer;
-    const probe = opts.probe ?? (opts.mouthClick ? 'mouthclick' : undefined);
+    const probe = opts.probe;
     // Duck-type the buffer (global `AudioBuffer` isn't defined in the node test env,
     // where buffers come from node-web-audio-api's context, so `instanceof` throws).
     if (probe != null && typeof probe !== 'string') {

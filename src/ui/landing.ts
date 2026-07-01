@@ -114,8 +114,9 @@ export function renderLandingScreen(
   how.appendChild(list);
   container.appendChild(how);
 
-  // Secondary navigation: progress + a credits placeholder (a /credits route is being
-  // added separately; until then it 404s → landing, which is fine).
+  // Secondary navigation: progress, the "types of clicks" learn page, and credits.
+  // When the router callbacks are provided they drive in-app navigation; otherwise the
+  // credits link falls back to a plain <a> (still resolves via the SPA fallback).
   const nav = document.createElement('nav');
   nav.className = 'page-links';
   nav.setAttribute('aria-label', 'More');

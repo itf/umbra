@@ -18,13 +18,21 @@
  */
 import { PROBE_PRESETS, DEFAULT_PROBE, isProbeName, type ProbeName } from '../debug/probes';
 
-/** A recording entry as read from public/audio/clicks/manifest.json (subset we use). */
+/**
+ * One recording entry from public/audio/clicks/manifest.json. The canonical shape,
+ * shared by the probe catalog, the /clicks help page, and the credits screen. Only
+ * `id`/`file`/`label` are needed to USE a recording as a probe; the attribution fields
+ * (author/license/…) are required for the CC-BY-SA credit lines the UI shows.
+ */
 export interface ClickManifestEntry {
   id: string;
   file: string; // e.g. "/audio/clicks/dental.ogg"
   label: string;
-  license?: string;
+  ipa?: string;
   author?: string;
+  license?: string;
+  licenseUrl?: string;
+  sourceUrl?: string;
 }
 
 /** One selectable probe option for a chooser UI. */

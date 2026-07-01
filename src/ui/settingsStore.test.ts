@@ -235,14 +235,22 @@ describe('SettingsStore Steam reflection / bus levels', () => {
   });
 });
 
-describe('SettingsStore realistic click probe', () => {
-  it('defaults OFF and round-trips true/false', () => {
+describe('SettingsStore probe choice', () => {
+  it('defaults to the noise-burst clap and round-trips a choice', () => {
     const s = new SettingsStore(memStorage());
-    expect(s.realisticClick()).toBe(false); // default: noise burst
+    expect(s.probeChoice()).toBe('clap');
+    s.setProbeChoice('rec:dental');
+    expect(s.probeChoice()).toBe('rec:dental');
+  });
+
+  it('migrates the legacy realistic-click toggle to the mouthclick choice', () => {
+    const s = new SettingsStore(memStorage());
+    // Simulate an upgrading user who had the old boolean ON but never set a choice.
     s.setRealisticClick(true);
-    expect(s.realisticClick()).toBe(true);
-    s.setRealisticClick(false);
-    expect(s.realisticClick()).toBe(false);
+    expect(s.probeChoice()).toBe('mouthclick');
+    // An explicit choice wins over the legacy toggle.
+    s.setProbeChoice('clap');
+    expect(s.probeChoice()).toBe('clap');
   });
 });
 

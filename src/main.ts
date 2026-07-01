@@ -33,7 +33,8 @@ import { LandingDemo } from './ui/landingDemo';
 import { mountClickTypes } from './ui/clickTypes';
 import { renderCreditsScreen } from './ui/credits';
 import { loadClicksManifest, cachedClicksManifest } from './game/clicksManifest';
-import { resolveChoice, probeOptions } from './game/probeCatalog';
+import { probeOptions } from './game/probeCatalog';
+import { ProbeResolver } from './game/probeResolver';
 import { loadCustomLoop } from './game/customAudio';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
@@ -1671,34 +1672,13 @@ function setupClap(
   const clapRoom = new ClapRoom(graph, renderer);
   const listenBtn = document.getElementById('listen') as HTMLButtonElement | null;
 
-  // PROBE CHOICE: resolve the player's chosen echo probe (Settings' probe chooser).
-  // A synth preset fires by name; a CC recording ('rec:<id>') is decoded once (async)
-  // and cached as an AudioBuffer. `probeArg()` returns what to hand clapRoom.clap():
-  // the recording buffer if loaded, else the synth name (recordings fall back to the
-  // default clap until their .ogg finishes decoding). Read live so a mid-run Settings
-  // change takes effect on the next clap.
-  let probeBuffer: AudioBuffer | null = null;
-  let probeBufferFor: string | null = null;
-  const ensureProbeBuffer = () => {
-    const choice = settings.probeChoice();
-    void loadClicksManifest().then((manifest) => {
-      const resolved = resolveChoice(choice, manifest);
-      if (!('url' in resolved)) { probeBuffer = null; probeBufferFor = choice; return; }
-      if (probeBufferFor === choice && probeBuffer) return; // already decoded
-      void loadCustomLoop(graph.ctx, resolved.url).then((buf) => {
-        probeBuffer = buf; probeBufferFor = choice;
-      }).catch(() => { probeBuffer = null; probeBufferFor = choice; });
-    });
-  };
-  ensureProbeBuffer();
-  const probeArg = (): { probe: string | AudioBuffer } => {
-    const choice = settings.probeChoice();
-    if (choice.startsWith('rec:')) {
-      if (probeBufferFor !== choice) ensureProbeBuffer(); // choice changed at runtime
-      return { probe: probeBuffer ?? 'clap' }; // buffer if ready, else fall back
-    }
-    return { probe: choice };
-  };
+  // PROBE CHOICE: the player's chosen echo probe (Settings' probe chooser). ProbeResolver
+  // owns the choice→(synth name | decoded recording buffer) resolution + async caching;
+  // `probeResolver.probe()` yields the arg for clapRoom.clap() live at fire time.
+  const probeResolver = new ProbeResolver(
+    () => settings.probeChoice(),
+    (url) => loadCustomLoop(graph.ctx, url),
+  );
 
   // The sonar budget for THIS run. Absent config ⇒ unlimited (today's free clap):
   // isManaged() is false, so no counter is shown or announced.
@@ -1754,7 +1734,7 @@ function setupClap(
     });
     // Fire the player's CHOSEN probe (Settings' probe chooser): a synth preset name or
     // a decoded CC recording buffer. Defaults to the noise-burst clap.
-    clapRoom.clap(probeArg());
+    clapRoom.clap(probeResolver.probe());
     onClap(); // count this fired clap toward the run's score (claps used)
     say('Clap! Listen to the room around you.');
     // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.

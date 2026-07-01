@@ -351,10 +351,10 @@ export class SettingsStore {
   }
 
   /**
-   * REALISTIC CLICK PROBE on/off. When on, the in-game echo/clap fires the
-   * research-modelled expert mouth click (game/clickProbe.ts) as its excitation
-   * instead of the default broadband noise burst. Default OFF (noise burst —
-   * existing behaviour unchanged). Opt-in.
+   * LEGACY realistic-click toggle. Superseded by the probe CHOOSER (`probeChoice`);
+   * no live UI reads/writes it anymore. Retained ONLY so `probeChoice()` can migrate a
+   * user who had the old boolean ON to the 'mouthclick' choice. Do not wire new UI to
+   * these — use `probeChoice`/`setProbeChoice`.
    */
   realisticClick(): boolean {
     return this.read(REALISTIC_CLICK_KEY) === '1';
