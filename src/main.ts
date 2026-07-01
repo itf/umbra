@@ -505,10 +505,13 @@ function showLanding() {
   landingScreen.hidden = false;
   renderLandingScreen(landingScreen, {
     onPlay: () => navigate({ screen: 'picker' }),
-    // TODO: repoint to a dedicated /train route once the trainer is a route in this
-    // app; for now the trainer lives on its own page (trainer.html), reached from the
-    // picker's "Echolocation trainer" link, so "Train" sends the visitor to the picker.
-    onTrain: () => navigate({ screen: 'picker' }),
+    // The trainer is its own Vite entry (trainer.html), not yet an in-SPA route. Send
+    // "Train" straight there (BASE_URL-aware) rather than bouncing via the picker.
+    // TODO: fold the trainer into a /train SPA route once trainer.html work settles.
+    onTrain: () => {
+      const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
+      location.href = `${base.replace(/\/?$/, '/')}trainer.html`;
+    },
     onProgress: () => navigate({ screen: 'progress' }),
     onCredits: () => navigate({ screen: 'credits' }),
     onClicks: () => navigate({ screen: 'clicks' }),
