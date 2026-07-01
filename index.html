@@ -20,10 +20,16 @@
       <div id="status" class="sr-region" aria-live="polite" aria-atomic="true"></div>
       <div id="alerts" class="sr-region" role="alert" aria-live="assertive"></div>
 
-      <!-- Level picker: shown first (unless ?level=… preselects one). Pick a
-           level, then the Begin screen appears. Eyes-free: real buttons with
+      <!-- Landing / About: the app's front door at "/". Frames the project as an
+           eyes-free audio game AND an echolocation trainer, with Play / Train
+           actions. Content mounted by src/ui/landing.ts. Shown for a first-time
+           visit at "/"; deep links (/play, /level/x, /progress) bypass it. -->
+      <section id="landing-screen" aria-label="About Audio Navigator" hidden></section>
+
+      <!-- Level picker: shown at /play (or when a deep-link resolves back to it).
+           Pick a level, then the Begin screen appears. Eyes-free: real buttons with
            descriptive labels under headings. -->
-      <section id="picker-screen" aria-label="Choose a level">
+      <section id="picker-screen" aria-label="Choose a level" hidden>
         <h1>Audio Navigator</h1>
         <p>Choose a level to play. Put on headphones first.</p>
         <div id="level-picker" aria-label="Level list"></div>

@@ -28,6 +28,7 @@ import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { Router, type ScreenState } from './ui/router';
 import { renderProgressScreen } from './ui/progress';
+import { renderLandingScreen } from './ui/landing';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
@@ -51,6 +52,7 @@ const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
 const statusEl = document.getElementById('status')!;
 const alertsEl = document.getElementById('alerts')!;
+const landingScreen = document.getElementById('landing-screen')!;
 const pickerScreen = document.getElementById('picker-screen')!;
 const progressScreen = document.getElementById('progress-screen')!;
 const startScreen = document.getElementById('start-screen')!;
@@ -390,7 +392,7 @@ function stopActiveRun() {
 
 /**
  * Apply a chosen Level to the module-level game state. Called when a level is
- * picked (or preselected via ?level=…), BEFORE the Begin gesture — Begin still
+ * picked (or preselected via /level/<id>…), BEFORE the Begin gesture — Begin still
  * owns the user-gesture-to-start-audio step.
  */
 function applyLevel(level: Level, displayName: string, launch: PickerSelection | null = null) {
@@ -418,6 +420,7 @@ function applyLevel(level: Level, displayName: string, launch: PickerSelection |
 
 /** Hide every top-level onboarding/start section (game screen left untouched). */
 function hideOnboardingScreens() {
+  landingScreen.hidden = true;
   pickerScreen.hidden = true;
   startScreen.hidden = true;
   calibrationScreen.hidden = true;
@@ -478,6 +481,22 @@ function runTutorial(after: () => void) {
  * only once at startup left it blank on return. Stops any in-progress run first
  * (no leaked audio/loops) and announces + focuses for eyes-free use.
  */
+function showLanding() {
+  stopActiveRun();
+  hideOnboardingScreens();
+  gameScreen.hidden = true;
+  landingScreen.hidden = false;
+  renderLandingScreen(landingScreen, {
+    onPlay: () => navigate({ screen: 'picker' }),
+    // TODO: repoint to a dedicated /train route once the trainer is a route in this
+    // app; for now the trainer lives on its own page (trainer.html), reached from the
+    // picker's "Echolocation trainer" link, so "Train" sends the visitor to the picker.
+    onTrain: () => navigate({ screen: 'picker' }),
+    onProgress: () => navigate({ screen: 'progress' }),
+    say,
+  });
+}
+
 function showPicker() {
   stopActiveRun();
   hideOnboardingScreens();
@@ -549,7 +568,7 @@ async function resolveSelection(sel: PickerSelection): Promise<Level | undefined
 }
 
 /**
- * Launch a picker selection: for builtins, route (deep-linkable ?level=<id>, so
+ * Launch a picker selection: for builtins, route (deep-linkable /level/<id>, so
  * reload restores it and Back returns to the picker); for saved/generated levels
  * apply directly (no stable URL id — transient, as before) then gate onboarding →
  * Begin. Factored out of the picker's onSelect so the victory menu (Repeat / Next /
@@ -601,7 +620,7 @@ document.getElementById('redo-tutorial')?.addEventListener('click', () => {
 });
 
 /**
- * Resolve a level id from the URL (`?level=<id>`) to its Level, then run onboarding
+ * Resolve a level id from the URL (`/level/<id>`) to its Level, then run onboarding
  * → Begin. `current` is the editor's working level; otherwise a bundled demo by id.
  * Unknown ids fall back to the picker (returning false so the router can correct
  * the URL). The DOM-only Begin reveal is `showStartScreen`; this is the loader.
@@ -628,7 +647,9 @@ function loadLevelById(id: string): boolean {
 // route), so gateOnboarding is untouched. ---
 const router = new Router({
   render: (state: ScreenState) => {
-    if (state.screen === 'picker') {
+    if (state.screen === 'landing') {
+      showLanding();
+    } else if (state.screen === 'picker') {
       showPicker();
     } else if (state.screen === 'progress') {
       showProgress();
@@ -636,7 +657,7 @@ const router = new Router({
       // An unknown/unloadable id → bounce to the picker (and fix the URL).
       if (!loadLevelById(state.level)) navigate({ screen: 'picker' }, { replace: true });
     } else {
-      showPicker();
+      showLanding();
     }
   },
 });
