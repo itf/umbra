@@ -1145,6 +1145,17 @@ startButton.addEventListener('click', async () => {
       teardowns.push(() => reactBtn.removeEventListener('click', onReact));
     }
 
+    // --- Decoy button: visible only on levels with monsters (stealth). Mirrors the T
+    // key so throwing a decoy — and thus WINNING stealth — works on touch devices.
+    const decoyBtn = document.getElementById('decoy') as HTMLButtonElement | null;
+    if (decoyBtn) {
+      const hasMonsters = (SRC_LEVEL?.monsters?.length ?? 0) > 0;
+      decoyBtn.hidden = !hasMonsters;
+      const onDecoy = () => { if (!ended && !game.throwDecoy()) alert('No decoys left.'); };
+      decoyBtn.addEventListener('click', onDecoy);
+      teardowns.push(() => decoyBtn.removeEventListener('click', onDecoy));
+    }
+
     // --- Clap to hear the room (echo button) ---
     setupClap(graph, renderer, game, () => { clapsUsed += 1; }, teardowns);
 
