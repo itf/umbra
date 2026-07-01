@@ -1,7 +1,8 @@
 [
   {
     "id": "percussive-alveolar",
-    "file": "/audio/clicks/original/Percussive_alveolar_click.ogg",
+    "file": "/audio/clicks/percussive-alveolar.ogg",
+    "original": "/audio/clicks/original/Percussive_alveolar_click.ogg",
     "label": "Percussive alveolar click",
     "ipa": "",
     "sourceFile": "Percussive_alveolar_click.ogg",
@@ -9,11 +10,12 @@
     "license": "CC0 1.0",
     "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
     "sourceUrl": "https://commons.wikimedia.org/wiki/File:Percussive_alveolar_click.ogg",
-    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing (trim to transient, resample to 48000 Hz, peak-normalize to -1 dBFS, export mono .ogg + .wav) still needs to be done later."
+    "processing": "Isolated the click from the surrounding [a] vowels, downmixed to mono, resampled to 48000 Hz, loudness/peak-normalized to ~-1 dBFS (loudnorm I=-16 TP=-1), a short natural tail kept. CC0 — derivative has no obligations."
   },
   {
     "id": "palatoalveolar",
-    "file": "/audio/clicks/original/Palatoalveolar_click.ogg",
+    "file": "/audio/clicks/palatoalveolar.ogg",
+    "original": "/audio/clicks/original/Palatoalveolar_click.ogg",
     "label": "Palatoalveolar click",
     "ipa": "ǂ",
     "sourceFile": "Palatoalveolar_click.ogg",
@@ -21,11 +23,12 @@
     "license": "CC BY-SA 3.0",
     "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
     "sourceUrl": "https://commons.wikimedia.org/wiki/File:Palatoalveolar_click.ogg",
-    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+    "processing": "Trimmed to isolate the click, mono, 48000 Hz, peak-normalized to ~-1 dBFS. This derived clip is likewise released under CC BY-SA 3.0."
   },
   {
     "id": "dental",
-    "file": "/audio/clicks/original/Dental_click.ogg",
+    "file": "/audio/clicks/dental.ogg",
+    "original": "/audio/clicks/original/Dental_click.ogg",
     "label": "Dental click",
     "ipa": "ǀ",
     "sourceFile": "Dental_click.ogg",
@@ -33,11 +36,12 @@
     "license": "CC BY-SA 3.0",
     "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
     "sourceUrl": "https://commons.wikimedia.org/wiki/File:Dental_click.ogg",
-    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+    "processing": "Trimmed to isolate the click, mono, 48000 Hz, peak-normalized. This derived clip is likewise released under CC BY-SA 3.0."
   },
   {
     "id": "alveolar-lateral",
-    "file": "/audio/clicks/original/Alveolar_lateral_click.ogg",
+    "file": "/audio/clicks/alveolar-lateral.ogg",
+    "original": "/audio/clicks/original/Alveolar_lateral_click.ogg",
     "label": "Alveolar lateral click",
     "ipa": "ǁ",
     "sourceFile": "Alveolar_lateral_click.ogg",
@@ -45,11 +49,12 @@
     "license": "CC BY-SA 3.0",
     "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
     "sourceUrl": "https://commons.wikimedia.org/wiki/File:Alveolar_lateral_click.ogg",
-    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+    "processing": "Trimmed to isolate the click, mono, 48000 Hz, peak-normalized. This derived clip is likewise released under CC BY-SA 3.0."
   },
   {
     "id": "bilabial",
-    "file": "/audio/clicks/original/Bilabial_click.ogg",
+    "file": "/audio/clicks/bilabial.ogg",
+    "original": "/audio/clicks/original/Bilabial_click.ogg",
     "label": "Bilabial click",
     "ipa": "ʘ",
     "sourceFile": "Bilabial_click.ogg",
@@ -57,6 +62,6 @@
     "license": "CC BY-SA 3.0",
     "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
     "sourceUrl": "https://commons.wikimedia.org/wiki/File:Bilabial_click.ogg",
-    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+    "processing": "Trimmed to isolate the click, mono, 48000 Hz, peak-normalized. Duller/lip-based — kept as a beacon flavour rather than a primary probe. This derived clip is likewise released under CC BY-SA 3.0."
   }
 ]
