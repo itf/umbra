@@ -138,6 +138,10 @@ let currentSteamIsSofa = false;
 /** Ambisonic order the live Steam backend was built with (1..3). Lets Apply detect an
  *  order change (a rebuild — order is baked at world creation). 0 ⇒ no Steam backend. */
 let currentSteamOrder = 0;
+/** The effective clutter (level.clutter ∨ slider) BAKED into the current geometry. Clutter
+ *  is baked into wall materials at level load, so Apply must detect a change and re-bake +
+ *  re-push the geometry live (otherwise clutter only takes effect on a full page reload). */
+let currentClutter = 0;
 
 // Companion-voice preference. OPTIONAL + remembered: defaults ON for first-timers
 // (stored pref), but `?companion=off` / `?companion=on` overrides AND persists the
@@ -430,6 +434,7 @@ function applyLevel(level: Level, displayName: string, launch: PickerSelection |
   // CLUTTER: the settings slider only ADDS to a level's own clutter (max), so a level
   // that authored clutter is never made more live by a low slider. 0 ⇒ no extra.
   const effClutter = Math.max(level.clutter ?? 0, settings.clutter());
+  currentClutter = effClutter; // remember what's baked, so Apply can detect a change
   const loaded = loadLevel(level, effClutter);
   LEVEL = loaded.game;
   ROOM = loaded.roomSize;
@@ -1488,6 +1493,23 @@ async function applySteamNow(graph: AudioGraph) {
   // Beacon volume applies to BOTH engines (it's the dry beacon voice), so apply it
   // unconditionally, before the steam-specific early-returns below.
   game.setBeaconVolume(settings.beaconVolume());
+  // CLUTTER applies to BOTH engines and is baked into wall materials at level load, so a
+  // slider change needs the geometry re-baked + re-pushed live (else it only takes effect
+  // on a full page reload). Detect a change vs what's baked and re-derive the walls/edges
+  // from the raw level with the new effective clutter, then push them into the running game.
+  if (SRC_LEVEL) {
+    const effClutter = Math.max(SRC_LEVEL.clutter ?? 0, settings.clutter());
+    if (effClutter !== currentClutter) {
+      const reloaded = loadLevel(SRC_LEVEL, effClutter);
+      WALLS = reloaded.walls;
+      EDGES = reloaded.edges;
+      SCATTER = reloaded.scattering;
+      currentClutter = effClutter;
+      // Re-push into the game (updates LEVEL.acousticWalls/edges + rebuilds the Steam
+      // scene / re-solves the modeled beacon). Same path moving-wall levels use.
+      game.setAcousticGeometry(WALLS, EDGES);
+    }
+  }
   const wantSteam = steamEnginePref();
   const wantSofa = steamSofaPref();
   const wantOrder = settings.steamReflectionOrder();
