@@ -34,6 +34,14 @@ export interface SettingsHooks {
   setAutoStep: (on: boolean) => void;
 
   /**
+   * REALISTIC CLICK PROBE: when on, the in-game echo/clap fires the research-modelled
+   * expert mouth click (game/clickProbe.ts) as its excitation instead of the default
+   * broadband noise burst. Applies to the next clap. Setter persists.
+   */
+  getRealisticClick: () => boolean;
+  setRealisticClick: (on: boolean) => void;
+
+  /**
    * DEBUG OVERLAY (minimap + audio readout). Setter persists AND toggles the live
    * overlay for the running level (main.ts wires `onDebugOverlay`). Also toggleable
    * in-game with the G key.
@@ -254,6 +262,13 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     hooks.say(on ? 'Auto-step on. Hold the forward key to walk.' : 'Auto-step off.');
   });
   dialog.append(autoStep.row);
+
+  // --- Realistic mouth-click probe ---
+  const realisticClick = checkboxRow('Realistic click probe (echo)', hooks.getRealisticClick(), (on) => {
+    hooks.setRealisticClick(on);
+    hooks.say(on ? 'Realistic mouth-click probe on.' : 'Realistic click probe off. Using the noise burst.');
+  });
+  dialog.append(realisticClick.row);
 
   // --- Debug overlay (minimap) ---
   const debugOverlay = checkboxRow('Debug overlay (minimap)', hooks.getDebugOverlay(), (on) => {

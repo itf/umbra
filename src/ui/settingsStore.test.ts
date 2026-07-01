@@ -235,6 +235,17 @@ describe('SettingsStore Steam reflection / bus levels', () => {
   });
 });
 
+describe('SettingsStore realistic click probe', () => {
+  it('defaults OFF and round-trips true/false', () => {
+    const s = new SettingsStore(memStorage());
+    expect(s.realisticClick()).toBe(false); // default: noise burst
+    s.setRealisticClick(true);
+    expect(s.realisticClick()).toBe(true);
+    s.setRealisticClick(false);
+    expect(s.realisticClick()).toBe(false);
+  });
+});
+
 describe('SettingsStore without storage (degrades to memory)', () => {
   it('keeps the session consistent', () => {
     const s = new SettingsStore(null);

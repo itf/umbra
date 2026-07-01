@@ -18,17 +18,22 @@
  *
  * See docs/engine/probe-sounds.md.
  */
+import { renderMouthClick } from '../game/clickProbe';
 
 /** A pure synth probe: builds a mono excitation buffer for a given sample rate. */
 export type ProbeGenerator = (sampleRate: number) => Float32Array;
 
-/** The available synth probe preset names. `clap` is the legacy default. */
-export type ProbeName = 'clap' | 'click' | 'hiss' | 'snap' | 'stomp';
+/**
+ * The available synth probe preset names. `clap` is the legacy default.
+ * `mouthclick` is the research-grounded expert mouth click (clickProbe.ts,
+ * 2017 Thaler/Reich model) — the recommended realistic echolocation probe.
+ */
+export type ProbeName = 'clap' | 'click' | 'hiss' | 'snap' | 'stomp' | 'mouthclick';
 
 /** The default probe (byte-compatible with the original hardcoded clap). */
 export const DEFAULT_PROBE: ProbeName = 'clap';
 
-const PROBE_NAMES: readonly ProbeName[] = ['clap', 'click', 'hiss', 'snap', 'stomp'];
+const PROBE_NAMES: readonly ProbeName[] = ['clap', 'click', 'hiss', 'snap', 'stomp', 'mouthclick'];
 
 /** Probe presets for UI pickers: name + a short human label/description. */
 export const PROBE_PRESETS: ReadonlyArray<{ name: ProbeName; label: string; hint: string }> = [
@@ -37,6 +42,7 @@ export const PROBE_PRESETS: ReadonlyArray<{ name: ProbeName; label: string; hint
   { name: 'hiss', label: 'Hiss (shh)', hint: 'sustained filtered noise — faint reflections ring out' },
   { name: 'snap', label: 'Finger snap', hint: 'bright snappy transient with a short ping' },
   { name: 'stomp', label: 'Footstep (stomp)', hint: 'a low thump + tap, like a footfall — echolocate with your steps' },
+  { name: 'mouthclick', label: 'Mouth click (realistic)', hint: 'research-modelled expert tongue click (2017 Thaler/Reich) — the recommended probe' },
 ];
 
 /** Whether a string is a known synth probe name. */
@@ -153,7 +159,22 @@ const stomp: ProbeGenerator = (sr) => {
   return ch;
 };
 
-const GENERATORS: Record<ProbeName, ProbeGenerator> = { clap, click, hiss, snap, stomp };
+/**
+ * Realistic mouth click: the 2017 Thaler/Reich expert-echolocator model
+ * (game/clickProbe.ts). Each call applies a fresh jitter SEED with a small jitter
+ * amount, so successive probes vary a few percent — repeated clicks sound natural
+ * rather than a machine-gun of one identical sample — while staying the same "voice".
+ * The generator itself is pure in (sampleRate); the per-fire variation comes from the
+ * random seed, exactly like the noise probes' `Math.random()` bodies.
+ */
+const mouthclick: ProbeGenerator = (sr) =>
+  renderMouthClick(sr, {
+    voice: 'EE1',
+    jitter: 0.03,
+    seed: (Math.random() * 0x7fffffff) | 0,
+  });
+
+const GENERATORS: Record<ProbeName, ProbeGenerator> = { clap, click, hiss, snap, stomp, mouthclick };
 
 /**
  * Resolve a (possibly unknown / missing) probe name to its pure generator,

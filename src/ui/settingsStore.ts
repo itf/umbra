@@ -46,6 +46,10 @@ export const DEBUG_OVERLAY_KEY = 'ps.settings.debugOverlay';
 /** AUTO-STEP: holding the forward key walks at a constant medium-slow cadence
  *  (accessibility / simplification) instead of one step per press. Default OFF. */
 export const AUTO_STEP_KEY = 'ps.settings.autoStep';
+/** REALISTIC CLICK PROBE: when on, the in-game echo/clap excitation is the
+ *  research-modelled expert mouth click (game/clickProbe.ts) instead of the default
+ *  broadband noise burst. Default OFF (noise burst — unchanged behaviour). */
+export const REALISTIC_CLICK_KEY = 'ps.settings.realisticClick';
 
 /**
  * Per-user multi-band LOUDNESS-EQ correction curve (a utility, not a game): an
@@ -339,6 +343,19 @@ export class SettingsStore {
   }
   setAutoStep(on: boolean) {
     this.write(AUTO_STEP_KEY, on ? '1' : '0');
+  }
+
+  /**
+   * REALISTIC CLICK PROBE on/off. When on, the in-game echo/clap fires the
+   * research-modelled expert mouth click (game/clickProbe.ts) as its excitation
+   * instead of the default broadband noise burst. Default OFF (noise burst —
+   * existing behaviour unchanged). Opt-in.
+   */
+  realisticClick(): boolean {
+    return this.read(REALISTIC_CLICK_KEY) === '1';
+  }
+  setRealisticClick(on: boolean) {
+    this.write(REALISTIC_CLICK_KEY, on ? '1' : '0');
   }
 
   /**

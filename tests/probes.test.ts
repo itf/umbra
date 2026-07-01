@@ -73,6 +73,27 @@ describe('probe generators', () => {
     expect(DEFAULT_PROBE).toBe('clap');
   });
 
+  it('mouthclick preset resolves to the realistic mouth-click buffer (~3–6ms, non-zero)', () => {
+    expect(isProbeName('mouthclick')).toBe(true);
+    expect(PROBE_PRESETS.some((p) => p.name === 'mouthclick')).toBe(true);
+    const b = resolveProbe('mouthclick')(SR);
+    // 6ms render window at 48k ≈ 288 samples.
+    expect(b.length).toBeGreaterThan(0.002 * SR);
+    expect(b.length).toBeLessThan(0.01 * SR);
+    expect(energy(b)).toBeGreaterThan(0);
+    expect(b.every((x) => Number.isFinite(x))).toBe(true);
+  });
+
+  it('mouthclick varies per fire (seeded jitter) but stays the same length', () => {
+    const a = resolveProbe('mouthclick')(SR);
+    const c = resolveProbe('mouthclick')(SR);
+    expect(a.length).toBe(c.length);
+    // Fresh random seed per call ⇒ the two renders differ somewhere.
+    let differs = false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== c[i]) { differs = true; break; }
+    expect(differs).toBe(true);
+  });
+
   it('isProbeName recognizes presets and rejects junk', () => {
     expect(isProbeName('clap')).toBe(true);
     expect(isProbeName('hiss')).toBe(true);
