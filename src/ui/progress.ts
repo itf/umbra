@@ -132,7 +132,8 @@ export function renderProgressScreen(container: HTMLElement, opts: ProgressScree
   const back = document.createElement('button');
   back.type = 'button';
   back.className = 'secondary progress-back';
-  back.textContent = 'Back to levels';
+  back.textContent = '← Back';
+  back.setAttribute('aria-label', 'Back to the previous screen');
   back.addEventListener('click', opts.onBack);
   container.appendChild(back);
 

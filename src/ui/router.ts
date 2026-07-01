@@ -146,6 +146,9 @@ export class Router {
   private render: RouterOptions['render'];
   private hist: History;
   private loc: Pick<Location, 'pathname' | 'search'>;
+  /** How many entries WE pushed this session — so `back()` knows whether a real
+   *  in-app previous screen exists to return to (else it goes Home). */
+  private depth = 0;
 
   constructor(opts: RouterOptions) {
     this.render = opts.render;
@@ -153,6 +156,7 @@ export class Router {
     this.loc = opts.location ?? window.location;
     const win = opts.window ?? window;
     win.addEventListener('popstate', () => {
+      if (this.depth > 0) this.depth--;
       this.render(this.current(), true);
     });
   }
@@ -175,11 +179,27 @@ export class Router {
       this.hist.replaceState({ screen: state.screen, level: state.level }, '', url);
     } else if (!sameScreen(cur, state)) {
       this.hist.pushState({ screen: state.screen, level: state.level }, '', url);
+      this.depth++;
     } else {
       // Same place — keep the URL but don't stack a duplicate entry.
       this.hist.replaceState({ screen: state.screen, level: state.level }, '', url);
     }
     this.render(state, false);
+  }
+
+  /**
+   * Go BACK to where we came from: if we pushed at least one in-app entry this
+   * session, use the browser history (returns to the actual previous screen); else
+   * there's nowhere in-app to go back to, so navigate to `fallback` (Home by default).
+   * This powers every screen's "Back" so it means "back to where I was", not a
+   * hardcoded target — with a sensible Home fallback on a fresh deep-link.
+   */
+  back(fallback: ScreenState = { screen: 'landing' }): void {
+    if (this.depth > 0) {
+      this.hist.back(); // popstate handler re-renders + decrements depth
+    } else {
+      this.go(fallback, { replace: true });
+    }
   }
 
   /** Render the screen for the initial URL, replacing the entry so it's canonical. */

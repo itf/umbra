@@ -112,6 +112,7 @@ function makeEnv(initialPath = '/', initialSearch = '') {
     pathname = u.pathname;
     search = u.search;
   };
+  let backCalls = 0;
   const history = {
     pushState: (state: unknown, _t: string, url: string) => {
       pushed.push({ state, url });
@@ -121,6 +122,7 @@ function makeEnv(initialPath = '/', initialSearch = '') {
       replaced.push({ state, url });
       apply(url);
     },
+    back: () => { backCalls++; },
   } as unknown as History;
   const location = {
     get pathname() { return pathname; },
@@ -131,6 +133,7 @@ function makeEnv(initialPath = '/', initialSearch = '') {
     history, location, win, pushed, replaced,
     setLocation: (p: string, s = '') => { pathname = p; search = s; },
     pop: () => popHandler?.(),
+    backCalls: () => backCalls,
   };
 }
 
@@ -187,5 +190,31 @@ describe('Router', () => {
     env.setLocation('/');
     env.pop();
     expect(render).toHaveBeenCalledWith({ screen: 'landing' }, true);
+  });
+
+  it('back() uses history.back when there is an in-app previous screen', () => {
+    const env = makeEnv('/');
+    const render = vi.fn();
+    const r = new Router({ render, history: env.history, location: env.location, window: env.win });
+    r.go({ screen: 'clicks' }); // pushed one entry (depth 1)
+    r.back();
+    expect(env.backCalls()).toBe(1); // returns to the actual previous screen
+  });
+
+  it('back() falls back to Home (replace) on a fresh deep-link with no in-app history', () => {
+    const env = makeEnv('/clicks'); // arrived directly, nothing pushed
+    const render = vi.fn();
+    const r = new Router({ render, history: env.history, location: env.location, window: env.win });
+    r.back();
+    expect(env.backCalls()).toBe(0); // no history to pop
+    expect(render).toHaveBeenLastCalledWith({ screen: 'landing' }, false);
+  });
+
+  it('back() respects a custom fallback', () => {
+    const env = makeEnv('/clicks');
+    const render = vi.fn();
+    const r = new Router({ render, history: env.history, location: env.location, window: env.win });
+    r.back({ screen: 'picker' });
+    expect(render).toHaveBeenLastCalledWith({ screen: 'picker' }, false);
   });
 });

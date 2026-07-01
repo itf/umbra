@@ -547,7 +547,7 @@ function showClicks() {
   const section = document.getElementById('click-types-screen');
   if (!section) { navigate({ screen: 'landing' }, { replace: true }); return; }
   section.hidden = false;
-  void mountClickTypes(section, { say, onBack: () => navigate({ screen: 'landing' }) });
+  void mountClickTypes(section, { say, onBack: () => navigateBack() });
 }
 
 /** Credits / licenses page (/credits): third-party attributions (CC clicks, HRTF…). */
@@ -558,7 +558,7 @@ function showCredits() {
   const section = document.getElementById('credits-screen');
   if (!section) { navigate({ screen: 'landing' }, { replace: true }); return; }
   section.hidden = false;
-  void renderCreditsScreen(section, { say, onBack: () => navigate({ screen: 'landing' }) });
+  void renderCreditsScreen(section, { say, onBack: () => navigateBack() });
 }
 
 /** Human labels for the trainer exercise types shown on the progress screen. */
@@ -603,12 +603,16 @@ function showProgress() {
     streak: dailyStreakStore.load(),
     trainer: trainerRows(),
     say,
-    onBack: () => navigate({ screen: 'picker' }),
+    onBack: () => navigateBack(),
   });
 }
 
 document.getElementById('open-progress')?.addEventListener('click', () =>
   navigate({ screen: 'progress' }),
+);
+// Home link from the picker → the landing page.
+document.getElementById('picker-home')?.addEventListener('click', () =>
+  navigate({ screen: 'landing' }),
 );
 
 /** Resolve a picker selection (builtin id, saved name, or generated) to a Level. */
@@ -734,6 +738,11 @@ const router = new Router({
 /** Navigate to a screen: pushes history + updates the URL, then renders it. */
 function navigate(state: ScreenState, opts: { replace?: boolean } = {}) {
   router.go(state, opts);
+}
+/** Go back to the previous screen (or Home if we arrived here fresh, e.g. a deep-link).
+ *  Every screen's "Back" uses this so it means "back to where I was". */
+function navigateBack() {
+  router.back({ screen: 'landing' });
 }
 // Seed the app from the initial URL (deep-link, progress, or picker), replacing the
 // entry so Back never lands on a blank pre-app state.
