@@ -161,6 +161,16 @@ export function lintLevel(level: Level): string[] {
   if ((level.requiredReactions ?? 0) > (level.events?.length ?? 0)) {
     warnings.push('requiredReactions is larger than the number of events — the level can never be won.');
   }
+  // Sequence (trail) mode needs 2+ beacons that all exist; ids must resolve.
+  if (level.sequence && level.sequence.length > 0) {
+    if (level.sequence.length < 2) {
+      warnings.push('Sequence (trail) mode needs at least 2 beacons to chain.');
+    }
+    const beaconIds = new Set(level.beacons.map((b) => b.id));
+    for (const id of level.sequence) {
+      if (!beaconIds.has(id)) warnings.push(`Sequence references beacon "${id}" which doesn't exist.`);
+    }
+  }
   if (level.goal === 'escape') {
     if (!level.exit) {
       warnings.push('Goal is "escape" but the level has no exit. Place an exit with the Exit tool.');

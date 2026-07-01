@@ -196,7 +196,7 @@ canvas.addEventListener('pointerdown', (e) => {
   }
   if (tool === 'beacon') {
     const b: BeaconObj = { id: genId('beacon'), x: wx, z: wz, freq: 440, goalRadius: 0.8 };
-    level.beacons.push(b); selectedId = b.id; renderProps(); render(); return;
+    level.beacons.push(b); selectedId = b.id; syncSequence(); renderProps(); render(); return;
   }
   if (tool === 'exit') {
     level.exit = { x: wx, z: wz }; selectedId = EXIT_ID; renderProps(); render(); return;
@@ -510,6 +510,7 @@ function deleteSelected() {
   level.ceilings = level.ceilings.filter((o) => o.id !== selectedId);
   level.monsters = level.monsters.filter((o) => o.id !== selectedId);
   if (level.absorbers) level.absorbers = level.absorbers.filter((o) => o.id !== selectedId);
+  syncSequence(); // keep the trail (if any) matching the surviving beacon list
   selectedId = null; renderProps(); render();
 }
 
@@ -624,6 +625,22 @@ function bindClapField(id: string, key: 'clapBudget' | 'clapCooldownMs') {
 }
 bindClapField('clap-budget', 'clapBudget');
 bindClapField('clap-cooldown', 'clapCooldownMs');
+
+// SEQUENCE (trail) mode: only one beacon sounds at a time, in the order the beacons
+// were added; reaching one reveals the next; win = reach the last. The checkbox derives
+// `level.sequence` from the CURRENT beacon order — call syncSequence() after any beacon
+// add/remove so the trail always matches the beacon list. Needs 2+ beacons to apply.
+const seqEl = $('sequence-mode') as HTMLInputElement;
+const seqNote = $('sequence-note') as HTMLElement;
+function syncSequence() {
+  const on = seqEl.checked && level.beacons.length >= 2;
+  if (on) level.sequence = level.beacons.map((b) => b.id);
+  else delete level.sequence;
+  seqNote.hidden = !seqEl.checked;
+}
+seqEl.checked = (level.sequence?.length ?? 0) >= 2;
+seqNote.hidden = !seqEl.checked;
+seqEl.addEventListener('change', () => { syncSequence(); markDirty(); render(); });
 
 // Clutter (0..1): empty/0 ⇒ field unset (bare room). Mirrors the budget pattern.
 const clutterEl = $('room-clutter') as HTMLInputElement;

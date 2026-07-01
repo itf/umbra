@@ -66,6 +66,12 @@
         <label>Clap budget <input id="clap-budget" type="number" min="0" step="1" placeholder="∞" aria-label="Max claps for the level (blank or 0 = unlimited)" /></label>
         <label>Clap cooldown (ms) <input id="clap-cooldown" type="number" min="0" step="50" placeholder="0" aria-label="Minimum milliseconds between claps (blank or 0 = none)" /></label>
 
+        <label title="Beacons sound one at a time in the order they were added; reaching one reveals the next. Win = reach the last.">
+          <input id="sequence-mode" type="checkbox" aria-label="Sequence (trail) mode: only one beacon sounds at a time, in creation order; reaching it reveals the next, and the win is reaching the last" />
+          Sequence (trail) mode
+        </label>
+        <p id="sequence-note" class="hint" hidden>Beacons play one at a time in the order listed above; reaching one reveals the next. Win = reach the last.</p>
+
         <h2>Reaction events</h2>
         <label>Required reactions <input id="required-reactions" type="number" min="0" step="1" placeholder="0" aria-label="Minimum reaction hits needed to win, in addition to reaching the win area (blank or 0 = ungated)" /></label>
         <div id="events-editor" aria-label="Reaction events"></div>

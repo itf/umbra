@@ -220,6 +220,29 @@ describe('lintLevel', () => {
   it('is silent for a well-formed default level', () => {
     expect(lintLevel(emptyLevel('OK'))).toEqual([]);
   });
+  it('warns when sequence mode has fewer than 2 beacons', () => {
+    const lvl = emptyLevel('L'); // one beacon by default
+    lvl.sequence = [lvl.beacons[0].id];
+    expect(lintLevel(lvl).some((w) => /at least 2 beacons/i.test(w))).toBe(true);
+  });
+  it('warns when a sequence references a missing beacon', () => {
+    const lvl = emptyLevel('L');
+    lvl.beacons = [
+      { ...lvl.beacons[0], id: 'b1' },
+      { ...lvl.beacons[0], id: 'b2', x: 3 },
+    ];
+    lvl.sequence = ['b1', 'ghost'];
+    expect(lintLevel(lvl).some((w) => /ghost.*doesn't exist/i.test(w))).toBe(true);
+  });
+  it('is silent for a valid 2-beacon sequence', () => {
+    const lvl = emptyLevel('L');
+    lvl.beacons = [
+      { ...lvl.beacons[0], id: 'b1' },
+      { ...lvl.beacons[0], id: 'b2', x: 3 },
+    ];
+    lvl.sequence = ['b1', 'b2'];
+    expect(lintLevel(lvl).filter((w) => /sequence/i.test(w))).toEqual([]);
+  });
 });
 
 describe('absorber + objective fields round-trip through export/import', () => {
