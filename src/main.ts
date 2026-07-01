@@ -1508,6 +1508,10 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     // live, so no live wiring is needed.
     getAutoStep: () => settings.autoStep(),
     setAutoStep: (on) => settings.setAutoStep(on),
+    // Realistic click probe: persisted pref; setupClap reads it live at fire time, so
+    // no live re-wiring is needed (the next clap picks up the change).
+    getRealisticClick: () => settings.realisticClick(),
+    setRealisticClick: (on) => settings.setRealisticClick(on),
     // Debug overlay: persist the pref AND, if a level is running, toggle the live
     // overlay via the run's registered hook (mirrors the G key).
     getDebugOverlay: () => settings.debugOverlay(),
@@ -1684,7 +1688,9 @@ function setupClap(
       edges: EDGES,
       speedOfSound: SPEED_OF_SOUND,
     });
-    clapRoom.clap();
+    // Opt-in: excite the room with the realistic mouth click instead of the noise
+    // burst when the player enabled 'Realistic click probe' in Settings.
+    clapRoom.clap({ mouthClick: settings.realisticClick() });
     onClap(); // count this fired clap toward the run's score (claps used)
     say('Clap! Listen to the room around you.');
     // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.

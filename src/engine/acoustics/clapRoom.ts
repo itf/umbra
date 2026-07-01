@@ -9,6 +9,7 @@ import type { HrtfRenderer } from '../hrtf/renderer';
 import { computeShoeboxTaps, computeRoomTaps, type ShoeboxParams, type WallDef, type EdgeDef } from './core';
 import { buildRoomIr } from './roomIr';
 import { scatteringFor, absorptionFor } from './materials';
+import { renderMouthClick } from '../../game/clickProbe';
 
 /** Average mid-band scattering across a room's assigned wall materials. */
 function representativeScattering(params: ShoeboxParams): number {
@@ -329,19 +330,38 @@ export class ClapRoom {
     return true;
   }
 
-  /** Fire a clap: a few ms of shaped noise through the room IR. */
-  clap() {
+  /**
+   * Fire a clap: a few ms of shaped noise through the room IR.
+   *
+   * REALISTIC-CLICK HOOK (game path): pass `{ mouthClick: true }` to excite the room
+   * with the research-modelled expert mouth click (game/clickProbe.ts, 2017
+   * Thaler/Reich) instead of the noise burst. This is the in-game opt-in wired from
+   * the 'Realistic click probe' setting (see main.ts). A fresh jitter seed per fire
+   * gives slight natural variation; the default (no opt) path is byte-UNCHANGED.
+   */
+  clap(opts: { mouthClick?: boolean } = {}) {
     const ctx = this.graph.ctx;
-    const dur = 0.01;
-    const n = Math.ceil(dur * ctx.sampleRate);
-    const buf = ctx.createBuffer(1, n, ctx.sampleRate);
-    const ch = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) {
-      // Short decaying noise burst — broadband impulse to excite all reflections.
-      // Length (~10 ms) is kept deliberately: a real mouth click spans up to ~50 ms,
-      // and shortening it thins the excitation. (Probe-masking claim measured + rejected.)
-      const env = 1 - i / n;
-      ch[i] = (Math.random() * 2 - 1) * env * env;
+    let buf: AudioBuffer;
+    if (opts.mouthClick) {
+      const data = renderMouthClick(ctx.sampleRate, {
+        voice: 'EE1',
+        jitter: 0.03,
+        seed: (Math.random() * 0x7fffffff) | 0,
+      });
+      buf = ctx.createBuffer(1, data.length, ctx.sampleRate);
+      buf.getChannelData(0).set(data);
+    } else {
+      const dur = 0.01;
+      const n = Math.ceil(dur * ctx.sampleRate);
+      buf = ctx.createBuffer(1, n, ctx.sampleRate);
+      const ch = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) {
+        // Short decaying noise burst — broadband impulse to excite all reflections.
+        // Length (~10 ms) is kept deliberately: a real mouth click spans up to ~50 ms,
+        // and shortening it thins the excitation. (Probe-masking claim measured + rejected.)
+        const env = 1 - i / n;
+        ch[i] = (Math.random() * 2 - 1) * env * env;
+      }
     }
     const src = ctx.createBufferSource();
     src.buffer = buf;
