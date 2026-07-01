@@ -18,8 +18,16 @@
  *  - An event that ENDS with no press during its window ⇒ a MISS.
  */
 
-/** The kind of reaction event. See the spec / game.ts for the audio treatment. */
-export type ReactionEventType = 'crossing' | 'door';
+/**
+ * The kind of reaction event. See the spec / game.ts for the audio treatment:
+ *  - `crossing`: a body walks fully between you and the source — a deep duck + heavy
+ *    muffle + a moving pass-by swoosh. The most obvious cue.
+ *  - `door`: a door opens so the source LEAKS louder + brighter, with a click/creak.
+ *  - `occlusion`: something briefly passes PARTLY in front of the source — a shorter,
+ *    shallower dip in level + high frequencies that restores quickly. Subtler than a
+ *    full crossing; the `depth` field tunes how deep the dip goes.
+ */
+export type ReactionEventType = 'crossing' | 'door' | 'occlusion';
 
 /**
  * One timed event. `start`/`end` are seconds from level start (end EXCLUSIVE). The
@@ -35,6 +43,34 @@ export interface ReactionEvent {
   start: number;
   /** Active window end (seconds, EXCLUSIVE). */
   end: number;
+  /**
+   * OCCLUSION-only: how deep the partial-occlusion dip goes, 0..1. 0 ⇒ barely any
+   * dip (very hard), 1 ⇒ nearly a full crossing (easy). Absent ⇒ DEFAULT_OCCLUSION_DEPTH.
+   * Ignored for 'crossing'/'door'. See game.ts `occlusionModulation`.
+   */
+  depth?: number;
+}
+
+/** Default partial-occlusion depth when an 'occlusion' event omits `depth`. */
+export const DEFAULT_OCCLUSION_DEPTH = 0.6;
+
+/**
+ * Map a partial-occlusion `depth` (0..1) to the audio modulation the game applies
+ * while the event is active: a multiplicative gain `factor` on the source's steady
+ * level and a low-pass `cutoffHz`. Deeper ⇒ quieter + more muffled. PURE so it can
+ * be unit-tested independently of Web Audio.
+ *
+ * At depth 0 the dip is negligible (factor≈0.95, cutoff≈16 kHz — the hardest to
+ * hear); at depth 1 it approaches a full crossing (factor≈0.4, cutoff≈900 Hz). The
+ * default (0.6) is a clearly-audible-but-brief partial dip.
+ */
+export function occlusionModulation(depth = DEFAULT_OCCLUSION_DEPTH): { factor: number; cutoffHz: number } {
+  const d = Math.min(1, Math.max(0, depth));
+  // Gain: 0.95 (no dip) down to 0.40 (deep). Linear in depth.
+  const factor = 0.95 - 0.55 * d;
+  // Cutoff: 16 kHz (bright) down to 900 Hz (muffled). Log-ish via exponent feel.
+  const cutoffHz = 16000 * Math.pow(900 / 16000, d);
+  return { factor, cutoffHz };
 }
 
 /** Events whose active window contains `t` (start <= t < end). Pure. */

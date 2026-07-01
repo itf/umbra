@@ -1146,6 +1146,15 @@ startButton.addEventListener('click', async () => {
       }
     } else if (LEVEL.goal === 'absorber') {
       say('Clap to hear the room, then walk to the dead spot where the echo is swallowed.');
+    } else if ((LEVEL.events?.length ?? 0) > 0) {
+      if (!primerShown) {
+        const need = LEVEL.requiredReactions ?? 0;
+        say(
+          'Listen to the steady sound. Press React — the R key or the React button — ' +
+          'the moment it briefly dips or is muffled.' +
+          (need > 0 ? ` React to at least ${need} to win, then walk to the sound.` : ''),
+        );
+      }
     } else {
       say('Walk to the beacon ahead. Alternate left and right steps — and don\'t rush.');
     }
@@ -1312,6 +1321,7 @@ function setupTurning(
 function currentPrimerMode(): PrimerMode | null {
   if (LEVEL.goal === 'escape') return 'stealth';
   if (LEVEL.goal === 'absorber') return 'absorber';
+  if ((LEVEL.events?.length ?? 0) > 0) return 'reaction';
   if (LEVEL.clapBudget != null) return 'sonar';
   return null;
 }
@@ -1328,6 +1338,12 @@ function modePrimerText(mode: PrimerMode): string {
     case 'sonar':
       return 'New mode — Sonar budget. Your claps are limited, so spend them wisely. ' +
         'Each Echo costs a clap; the button tells you how many remain.';
+    case 'reaction':
+      return 'New mode — Reaction. Listen to the steady sound ahead. Every so often ' +
+        'something briefly passes in front of it and the sound DIPS — it gets quieter ' +
+        'and more muffled for a moment. The instant you notice a dip, press React — ' +
+        'the R key, or the React button on screen. Then walk to the sound. React to ' +
+        'enough dips to win.';
   }
 }
 

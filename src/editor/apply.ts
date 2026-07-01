@@ -123,7 +123,7 @@ export function defaultEvent(id: string, sourceId: string, start = 5): ReactionE
  */
 export function applyEventProp(e: ReactionEvent, key: string, raw: string, num: number): boolean {
   if (key === 'type') {
-    if (raw === 'crossing' || raw === 'door') e.type = raw as ReactionEventType;
+    if (raw === 'crossing' || raw === 'occlusion' || raw === 'door') e.type = raw as ReactionEventType;
     return true;
   }
   if (key === 'sourceId') { e.sourceId = raw; return true; }

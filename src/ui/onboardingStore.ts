@@ -23,11 +23,12 @@ export const COMPANION_KEY = 'ps.onboarding.companion';
  * then sets its flag so it never re-walls a returning player. Keyed by the
  * GameLevel `goal`/mode id so the flags are stable and forward-compatible.
  */
-export type PrimerMode = 'absorber' | 'sonar' | 'stealth';
+export type PrimerMode = 'absorber' | 'sonar' | 'stealth' | 'reaction';
 export const MODE_PRIMER_KEY: Record<PrimerMode, string> = {
   absorber: 'ps.onboarding.primer.absorber',
   sonar: 'ps.onboarding.primer.sonar',
   stealth: 'ps.onboarding.primer.stealth',
+  reaction: 'ps.onboarding.primer.reaction',
 };
 
 type Storage = Pick<globalThis.Storage, 'getItem' | 'setItem' | 'removeItem'>;

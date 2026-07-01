@@ -42,6 +42,7 @@ import stealthChokepoint from './stealth-chokepoint.json';
 import findTheDoor from './find-the-door.json';
 import fountainCrossing from './fountain-crossing.json';
 import doorAcCorridor from './door-in-the-ac-corridor.json';
+import passingShadows from './passing-shadows.json';
 import findTheCarpet from './find-the-carpet.json';
 import findTheCarpetHalf from './find-the-carpet-half.json';
 import findTheHardWall from './find-the-hard-wall.json';
@@ -290,6 +291,13 @@ export const BUILTIN_MANIFEST: BuiltinEntry[] = [
     description: 'An AC unit hums steadily at the end of the hall. A door down the corridor opens and closes three times; while it is OPEN the AC LEAKS louder and brighter (with a click at open and close). Press React (R) when you hear the door open, then reach the far end. React to at least two to win.',
     category: 'reaction',
     json: doorAcCorridor,
+  },
+  {
+    id: 'passing-shadows',
+    name: 'Passing Shadows',
+    description: 'A radio hums steadily at the end of the room. Five times, something briefly passes PARTLY in front of it — the sound DIPS: quieter and more muffled for a moment, then recovers (with a faint swoosh). The dips vary in depth, so listen closely. Press React (R, or the on-screen React button) the instant you notice a dip, then walk to the radio. React to at least three to win.',
+    category: 'reaction',
+    json: passingShadows,
   },
 
   // --- MATERIAL clap-trainer ramp (win = area in front of the odd-one-out wall) ---
