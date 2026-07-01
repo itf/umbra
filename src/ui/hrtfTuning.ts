@@ -520,7 +520,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 
   function slider(
     label: string,
-    param: keyof HrtfPersonalization,
+    // Only the SCALAR knobs are sliders (pcaWeights is a vector, tuned via A/B).
+    param: 'itdScale' | 'elevTilt' | 'frontBackTilt' | 'notchHz' | 'notchDepth',
     min: number,
     max: number,
     stepSize: number,

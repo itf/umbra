@@ -34,6 +34,28 @@ export interface HrtfPcaModel {
   gridEl: number;
 }
 
+/** Default URL of the baked PCA model (copied into the assets tree). */
+export const PCA_MODEL_URL = '/assets/hrtf/cipic_pca.bin';
+
+let pcaModelCache: Promise<HrtfPcaModel | null> | null = null;
+/** Fetch + parse the PCA model once (cached). Resolves null if the asset is missing
+ *  or malformed, so callers degrade to no-PCA rather than break. */
+export async function loadPcaModel(url: string = PCA_MODEL_URL): Promise<HrtfPcaModel | null> {
+  if (!pcaModelCache) {
+    pcaModelCache = (async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const buf = await res.arrayBuffer();
+        return parsePcaModel(buf);
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return pcaModelCache;
+}
+
 /** Parse the .bin produced by bake-hrtf-pca.mjs. Throws on bad magic/version. */
 export function parsePcaModel(buf: ArrayBuffer): HrtfPcaModel {
   const dv = new DataView(buf);

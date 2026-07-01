@@ -47,6 +47,13 @@ export interface HrtfPersonalization {
   notchHz: number;
   /** Notch depth in dB at full elevation (0 = notch off). */
   notchDepth: number;
+  /**
+   * OPTIONAL PCA weights (std-dev units) that morph the magnitude spectrum along the
+   * CIPIC real-ear principal axes — the "refine along how ears actually vary" layer,
+   * tuned by the PCA A/B stage. Applied AFTER the parametric warp, magnitude-only (ITD
+   * untouched). Absent / all-zero = no PCA deformation. Length ≤ the model's K.
+   */
+  pcaWeights?: number[];
 }
 
 export const NEUTRAL_PERSONALIZATION: HrtfPersonalization = {
@@ -56,6 +63,14 @@ export const NEUTRAL_PERSONALIZATION: HrtfPersonalization = {
   notchHz: 7500, // mid pinna-notch range; neutral because notchDepth 0 disables it
   notchDepth: 0,
 };
+
+/** Bounds for a single PCA weight (std-dev units): ±2 ≈ the extremes of real ears. */
+export const PCA_WEIGHT_BOUND = { min: -2.5, max: 2.5 } as const;
+
+/** True when a PCA weight vector is absent or entirely zero (no deformation). */
+export function pcaIsNeutral(w: number[] | undefined): boolean {
+  return !w || !w.some((v) => v !== 0);
+}
 
 /** Staircase / slider bounds. Ranges are deliberately WIDE so the effect is clearly
  *  audible when tuning by hand (the older ±9 dB / narrow-ITD ranges were too subtle to
@@ -71,17 +86,22 @@ export const PERSONALIZATION_BOUNDS = {
 export function clampPersonalization(p: HrtfPersonalization): HrtfPersonalization {
   const c = (v: number, b: { min: number; max: number }, fb: number) =>
     Number.isFinite(v) ? Math.min(b.max, Math.max(b.min, v)) : fb;
-  return {
+  const out: HrtfPersonalization = {
     itdScale: c(p.itdScale, PERSONALIZATION_BOUNDS.itdScale, 1),
     elevTilt: c(p.elevTilt, PERSONALIZATION_BOUNDS.elevTilt, 0),
     frontBackTilt: c(p.frontBackTilt, PERSONALIZATION_BOUNDS.frontBackTilt, 0),
     notchHz: c(p.notchHz, PERSONALIZATION_BOUNDS.notchHz, 7500),
     notchDepth: c(p.notchDepth, PERSONALIZATION_BOUNDS.notchDepth, 0),
   };
+  if (Array.isArray(p.pcaWeights) && p.pcaWeights.length) {
+    out.pcaWeights = p.pcaWeights.map((w) => c(w, PCA_WEIGHT_BOUND, 0));
+  }
+  return out;
 }
 
 export function isNeutral(p: HrtfPersonalization): boolean {
-  return p.itdScale === 1 && p.elevTilt === 0 && p.frontBackTilt === 0 && p.notchDepth === 0;
+  return p.itdScale === 1 && p.elevTilt === 0 && p.frontBackTilt === 0 && p.notchDepth === 0
+    && pcaIsNeutral(p.pcaWeights);
 }
 
 /**

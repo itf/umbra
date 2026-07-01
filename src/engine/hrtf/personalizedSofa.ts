@@ -15,7 +15,8 @@
  */
 import { loadHrtf } from './sofa';
 import { precomputeMinPhase } from './interpolatingDsp';
-import { personalizeMinPhase, type HrtfPersonalization } from './personalize';
+import { personalizeMinPhase, personalizePcaMinPhase, pcaIsNeutral, type HrtfPersonalization } from './personalize';
+import { loadPcaModel } from './hrtfPca';
 import { reconstructHrtf } from './sofaExport';
 import { writeSofa } from './sofaWrite';
 
@@ -26,7 +27,12 @@ export async function buildPersonalizedSofa(
 ): Promise<ArrayBuffer> {
   const set = await loadHrtf(baseHrtfUrl);
   const baseMp = precomputeMinPhase(set);
-  const warpedMp = personalizeMinPhase(baseMp, warp);
+  let warpedMp = personalizeMinPhase(baseMp, warp);
+  // PCA refinement (real-ear magnitude morph) composes on top when weights are present.
+  if (!pcaIsNeutral(warp.pcaWeights)) {
+    const model = await loadPcaModel();
+    if (model) warpedMp = personalizePcaMinPhase(warpedMp, model, warp.pcaWeights!);
+  }
   const rec = reconstructHrtf(warpedMp);
   const bytes = await writeSofa(rec, { title: 'Personalized HRTF (Umbra)' });
   // Return a standalone ArrayBuffer (the FS view may be backed by the WASM heap).
