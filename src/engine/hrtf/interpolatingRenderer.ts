@@ -21,7 +21,8 @@
 
 import { loadHrtf, type HrtfSet } from './sofa';
 import { precomputeMinPhase, type MinPhaseHrtf } from './interpolatingDsp';
-import { personalizeMinPhase, isNeutral, type HrtfPersonalization } from './personalize';
+import { personalizeMinPhase, personalizePcaMinPhase, isNeutral, pcaIsNeutral, type HrtfPersonalization } from './personalize';
+import { loadPcaModel, type HrtfPcaModel } from './hrtfPca';
 import { DEFAULT_SPEED_OF_SOUND } from '../acoustics/core';
 import { DEFAULT_MAX_DELAY_SEC, propagationDelaySec, clampDelaySec } from './propagation';
 import type { ListenerPose } from './renderer';
@@ -57,6 +58,9 @@ export class InterpolatingHrtfRenderer {
   private listener: ListenerPose = { x: 0, y: 1.6, z: 0, yaw: 0 };
   private _speedOfSound = DEFAULT_SPEED_OF_SOUND;
   private moduleReady: Promise<void>;
+  /** Cached CIPIC PCA model (loaded on the async build when weights are used), so the
+   *  synchronous live setPersonalization can apply the PCA morph without re-fetching. */
+  private pcaModel: HrtfPcaModel | null = null;
 
   get speedOfSound(): number { return this._speedOfSound; }
   setSpeedOfSound(c: number) { if (c > 0 && Number.isFinite(c)) this._speedOfSound = c; }
@@ -76,8 +80,26 @@ export class InterpolatingHrtfRenderer {
    * leak-free way to drive the free-play "knobs" — no new AudioWorkletNodes.
    */
   setPersonalization(p: HrtfPersonalization) {
-    this.mp = isNeutral(p) ? this.baseMp : personalizeMinPhase(this.baseMp, p);
+    this.mp = this.warp(p);
     for (const s of this.sources) s.updateMp(this.mp);
+  }
+
+  /** Compose the parametric warp with the PCA magnitude morph (when weights + a cached
+   *  model are present). Pure over baseMp; returns baseMp itself when fully neutral. */
+  private warp(p: HrtfPersonalization): MinPhaseHrtf {
+    if (isNeutral(p)) return this.baseMp;
+    let mp = personalizeMinPhase(this.baseMp, p);
+    if (this.pcaModel && !pcaIsNeutral(p.pcaWeights)) {
+      mp = personalizePcaMinPhase(mp, this.pcaModel, p.pcaWeights!);
+    }
+    return mp;
+  }
+
+  /** Ensure the PCA model is loaded + cached, then (re)apply the given personalization
+   *  so a live preview picks up PCA weights. Safe no-op if the asset is missing. */
+  async ensurePcaAndApply(p: HrtfPersonalization): Promise<void> {
+    if (!this.pcaModel) this.pcaModel = await loadPcaModel();
+    this.setPersonalization(p);
   }
 
   /** @internal — sources register/unregister so setPersonalization can reach them. */
@@ -106,11 +128,17 @@ export class InterpolatingHrtfRenderer {
     opts: { maxDelaySec?: number; k?: number; personalize?: HrtfPersonalization } = {},
   ): Promise<InterpolatingHrtfRenderer> {
     const baseMp = precomputeMinPhase(set);
-    const mp = opts.personalize && !isNeutral(opts.personalize)
-      ? personalizeMinPhase(baseMp, opts.personalize)
-      : baseMp;
+    const p = opts.personalize;
+    // Load the PCA model up front only when the personalization actually uses it.
+    const pcaModel = p && !pcaIsNeutral(p.pcaWeights) ? await loadPcaModel() : null;
+    let mp = baseMp;
+    if (p && !isNeutral(p)) {
+      mp = personalizeMinPhase(baseMp, p);
+      if (pcaModel && !pcaIsNeutral(p.pcaWeights)) mp = personalizePcaMinPhase(mp, pcaModel, p.pcaWeights!);
+    }
     const ready = (ctx as any).audioWorklet.addModule(WORKLET_URL);
     const r = new InterpolatingHrtfRenderer(ctx, set, mp, baseMp, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC, ready);
+    r.pcaModel = pcaModel;
     await ready;
     return r;
   }

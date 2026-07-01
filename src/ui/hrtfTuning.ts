@@ -81,6 +81,14 @@ function withParam(
   return next;
 }
 
+/** Candidate with one PCA weight (index `k`) set to `value`, others kept. */
+function withPcaWeight(base: HrtfPersonalization, k: number, value: number, kCount: number): HrtfPersonalization {
+  const w = (base.pcaWeights ?? new Array(kCount).fill(0)).slice();
+  while (w.length < kCount) w.push(0);
+  w[k] = value;
+  return { ...base, pcaWeights: w };
+}
+
 export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => void {
   const { ctx, dest } = deps;
   // Which measured base head we're tuning on. Switchable in the UI; the chosen URL
@@ -396,6 +404,9 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let fpBuilding = false;
   /** Sighted "where is the sound" diagram, updated each frame from the loop. */
   let fpViz: ReturnType<typeof mountVisualizer> | null = null;
+  /** Whether the free-play panel is showing the 5 real-ear (PCA) sliders. */
+  let fpShowPca = false;
+  let fpPcaK = 0;
   const fpParams: HrtfPersonalization = { ...params };
 
   function teardownFreePlay() {
@@ -442,6 +453,9 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       fpGain = g;
       fpBuilt = true;
       fpStartLoop();
+      // If the real-ear (PCA) sliders are showing, make sure the model is cached on the
+      // renderer so live weight drags apply synchronously (best-effort; no-op if absent).
+      if (fpShowPca) void renderer.ensurePcaAndApply({ ...fpParams });
     } catch (err) {
       deps.alert('Audio tuning hit an error: ' + (err as Error).message);
     } finally {
@@ -555,6 +569,37 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     return wrap;
   }
 
+  /** A live slider for one PCA weight (index k), in std-dev units (−2.5..2.5). Mirrors
+   *  the parametric `slider` but writes into fpParams.pcaWeights and re-warps live. */
+  function pcaSlider(k: number): HTMLElement {
+    const wrap = document.createElement('label');
+    wrap.className = 'hrtf-knob';
+    const name = document.createElement('span');
+    const readout = document.createElement('span');
+    readout.className = 'hrtf-knob-value';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = '-2.5'; input.max = '2.5'; input.step = '0.1';
+    const cur = () => fpParams.pcaWeights?.[k] ?? 0;
+    input.value = String(cur());
+    const fmt = () => {
+      name.textContent = `Real-ear shape ${k + 1}`;
+      const v = cur();
+      readout.textContent = `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
+    };
+    fmt();
+    input.addEventListener('input', () => {
+      const w = (fpParams.pcaWeights ?? new Array(fpPcaK).fill(0)).slice();
+      while (w.length < fpPcaK) w.push(0);
+      w[k] = Number(input.value);
+      fpParams.pcaWeights = w;
+      fmt();
+      fpScheduleApply();
+    });
+    wrap.append(name, input, readout);
+    return wrap;
+  }
+
   function renderFreePlay() {
     controls.innerHTML = '';
     clearTimers();
@@ -645,6 +690,36 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       slider('Up / down notch strength', 'notchDepth', 0, 24, 1),
     );
 
+    // Rebuild the real-ear (PCA) sliders into the panel; loads the model on first show.
+    const renderPcaKnobs = () => {
+      // Drop any existing PCA sliders first.
+      for (const el of Array.from(knobs.querySelectorAll('.hrtf-pca-knob'))) el.remove();
+      if (!fpShowPca) return;
+      for (let k = 0; k < fpPcaK; k++) {
+        const el = pcaSlider(k);
+        el.classList.add('hrtf-pca-knob');
+        knobs.append(el);
+      }
+    };
+    const pcaToggle = bigButton('Show real-ear shape sliders (advanced)', async () => {
+      if (!fpShowPca) {
+        const { loadPcaModel } = await import('../engine/hrtf/hrtfPca');
+        const model = await loadPcaModel();
+        if (!model) { deps.alert('The real-ear model is unavailable in this build.'); return; }
+        fpPcaK = model.k;
+        fpShowPca = true;
+        pcaToggle.textContent = 'Hide real-ear shape sliders';
+        renderPcaKnobs();
+        // Ensure the live renderer has the model cached so drags apply immediately.
+        if (fpRenderer) await fpRenderer.ensurePcaAndApply({ ...fpParams });
+      } else {
+        fpShowPca = false;
+        pcaToggle.textContent = 'Show real-ear shape sliders (advanced)';
+        renderPcaKnobs();
+      }
+    });
+    renderPcaKnobs();
+
     const save = bigButton('Save these settings', () => {
       teardownFreePlay();
       deps.save({ ...fpParams });
@@ -660,7 +735,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     });
     const back = bigButton('Back', () => { teardownFreePlay(); showIntro(); });
 
-    controls.append(vizWrap, bases, motions, knobs, save, refine, back);
+    controls.append(vizWrap, bases, motions, knobs, pcaToggle, save, refine, back);
     void fpBuild();
     (knobs.querySelector('input') as HTMLElement | null)?.focus();
   }
@@ -823,16 +898,127 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     begin.focus();
   }
 
+  // ------------------------------------------------------------------------
+  // PCA REFINEMENT — the principled endgame. After the parametric tuning, morph the
+  // magnitude response along the axes REAL human ears vary (the CIPIC PCA model), one
+  // principal component at a time, via the SAME objective "point to the sound" scoring:
+  // two candidate weights per PC, the one that localizes better wins. Weights stay in
+  // the real-ear range (±2.5 std-dev) so it only ever morphs between measured humans.
+  // ------------------------------------------------------------------------
+  let pcaModelLoaded: import('../engine/hrtf/hrtfPca').HrtfPcaModel | null = null;
+  let pcaK = 0;
+  let pcaIdx = 0;
+  const pcaStaircases = new Map<number, Staircase>();
+
+  async function renderPca() {
+    controls.innerHTML = '';
+    clearTimers();
+    teardownAudio(); teardownFreePlay(); teardownLoc();
+    h.textContent = 'Refine to real ears';
+    p.textContent = 'Loading the real-ear model…';
+    const { loadPcaModel } = await import('../engine/hrtf/hrtfPca');
+    pcaModelLoaded = await loadPcaModel();
+    if (!pcaModelLoaded) {
+      p.textContent = 'The real-ear refinement model is unavailable in this build.';
+      controls.append(bigButton('Back', () => showIntro()));
+      return;
+    }
+    pcaK = pcaModelLoaded.k;
+    p.textContent =
+      'Same as before — a sound plays around you and you point to where you heard it. Now we morph your 3D audio along the ways real human ears differ, keeping whatever helps you locate sounds best. A couple of minutes.';
+    const vizWrap = document.createElement('div');
+    vizWrap.className = 'hrtf-viz-wrap';
+    locViz = mountVisualizer(vizWrap, { onPick: pcaOnPick });
+    controls.append(vizWrap);
+    const begin = bigButton('Begin', () => { startNoise(); pcaIdx = 0; pcaStaircases.clear(); void pcaAdvance(); }, true);
+    const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
+    controls.append(begin, back);
+    begin.focus();
+  }
+
+  function pcaStaircaseFor(k: number): Staircase {
+    let sc = pcaStaircases.get(k);
+    if (!sc) {
+      const start = params.pcaWeights?.[k] ?? 0;
+      // Coarse→fine over the real-ear weight range (±2.5 std-dev).
+      sc = new Staircase({ start, step: 1.2, minStep: 0.3, min: -2.5, max: 2.5, reversals: 2 });
+      pcaStaircases.set(k, sc);
+    }
+    return sc;
+  }
+
+  async function pcaAdvance() {
+    if (disposed || !pcaModelLoaded) return;
+    while (pcaIdx < pcaK) {
+      const sc = pcaStaircaseFor(pcaIdx);
+      if (sc.done) {
+        const w = (params.pcaWeights ?? new Array(pcaK).fill(0)).slice();
+        while (w.length < pcaK) w.push(0);
+        w[pcaIdx] = sc.current; params.pcaWeights = w;
+        pcaIdx++; continue;
+      }
+      locTrial = sc.nextTrial();
+      locAttempts = [];
+      locWhich = 'a';
+      const warp = withPcaWeight(params, pcaIdx, locTrial.a, pcaK);
+      await locEnsureRenderer(warp);
+      await locPlayAndAsk();
+      return;
+    }
+    // All PCs done — commit + save.
+    teardownLoc();
+    deps.save(params);
+    deps.say('Refinement complete. Your 3D audio is tuned to how real ears vary.');
+    deps.alert('Refinement complete.');
+    deps.onDone();
+  }
+
+  /** Pointing handler for the PCA stage — scores like localization, but the winner
+   *  advances the PCA weight staircase (not a parametric one). */
+  function pcaOnPick(sx: number, sy: number, vcfg: { w: number; h: number; scale: number }) {
+    if (!locTarget || !locViz) return;
+    const guess = screenToDirection(sx, sy, vcfg);
+    const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
+    locViz.setGuess({ x: gx, y: gy, z: gz });
+    locViz.showSource(true);
+    const err = angularError(locTarget, guess);
+    locAttempts.push({ which: locWhich, error: err });
+    const degOff = Math.round((err * 180) / Math.PI);
+    p.textContent = `You were about ${degOff}° off. Next…`;
+    const id = setTimeout(() => pcaNextAttempt(), 1000);
+    seqTimers.push(id);
+  }
+
+  async function pcaNextAttempt() {
+    if (disposed || !locTrial) return;
+    const sc = pcaStaircaseFor(pcaIdx);
+    const verdict = decideWinner(locAttempts, ATTEMPTS_PER_CANDIDATE);
+    if (verdict) {
+      sc.answer(verdict, locTrial);
+      const w = (params.pcaWeights ?? new Array(pcaK).fill(0)).slice();
+      while (w.length < pcaK) w.push(0);
+      w[pcaIdx] = sc.current; params.pcaWeights = w;
+      return pcaAdvance();
+    }
+    const na = locAttempts.filter((a) => a.which === 'a').length;
+    const nb = locAttempts.filter((a) => a.which === 'b').length;
+    locWhich = na <= nb ? 'a' : 'b';
+    const warp = withPcaWeight(params, pcaIdx, locWhich === 'a' ? locTrial.a : locTrial.b, pcaK);
+    await locEnsureRenderer(warp);
+    await locPlayAndAsk();
+  }
+
   function showIntro() {
     controls.innerHTML = '';
     h.textContent = 'Personalize your 3D audio';
     p.textContent =
-      'Tune 3D audio to your ears. Best first: POINT TO THE SOUND — we play a sound around you, you point where you heard it, and we keep the tuning that makes you most accurate. Or adjust by hand with the KNOBS, or take the GUIDED “which felt better” test. Nothing saves until you choose to.';
+      'Tune 3D audio to your ears. Best first: POINT TO THE SOUND — we play a sound around you, you point where you heard it, and we keep the tuning that makes you most accurate. Or adjust by hand with the KNOBS, or take the GUIDED “which felt better” test. When you’ve tuned the basics, REFINE TO REAL EARS morphs along how human ears actually vary. Nothing saves until you choose to.';
     const localizeBtn = bigButton('Point to the sound (recommended)', () => { startNoise(); renderLocalization(); }, true);
     const knobsBtn = bigButton('Adjust by hand (knobs)', () => { startNoise(); renderFreePlay(); });
     const guided = bigButton('Guided “which felt better” test', () => { startNoise(); renderExercise(); });
+    const pcaBtn = bigButton('Refine to real ears (advanced)', () => { startNoise(); void renderPca(); });
     const skipBtn = bigButton('Skip', skip);
-    controls.append(localizeBtn, knobsBtn, guided, skipBtn);
+    controls.append(localizeBtn, knobsBtn, guided, pcaBtn, skipBtn);
     (controls.querySelector('button') as HTMLElement).focus();
   }
 

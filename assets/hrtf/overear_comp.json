@@ -1,0 +1,71 @@
+{
+  "name": "overear_comp",
+  "description": "Gentle static over-ear headphone compensation EQ (average-inverse of ARI HpIR set). Apply on master bus for over-ear headphone users.",
+  "provenance": {
+    "source_dataset": "ARI HpIR database (HpIRs of human listeners)",
+    "source_url": "http://sofacoustics.org/data/headphones/ari",
+    "headphone_model": "Sennheiser HD 580 (over-ear, open)",
+    "license": "Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)",
+    "attribution": "Acoustics Research Institute, Austrian Academy of Sciences (Vienna)",
+    "n_listeners": 40,
+    "n_measurements": 290,
+    "gain_cap_db": 6.0,
+    "safety_scale": 0.75,
+    "correction_band_hz": [
+      300,
+      16000
+    ],
+    "date": "2026-07-01"
+  },
+  "sampleRate": 48000,
+  "biquads": [
+    {
+      "type": "peaking",
+      "freq": 400,
+      "Q": 1.0,
+      "gainDb": 0.04
+    },
+    {
+      "type": "peaking",
+      "freq": 800,
+      "Q": 1.0,
+      "gainDb": -0.45
+    },
+    {
+      "type": "peaking",
+      "freq": 1600,
+      "Q": 1.0,
+      "gainDb": -0.69
+    },
+    {
+      "type": "peaking",
+      "freq": 3000,
+      "Q": 1.2,
+      "gainDb": -2.05
+    },
+    {
+      "type": "peaking",
+      "freq": 5000,
+      "Q": 1.4,
+      "gainDb": -4.59
+    },
+    {
+      "type": "peaking",
+      "freq": 7000,
+      "Q": 1.4,
+      "gainDb": 0.07
+    },
+    {
+      "type": "peaking",
+      "freq": 9000,
+      "Q": 1.4,
+      "gainDb": 2.01
+    },
+    {
+      "type": "peaking",
+      "freq": 12000,
+      "Q": 1.2,
+      "gainDb": 1.8
+    }
+  ]
+}
