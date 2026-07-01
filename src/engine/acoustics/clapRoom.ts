@@ -10,98 +10,7 @@ import { computeShoeboxTaps, computeRoomTaps, type ShoeboxParams, type WallDef, 
 import { buildRoomIr } from './roomIr';
 import { scatteringFor, absorptionFor } from './materials';
 import { resolveProbe } from '../../debug/probes';
-import { getIrPair, nearestDir, sphericalToVec } from '../hrtf/sofa';
-
-/**
- * Where your OWN probe is emitted, relative to your head. Rendering the dry probe
- * through the HRIR for this direction makes the sound you FIRE localize at the
- * spot on your body it comes from — so the returning wall echoes are heard as
- * displaced from that reference, which is what makes the echolocation cue legible.
- * Without it the self-sound is a flat, placeless blip the echoes have nothing to
- * sit "in front of".
- *
- * Each probe has a natural body origin:
- *  - a tongue/mouth CLICK: between the ears (az 0°), a bit BELOW the interaural
- *    axis (where the mouth is), essentially on the head.
- *  - a hand CLAP / snap: below AND in front (hands at chest height).
- *  - a STOMP: down and in front (foot).
- * Elevation is negative = below; a slight frontal bias is implicit in az 0°
- * (the HRTF places az-0 sources in front, not inside the head).
- */
-/**
- * A self-source has one of two emission MODELS:
- *
- *  - 'inhead' — the sound is produced INSIDE the skull (a tongue/mouth click is made
- *    at the palate, between the ears). It is NOT "out in front", so a measured
- *    far-field HRIR (which carries front/pinna cues) would wrongly externalize it.
- *    Instead we HAND-BUILD a diotic near-field pair: near-identical L/R (ITD≈0 →
- *    centred), no pinna coloration, a gentle HF tilt so it reads as palatal/bone-
- *    conducted rather than a bright external click. Tunable via MOUTH_NEARFIELD.
- *
- *  - 'hrir' — the sound is produced OUT ON THE BODY (hands at chest, foot on the
- *    floor). These DO externalize, so we use the measured HRIR for their direction
- *    (az 0° front-centre; negative elevation = below the interaural axis).
- */
-type EmitModel =
-  | { model: 'inhead' }
-  | { model: 'hrir'; azDeg: number; elDeg: number };
-
-const MOUTH_EMIT: EmitModel = { model: 'inhead' };
-const EMIT_MODELS: Record<string, EmitModel> = {
-  mouthclick: MOUTH_EMIT,
-  click: MOUTH_EMIT,
-  hiss: MOUTH_EMIT,
-  clap: { model: 'hrir', azDeg: 0, elDeg: -35 }, // hands at chest, below + in front
-  snap: { model: 'hrir', azDeg: 0, elDeg: -8 }, // fingers up near the head, just in front
-  stomp: { model: 'hrir', azDeg: 0, elDeg: -70 }, // foot, well below
-};
-/** Emission model for a probe name (recorded buffers fall back to the mouth). */
-function emitModelFor(probe: string | AudioBuffer | undefined): EmitModel {
-  if (typeof probe === 'string' && EMIT_MODELS[probe]) return EMIT_MODELS[probe];
-  return MOUTH_EMIT;
-}
-
-/**
- * HAND-TUNED near-field pair for the in-head (mouth) click. Change these to taste —
- * this is the "manually modify it" knob for how the tongue click sits in the head.
- *   - `lead`   : short leading zero-pad (samples-ish, scaled by SR) before the kernel,
- *                so it doesn't sit exactly at buffer[0] (avoids a hard DC edge).
- *   - `hfTilt` : one-pole lowpass coefficient in [0,1). 0 = no coloration (bright,
- *                sits toward the front); higher = duller (more "inside the head" /
- *                bone-conducted). ~0.35 reads as a palatal click without going muddy.
- *   - `earBias`: tiny L/R gain asymmetry (0 = perfectly diotic/centred). Keep ~0;
- *                a hair (e.g. 0.02) can stop it feeling unnaturally point-collapsed.
- *   - `taps`   : kernel length in samples (short — this is a near-impulse, not an IR).
- */
-const MOUTH_NEARFIELD = { leadMs: 0.1, hfTilt: 0.35, earBias: 0.0, taps: 24 };
-
-/**
- * Build the diotic in-head near-field HRIR pair (L, R) for the mouth click.
- * PURE — no Web Audio; the caller wraps it in an AudioBuffer. A short one-pole-
- * lowpassed impulse, duplicated to both ears (with an optional hair of L/R bias).
- */
-function buildMouthNearField(sampleRate: number): { left: Float32Array; right: Float32Array } {
-  const { leadMs, hfTilt, earBias, taps } = MOUTH_NEARFIELD;
-  const lead = Math.max(0, Math.round((leadMs / 1000) * sampleRate));
-  const n = lead + Math.max(1, taps);
-  const mono = new Float32Array(n);
-  // Impulse at `lead`, then a short one-pole lowpass tail (HF tilt → duller/in-head).
-  let y = 0;
-  for (let i = lead; i < n; i++) {
-    const x = i === lead ? 1 : 0;
-    y = hfTilt * y + (1 - hfTilt) * x;
-    mono[i] = y;
-  }
-  // Normalize to unit peak so it sits at a predictable level vs the reflection path.
-  let peak = 0;
-  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(mono[i]));
-  if (peak > 0) for (let i = 0; i < n; i++) mono[i] /= peak;
-  const left = new Float32Array(n);
-  const right = new Float32Array(n);
-  const gl = 1 - earBias, gr = 1 + earBias;
-  for (let i = 0; i < n; i++) { left[i] = mono[i] * gl; right[i] = mono[i] * gr; }
-  return { left, right };
-}
+import { SelfSource } from './selfSource';
 
 /** Average mid-band scattering across a room's assigned wall materials. */
 function representativeScattering(params: ShoeboxParams): number {
@@ -269,14 +178,11 @@ export class ClapRoom {
   /** The clap excitation feeds whichever convolver(s) are live. */
   private clapBus: GainNode;
   /**
-   * DRY self-source: the sound of your OWN probe, localized at the spot on your
-   * body it comes from (mouth/hands/foot). The dry click convolves through a
-   * short near-field HRIR for the probe's emit direction and plays at t=0, so you
-   * hear it in front-and-below BEFORE the room echoes return. Its HRIR buffer is
-   * (re)built per emit direction and cached. Null until the first clap builds one.
+   * DRY self-source: the sound of your OWN probe, localized at the spot on your body
+   * it comes from (mouth/hands/foot), played at t=0 so you hear it BEFORE the room
+   * echoes return. Shared with the trainer via engine/acoustics/selfSource.ts.
    */
-  private selfDry: GainNode;
-  private selfIrCache = new Map<string, AudioBuffer>();
+  private self: SelfSource;
 
   // --- live (moving-walls) throttle + dirty-check state ---
   private lastBuildMs = 0;
@@ -291,9 +197,7 @@ export class ClapRoom {
     this.wet.gain.value = 1.0;
     this.wet.connect(graph.master);
     this.clapBus = ctx.createGain();
-    this.selfDry = ctx.createGain();
-    this.selfDry.gain.value = 1.0;
-    this.selfDry.connect(graph.master);
+    this.self = new SelfSource(ctx, renderer.set, graph.master, 1.0);
 
     const makeChain = (): RoomChain => {
       const convolver = ctx.createConvolver();
@@ -445,46 +349,6 @@ export class ClapRoom {
    *   - a pre-decoded AudioBuffer ⇒ played directly (recorded CC click probes; the
    *     caller loads + caches the .ogg since decode is async — see main.ts setupClap).
    */
-  /**
-   * The near-field HRIR (stereo) for an emit direction, as an AudioBuffer, cached.
-   * We reuse the loaded SOFA set: pick the nearest measured direction to (az,el)
-   * and use its L/R pair. That carries the correct ITD≈0 / gentle below-elevation
-   * pinna cue so the dry probe images at the mouth/hands/foot rather than inside
-   * the head. (Measured HRIRs are far-field; at these tiny distances the near-field
-   * ILD boost is minor and we accept the far-field pair — the DIRECTION is what
-   * localizes it, and that's exactly right here.)
-   */
-  private selfIr(emit: EmitModel): AudioBuffer | null {
-    const ctx = this.graph.ctx;
-    // In-head mouth click: a hand-built diotic near-field pair, NOT a measured HRIR
-    // (a far-field HRIR would externalize what is produced inside the skull).
-    if (emit.model === 'inhead') {
-      const key = 'inhead';
-      const cached = this.selfIrCache.get(key);
-      if (cached) return cached;
-      const { left, right } = buildMouthNearField(ctx.sampleRate);
-      const buf = ctx.createBuffer(2, left.length, ctx.sampleRate);
-      buf.getChannelData(0).set(left);
-      buf.getChannelData(1).set(right);
-      this.selfIrCache.set(key, buf);
-      return buf;
-    }
-    const key = `${emit.azDeg},${emit.elDeg}`;
-    const cached = this.selfIrCache.get(key);
-    if (cached) return cached;
-    const set = this.renderer.set;
-    if (!set || set.count === 0) return null;
-    const [x, y, z] = sphericalToVec(emit.azDeg, emit.elDeg);
-    const idx = nearestDir(set, x, y, z);
-    if (idx < 0) return null;
-    const { left, right } = getIrPair(set, idx);
-    const buf = ctx.createBuffer(2, set.taps, set.sampleRate);
-    buf.getChannelData(0).set(left);
-    buf.getChannelData(1).set(right);
-    this.selfIrCache.set(key, buf);
-    return buf;
-  }
-
   clap(opts: { probe?: string | AudioBuffer } = {}) {
     const ctx = this.graph.ctx;
     let buf: AudioBuffer;
@@ -528,18 +392,12 @@ export class ClapRoom {
     src.connect(shelf);
     shelf.connect(this.clapBus); // feeds both convolver chains (crossfaded)
 
-    // DRY SELF-SOURCE: the same excitation, convolved through the near-field HRIR
-    // for this probe's emit direction (mouth/hands/foot), played at t=0. This is
-    // the sound of your OWN probe, localized in-front-and-below — the reference the
-    // room echoes are heard to displace from. Uses the RAW click (not the HF-shelved
-    // one) since that shelf exists to brighten the ECHO, not what leaves your body.
-    const selfIr = this.selfIr(emitModelFor(probe));
-    if (selfIr) {
-      const conv = ctx.createConvolver();
-      conv.normalize = false;
-      conv.buffer = selfIr;
-      src.connect(conv).connect(this.selfDry);
-    }
+    // DRY SELF-SOURCE: the same excitation, localized at the probe's body origin
+    // (mouth/hands/foot) and played at t=0 — the reference the room echoes are heard
+    // to displace from. Uses the RAW click (not the HF-shelved one) since that shelf
+    // exists to brighten the ECHO, not what leaves your body.
+    this.self.setProbe(probe);
+    if (this.self.ready) src.connect(this.self.input);
 
     src.start();
   }

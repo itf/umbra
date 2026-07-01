@@ -13,6 +13,7 @@ import { computeRoomTaps } from '../engine/acoustics/core';
 import { buildRoomIr } from '../engine/acoustics/roomIr';
 import { type Scene, sceneWalls } from './scenes';
 import { resolveProbe, type ProbeName } from './probes';
+import { SelfSource } from '../engine/acoustics/selfSource';
 import { loadCustomLoop } from '../game/customAudio';
 import type { SpatialBackend } from '../game/game';
 import type { SteamSourceHandle } from '../engine/steamaudio/backend';
@@ -31,6 +32,13 @@ export class ScenePlayer {
   private scene: Scene | null = null;
   private tones: Array<{ src: HrtfSource | SteamSourceHandle; osc: OscillatorNode; lfo: OscillatorNode; pos: [number, number, number] }> = [];
   private convolver: ConvolverNode;
+  /**
+   * DRY self-source: the sound of the probe YOU fire, localized at its body origin
+   * (mouth/hands/foot). Matters MORE here than in-game — the trainer's exercises are
+   * pure echolocation, so a legible self-click anchor is exactly the point. Shared
+   * with ClapRoom via engine/acoustics/selfSource.ts.
+   */
+  private self: SelfSource;
   private yaw = 0;
   /**
    * Optional Steam Audio backend (when the trainer's high-fidelity toggle is on).
@@ -52,6 +60,7 @@ export class ScenePlayer {
     this.convolver = graph.ctx.createConvolver();
     this.convolver.normalize = false;
     this.convolver.connect(graph.master);
+    this.self = new SelfSource(graph.ctx, renderer.set, graph.master, 1.0);
   }
 
   /** Set (or clear) the Steam Audio backend used for continuous tone sources. */
@@ -219,6 +228,14 @@ export class ScenePlayer {
     const src = ctx.createBufferSource();
     src.buffer = this.probeBuffer();
     src.connect(this.convolver);
+
+    // DRY SELF-SOURCE: the same excitation localized at the probe's body origin,
+    // played at t=0 — the reference the scene's echoes are heard to displace from.
+    // A recorded (buffer) probe has no emit model, so it falls back to the mouth.
+    const emitName = typeof this.probe === 'string' ? this.probe : undefined;
+    this.self.setProbe(emitName);
+    if (this.self.ready) src.connect(this.self.input);
+
     src.start();
   }
 

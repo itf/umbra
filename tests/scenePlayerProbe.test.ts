@@ -26,7 +26,10 @@ function fakeGraph(sampleRate = 48000) {
   const created: { buffer: AudioBuffer | null; started: boolean }[] = [];
   const ctx = {
     sampleRate,
-    createConvolver: () => ({ normalize: true, connect: vi.fn(), buffer: null }),
+    // connect() returns its destination so chained `.connect(a).connect(b)` works,
+    // matching Web Audio (SelfSource wires input→convolver→dest that way).
+    createGain: () => ({ gain: { value: 1 }, connect: (d: unknown) => d }),
+    createConvolver: () => ({ normalize: true, connect: (d: unknown) => d, buffer: null }),
     createBuffer: (_ch: number, length: number): FakeBuf => {
       const data = new Float32Array(length);
       return { length, data, getChannelData: () => data };
