@@ -49,6 +49,14 @@ export interface ReactionEvent {
    * Ignored for 'crossing'/'door'. See game.ts `occlusionModulation`.
    */
   depth?: number;
+  /**
+   * Emit an audible transient on top of the space-change: a moving pass-by swoosh
+   * ('crossing'/'occlusion') or a door click/creak at open + close ('door'). DEFAULT
+   * FALSE — the event is silent and detectable ONLY by how the space's sound changes.
+   * Set true for levels that want the extra physical hint (an easier / more literal
+   * cue). See game.ts `onEventStart` / `onEventEnd`.
+   */
+  audibleCue?: boolean;
 }
 
 /** Default partial-occlusion depth when an 'occlusion' event omits `depth`. */

@@ -874,36 +874,44 @@ export class Game {
       const newMisses = sc.misses - this.reactionMissed.size;
       for (let i = 0; i < newMisses; i++) {
         this.reactionMissed.add(`miss-${this.reactionMissed.size}`);
+        reactionCue(this.graph.ctx, this.graph.master, 'miss');
         this.cb.onMissed?.(sc);
       }
     }
   }
 
   /**
-   * An event's active window OPENED: 'crossing' DUCKS + muffles its source (a body
-   * passes between you and it) and plays a moving pass-by swoosh; 'door' OPENS so its
-   * source LEAKS (louder + brighter) and plays a click/creak. Audio-only; ear-verified.
+   * An event's active window OPENED. By DEFAULT the event emits NO sound of its own —
+   * it is detectable ONLY by how the SPACE changes: 'crossing' DUCKS + muffles its
+   * source (a body passes between you and it); 'occlusion' is a shallower depth-tuned
+   * dip; 'door' OPENS so its source LEAKS (louder + brighter). The change is smoothed
+   * (setAmbientModulation) so the transition itself doesn't click. Only when the event
+   * opts in with `audibleCue` do we ALSO emit the physical transient (pass-by swoosh /
+   * door click) as an easier, more literal hint.
    */
   private onEventStart(e: ReactionEvent) {
     if (e.type === 'crossing') {
       this.setAmbientModulation(e.sourceId, 0.35, 700); // duck + muffle (occluded)
-      this.playPassBy(e.sourceId);
+      if (e.audibleCue) this.playPassBy(e.sourceId);
     } else if (e.type === 'occlusion') {
       // PARTLY occluded — a shorter, shallower dip in level + highs (something
       // passes in front of the source, not fully between you and it). Depth-tuned.
       const { factor, cutoffHz } = occlusionModulation(e.depth);
       this.setAmbientModulation(e.sourceId, factor, cutoffHz);
-      this.playPassBy(e.sourceId);
+      if (e.audibleCue) this.playPassBy(e.sourceId);
     } else {
       this.setAmbientModulation(e.sourceId, 1.6, 18000); // leak louder + brighter
-      this.playDoorClick(this.ambientPos(e.sourceId), true);
+      if (e.audibleCue) this.playDoorClick(this.ambientPos(e.sourceId), true);
     }
   }
 
-  /** An event's window CLOSED: restore the source to normal + play the end transient. */
+  /**
+   * An event's window CLOSED: restore the source to normal. Emits the closing door
+   * transient only when the event opted into `audibleCue`.
+   */
   private onEventEnd(e: ReactionEvent) {
     this.setAmbientModulation(e.sourceId, 1, 18000); // back to normal
-    if (e.type === 'door') this.playDoorClick(this.ambientPos(e.sourceId), false);
+    if (e.type === 'door' && e.audibleCue) this.playDoorClick(this.ambientPos(e.sourceId), false);
   }
 
   /** World xz of a named ambient source (for placing a transient), or the listener. */
@@ -921,6 +929,9 @@ export class Game {
     if (this.ended) return 'ignored';
     const t = Math.max(0, (nowMs - this.startMs) / 1000);
     const outcome = this.reaction.press(t);
+    // Audible cue (independent of TTS) so a press is never silent. 'ignored' is a
+    // redundant press on an already-credited event — no cue, matching the spoken side.
+    if (outcome !== 'ignored') reactionCue(this.graph.ctx, this.graph.master, outcome);
     this.cb.onReaction?.(outcome, this.reaction.score());
     return outcome;
   }
@@ -1479,6 +1490,50 @@ export function winChime(ctx: BaseAudioContext, dest: AudioNode) {
     osc.stop(t + 0.75);
     last = osc;
   });
+  if (last) (last as OscillatorNode).onended = () => { try { out.disconnect(); } catch { /* noop */ } };
+}
+
+/**
+ * Non-speech audio cue for a reaction outcome, through the master bus so it's
+ * audible regardless of the (opt-in, default-off) TTS setting. The live region +
+ * TTS still carry the words for screen-reader / eyes-free users; this is the cue
+ * a sighted player actually hears. Three distinct shapes:
+ *  - hit:         a bright rising two-note ping (rewarding).
+ *  - false-alarm: a short low buzz (a gentle "no").
+ *  - miss:        a soft descending two-note (a sigh — "that one got past you").
+ */
+export function reactionCue(
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  outcome: 'hit' | 'false-alarm' | 'miss',
+) {
+  const t0 = ctx.currentTime;
+  const out = ctx.createGain();
+  out.gain.value = 0.5;
+  out.connect(dest);
+  // (frequency, startOffset) pairs per outcome.
+  const spec: { type: OscillatorType; notes: [number, number][] } =
+    outcome === 'hit'
+      ? { type: 'triangle', notes: [[880, 0], [1318.5, 0.08]] }
+      : outcome === 'false-alarm'
+        ? { type: 'sawtooth', notes: [[180, 0]] }
+        : { type: 'sine', notes: [[520, 0], [392, 0.1]] };
+  let last: OscillatorNode | null = null;
+  for (const [f, off] of spec.notes) {
+    const t = t0 + off;
+    const osc = ctx.createOscillator();
+    osc.type = spec.type;
+    osc.frequency.value = f;
+    const env = ctx.createGain();
+    const peak = outcome === 'false-alarm' ? 0.28 : 0.4;
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(peak, t + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.0008, t + 0.22);
+    osc.connect(env).connect(out);
+    osc.start(t);
+    osc.stop(t + 0.26);
+    last = osc;
+  }
   if (last) (last as OscillatorNode).onended = () => { try { out.disconnect(); } catch { /* noop */ } };
 }
 

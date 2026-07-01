@@ -51,6 +51,8 @@ import { renderControlsSpeech } from './game/controls';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
 import { mountLoudnessEq } from './ui/loudnessEqUi';
+import { mountHrtfTuning, baseHrtfById } from './ui/hrtfTuning';
+import { isNeutral as isNeutralPersonalization } from './engine/hrtf/personalize';
 import { buildEqChain, type EqChain } from './ui/loudnessEqAudio';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
 import type { SpatialBackend } from './game/game';
@@ -59,6 +61,16 @@ const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
 const statusEl = document.getElementById('status')!;
 const alertsEl = document.getElementById('alerts')!;
+const reactScoreEl = document.getElementById('react-score');
+
+/** Render the live reaction tally (hits / misses / false alarms) into #react-score. */
+function renderReactScore(score: { hits: number; misses: number; falseAlarms: number }) {
+  if (!reactScoreEl) return;
+  reactScoreEl.innerHTML =
+    `<span class="rs-hit">✔ ${score.hits}</span>&nbsp;&nbsp;` +
+    `<span class="rs-miss">✘ ${score.misses}</span>&nbsp;&nbsp;` +
+    `<span class="rs-fa">! ${score.falseAlarms}</span>`;
+}
 const landingScreen = document.getElementById('landing-screen')!;
 const pickerScreen = document.getElementById('picker-screen')!;
 const progressScreen = document.getElementById('progress-screen')!;
@@ -70,6 +82,11 @@ const startLevelName = document.getElementById('start-level-name');
 const calibrationScreen = document.getElementById('calibration-screen')!;
 const tutorialScreen = document.getElementById('tutorial-screen')!;
 const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
+// Pre-room toggle: on levels with reaction events, whether events emit an audible
+// physical hint (pass-by swoosh / door click) on top of the space-change. Off = the
+// intended "listen to the space" mode; the row is hidden entirely on levels without events.
+const reactCueToggle = document.getElementById('react-cue-toggle') as HTMLInputElement | null;
+const reactCueRow = document.getElementById('react-cue-row');
 
 const onboarding = new OnboardingStore();
 const settings = new SettingsStore();
@@ -478,6 +495,10 @@ function showStartScreen() {
   gameScreen.hidden = true;
   startScreen.hidden = false;
   startButton.disabled = false;
+  // Reaction-cue toggle: only relevant on levels that HAVE reaction events. Hidden
+  // otherwise; defaults OFF (silent events) each time the Begin screen is shown.
+  if (reactCueRow) reactCueRow.hidden = (SRC_LEVEL?.events?.length ?? 0) === 0;
+  if (reactCueToggle) reactCueToggle.checked = false;
   startButton.focus();
 }
 
@@ -507,6 +528,11 @@ function runCalibration(after: () => void) {
     alert,
     applySwap: applyChannelSwap,
     saveLoudnessEq: (curve) => settings.setLoudnessEq(curve),
+    saveHrtfPersonalization: (p) => settings.setHrtfPersonalization(p),
+    loadHrtfPersonalization: () => settings.hrtfPersonalization(),
+    loadHrtfBase: () => settings.hrtfBase(),
+    saveHrtfBase: (id) => settings.setHrtfBase(id),
+    hrtfUrl: HRTF_URL,
     onDone: after,
   });
 }
@@ -778,7 +804,10 @@ startButton.addEventListener('click', async () => {
     // below is the single applier the settings panel also calls.
     setMasterVolume(graph, settings.masterVolume());
     const { ctx } = graph;
-    const renderer = await HrtfRenderer.create(ctx, HRTF_URL);
+    // Use the user's chosen base head-response (SADIE default, or CIPIC), so the
+    // whole game renders on the set they calibrated against.
+    const baseHrtfUrl = baseHrtfById(settings.hrtfBase()).url;
+    const renderer = await HrtfRenderer.create(ctx, baseHrtfUrl);
     // Alien physics: if the level sets a speed of sound, the live beacon/monster
     // propagation delay + Doppler use it too (the clap gets it per-update below),
     // so the whole space sounds coherently slow/fast.
@@ -823,7 +852,9 @@ startButton.addEventListener('click', async () => {
     if (wantInterp && !steam) {
       try {
         const { InterpolatingHrtfRenderer } = await import('./engine/hrtf/interpolatingRenderer');
-        interpRenderer = await InterpolatingHrtfRenderer.fromSetAsync(ctx, renderer.set);
+        interpRenderer = await InterpolatingHrtfRenderer.fromSetAsync(ctx, renderer.set, {
+          personalize: settings.hrtfPersonalization(),
+        });
         if (SPEED_OF_SOUND != null) interpRenderer.setSpeedOfSound(SPEED_OF_SOUND);
       } catch (e) {
         console.warn('[papasangre] interpolating HRTF unavailable — using legacy beacon.', e);
@@ -849,6 +880,13 @@ startButton.addEventListener('click', async () => {
     // read back by the game's injected `clapsUsed` getter when it builds the result.
     let clapsUsed = 0;
     const levelId = LEVEL_ID; // snapshot the picked level's id for this run's result
+    // Apply the pre-room "audible hint" choice to this run's events. Off (default) ⇒
+    // events are silent, revealed only by the space changing; on ⇒ each event also
+    // emits its physical transient (pass-by swoosh / door click) as an easier cue.
+    if (LEVEL.events) {
+      const wantCue = reactCueToggle?.checked ?? false;
+      for (const e of LEVEL.events) e.audibleCue = wantCue;
+    }
     // The OPTIONAL companion-voice adapter for THIS level's mode. A no-op when the
     // companion preference is off (checked per-fire), so the game behaves exactly
     // as before when disabled — it only ever AUGMENTS the existing cues below.
@@ -930,12 +968,13 @@ startButton.addEventListener('click', async () => {
         companion.progress(companionBand(d));
       },
       // Reaction mechanic (Part C): spoken, eyes-free signal-detection feedback.
-      onReaction: (outcome) => {
+      onReaction: (outcome, score) => {
         if (outcome === 'hit') alert('Detected.');
         else if (outcome === 'false-alarm') alert('False alarm.');
         // 'ignored' (a redundant press) is intentionally silent.
+        renderReactScore(score);
       },
-      onMissed: () => alert('Missed one.'),
+      onMissed: (score) => { alert('Missed one.'); renderReactScore(score); },
     }, undefined, steam, interpRenderer, { levelId, clapsUsed: () => clapsUsed });
 
     // Expose the running game + its engine state for the live Settings "Apply now"
@@ -1196,6 +1235,11 @@ startButton.addEventListener('click', async () => {
     if (reactBtn) {
       const hasEvents = (SRC_LEVEL?.events?.length ?? 0) > 0;
       reactBtn.hidden = !hasEvents;
+      // Live tally under the button (hits / misses / false alarms).
+      if (reactScoreEl) {
+        reactScoreEl.hidden = !hasEvents;
+        if (hasEvents) renderReactScore(game.reactionScore());
+      }
       const onReact = () => { if (!ended) game.react(); };
       reactBtn.addEventListener('click', onReact);
       teardowns.push(() => reactBtn.removeEventListener('click', onReact));
@@ -1661,6 +1705,36 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       settings.clearLoudnessEq();
       applyLoudnessEq(graph); // live: drop the EQ from the master path
     },
+    // Parametric HRTF personalization — re-run the movement-based tuning game
+    // standalone (same flow as onboarding). Persisted immediately; the warp is
+    // applied when the beacon renderer is (re)built, i.e. on the NEXT level start
+    // (we can't hot-swap the running worklet's HRIR table), so we say as much.
+    runHrtfTuning: () => {
+      settingsPanel?.close();
+      const host = document.getElementById('settings-screen');
+      if (!host) return;
+      host.hidden = false;
+      mountHrtfTuning(host, {
+        ctx: graph.ctx,
+        dest: graph.master,
+        hrtfUrl: HRTF_URL,
+        say,
+        alert,
+        save: (p) => {
+          settings.setHrtfPersonalization(p);
+          say('Personalization saved. It applies the next time a level loads.');
+        },
+        start: settings.hrtfPersonalization(),
+        baseHrtfId: settings.hrtfBase(),
+        saveBaseHrtf: (id) => settings.setHrtfBase(id),
+        onDone: () => {
+          setupSettings(graph, []);
+          settingsPanel?.open();
+        },
+      });
+    },
+    hasHrtfPersonalization: () => !isNeutralPersonalization(settings.hrtfPersonalization()),
+    clearHrtfPersonalization: () => settings.clearHrtfPersonalization(),
     // Spoken-voice (TTS). Each setter persists AND re-pushes into the live Speech
     // wrapper so the change applies immediately (and the test-voice sample uses it).
     ttsSupported: () => speech.isSupported(),
