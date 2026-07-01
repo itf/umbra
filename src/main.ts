@@ -39,7 +39,7 @@ import { loadCustomLoop } from './game/customAudio';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
-import { SettingsStore } from './ui/settingsStore';
+import { SettingsStore, DEFAULT_HRTF_BASE } from './ui/settingsStore';
 import { mountSettings, type SettingsPanel } from './ui/settings';
 import { Speech } from './ui/speech';
 import { TrainerStore } from './trainer/trainerStore';
@@ -53,6 +53,7 @@ import { mountTutorial } from './ui/tutorial';
 import { mountLoudnessEq } from './ui/loudnessEqUi';
 import { mountHrtfTuning, baseHrtfById } from './ui/hrtfTuning';
 import { isNeutral as isNeutralPersonalization } from './engine/hrtf/personalize';
+import { encodeProfile as encodeHrtfProfile, decodeProfile as decodeHrtfProfile } from './ui/hrtfProfileCode';
 import { buildEqChain, type EqChain } from './ui/loudnessEqAudio';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
 import type { SpatialBackend } from './game/game';
@@ -1752,6 +1753,32 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     },
     hasHrtfPersonalization: () => !isNeutralPersonalization(settings.hrtfPersonalization()),
     clearHrtfPersonalization: () => settings.clearHrtfPersonalization(),
+    // Export the personalized head response as a .sofa for other programs.
+    exportHrtfSofa: async () => {
+      const { buildPersonalizedSofa } = await import('./engine/hrtf/personalizedSofa');
+      const baseUrl = baseHrtfById(settings.hrtfBase()).url;
+      const buf = await buildPersonalizedSofa(baseUrl, settings.hrtfPersonalization());
+      const blob = new Blob([buf], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'umbra-head-response.sofa';
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      say('Head response exported.');
+    },
+    // Share / load a compact profile code (the 5 warp params + chosen base head).
+    shareHrtfProfile: () =>
+      encodeHrtfProfile({ base: settings.hrtfBase(), params: settings.hrtfPersonalization() }),
+    loadHrtfProfile: (code: string) => {
+      const prof = decodeHrtfProfile(code, DEFAULT_HRTF_BASE);
+      if (!prof) return false;
+      settings.setHrtfBase(prof.base);
+      settings.setHrtfPersonalization(prof.params);
+      return true;
+    },
     // Spoken-voice (TTS). Each setter persists AND re-pushes into the live Speech
     // wrapper so the change applies immediately (and the test-voice sample uses it).
     ttsSupported: () => speech.isSupported(),

@@ -130,6 +130,20 @@ export interface SettingsHooks {
   runHrtfTuning?: () => void;
   hasHrtfPersonalization?: () => boolean;
   clearHrtfPersonalization?: () => void;
+  /**
+   * Download the user's personalized head response as a standard .sofa file for use
+   * in OTHER programs (Steam Audio, OpenAL Soft, etc.). Async — builds the SOFA on
+   * demand. Shown only when wired AND a personalization exists.
+   */
+  exportHrtfSofa?: () => Promise<void>;
+  /**
+   * Copy a short SHARE CODE encoding the user's profile ({base, params}) so it can be
+   * loaded on another device / by another person ("load my head response"). Returns
+   * the code string (also copied to clipboard by the caller).
+   */
+  shareHrtfProfile?: () => string;
+  /** Apply a pasted share code, returning true on success (false = invalid code). */
+  loadHrtfProfile?: (code: string) => boolean;
 
   /** Wipe trainer + streak + onboarding/primer flags; returns after clearing. */
   resetProgress: () => void;
@@ -494,6 +508,8 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   // --- Parametric HRTF personalization (optional 3D-audio head-response tuning) ---
   let hrtfStatus: HTMLElement | null = null;
   let clearHrtfBtn: HTMLButtonElement | null = null;
+  let exportHrtfBtn: HTMLButtonElement | null = null;
+  let shareHrtfBtn: HTMLButtonElement | null = null;
   const refreshHrtf = () => {
     if (!hrtfStatus) return;
     const has = hooks.hasHrtfPersonalization?.() ?? false;
@@ -501,6 +517,9 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       ? 'Your 3D audio is personalized to your ears.'
       : 'Using the default 3D-audio head response.';
     if (clearHrtfBtn) clearHrtfBtn.hidden = !has;
+    // Export/share only make sense once there's something personalized to export.
+    if (exportHrtfBtn) exportHrtfBtn.hidden = !has;
+    if (shareHrtfBtn) shareHrtfBtn.hidden = !has;
   };
   if (hooks.runHrtfTuning) {
     const group = document.createElement('div');
@@ -524,8 +543,73 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
       refreshHrtf();
     });
 
+    // Export the personalized head response as a .sofa for other programs.
+    if (hooks.exportHrtfSofa) {
+      exportHrtfBtn = document.createElement('button');
+      exportHrtfBtn.type = 'button';
+      exportHrtfBtn.className = 'settings-hrtf-export';
+      exportHrtfBtn.textContent = 'Export my head response (.sofa)';
+      exportHrtfBtn.addEventListener('click', async () => {
+        const btn = exportHrtfBtn!;
+        const prev = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Preparing…';
+        try {
+          await hooks.exportHrtfSofa!();
+        } catch (e) {
+          hooks.alert('Export failed: ' + (e as Error).message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = prev;
+        }
+      });
+    }
+
+    // Share a short profile code ("load my head response" on another device).
+    if (hooks.shareHrtfProfile) {
+      shareHrtfBtn = document.createElement('button');
+      shareHrtfBtn.type = 'button';
+      shareHrtfBtn.className = 'settings-hrtf-share';
+      shareHrtfBtn.textContent = 'Copy my profile code';
+      shareHrtfBtn.addEventListener('click', async () => {
+        const code = hooks.shareHrtfProfile!();
+        try {
+          await navigator.clipboard?.writeText(code);
+          hooks.alert('Profile code copied to clipboard.');
+        } catch {
+          // Clipboard blocked — surface the code so the user can copy it manually.
+          hooks.alert('Your profile code: ' + code);
+        }
+      });
+    }
+
+    // Load a pasted profile code (always available — you can load without having one).
+    let loadRow: HTMLElement | null = null;
+    if (hooks.loadHrtfProfile) {
+      loadRow = document.createElement('div');
+      loadRow.className = 'settings-hrtf-load';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'Paste a profile code to load a head response';
+      input.className = 'settings-hrtf-load-input';
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.textContent = 'Load';
+      loadBtn.addEventListener('click', () => {
+        const code = input.value.trim();
+        if (!code) return;
+        const ok = hooks.loadHrtfProfile!(code);
+        hooks.alert(ok ? 'Head response loaded. It applies next time a level loads.' : 'That profile code was not valid.');
+        if (ok) { input.value = ''; refreshHrtf(); }
+      });
+      loadRow.append(input, loadBtn);
+    }
+
     refreshHrtf();
     group.append(hrtfStatus, run, clearHrtfBtn);
+    if (exportHrtfBtn) group.append(exportHrtfBtn);
+    if (shareHrtfBtn) group.append(shareHrtfBtn);
+    if (loadRow) group.append(loadRow);
     dialog.append(group);
   }
 
