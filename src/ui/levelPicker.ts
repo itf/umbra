@@ -187,6 +187,16 @@ export interface RenderOptions {
    * beat. Returns '' (or undefined) for levels never completed. Purely additive.
    */
   bestFor?: (item: PickerItem) => string | undefined;
+  /**
+   * Optional PROBE CHOOSER shown atop the picker so the player can set which echo/probe
+   * they fire BEFORE entering a level (not only from in-game Settings). Same backing
+   * store as Settings, so the two stay in sync. Absent ⇒ no chooser rendered.
+   */
+  probeChooser?: {
+    options: () => { id: string; label: string; hint: string }[];
+    get: () => string;
+    set: (id: string) => void;
+  };
 }
 
 /**
@@ -200,6 +210,9 @@ export interface RenderOptions {
 export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): PickerItem[] {
   const model = buildPickerModel(opts.builtins, opts.savedNames);
   container.replaceChildren();
+
+  // Probe chooser (optional): pick your echo/probe before entering a level.
+  if (opts.probeChooser) renderProbeChooser(container, opts.probeChooser);
 
   // Sandbox / Freeplay first (the new endless-content entry), if enabled.
   if (opts.onSelect) renderSandboxSection(container, opts.onSelect);
@@ -263,6 +276,41 @@ export function renderLevelPicker(container: HTMLElement, opts: RenderOptions): 
  * collects (mode, difficulty, seed) and hands them to `onSelect` as a
  * source:'generated' selection. A starting seed counter advances on "Another".
  */
+/**
+ * Render the probe chooser section: a labelled <select> of probe options (synth
+ * presets + CC recordings) backed by the same store Settings uses, so a choice here
+ * takes effect in-game and shows in Settings.
+ */
+function renderProbeChooser(
+  container: HTMLElement,
+  chooser: NonNullable<RenderOptions['probeChooser']>,
+): void {
+  const section = document.createElement('section');
+  section.className = 'picker-group probe-chooser-group';
+  const h = document.createElement('h2');
+  h.textContent = 'Probe sound (your echo)';
+  section.appendChild(h);
+  const label = document.createElement('label');
+  label.className = 'probe-chooser-row';
+  const span = document.createElement('span');
+  span.textContent = 'Echo probe';
+  const sel = document.createElement('select');
+  sel.setAttribute('aria-label', 'Probe sound — the echo you fire to hear the room');
+  const current = chooser.get();
+  for (const o of chooser.options()) {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = o.label;
+    opt.title = o.hint;
+    if (o.id === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change', () => chooser.set(sel.value));
+  label.append(span, sel);
+  section.appendChild(label);
+  container.appendChild(section);
+}
+
 export function renderSandboxSection(
   container: HTMLElement,
   onSelect: (sel: PickerSelection) => void,

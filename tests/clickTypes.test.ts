@@ -169,10 +169,11 @@ describe('buildClickTypesDom', () => {
     expect(card.byClass('click-no-recording')).toBeDefined();
   });
 
-  it('has a synthetic-probe button on every card wired to onPlayProbe', () => {
+  it('has ONE shared synthetic-probe button (not one per card), wired to onPlayProbe', () => {
     const { host, onPlayProbe } = render();
     const probes = host.allByClass('click-play-probe');
-    expect(probes).toHaveLength(CLICK_TYPES.length);
+    // Only one synthetic click exists, so a single shared control — not one per type.
+    expect(probes).toHaveLength(1);
     probes[0].click();
     expect(onPlayProbe).toHaveBeenCalledTimes(1);
   });

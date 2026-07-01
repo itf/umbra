@@ -164,9 +164,28 @@ export function buildClickTypesDom(host: HTMLElement, deps: ClickTypesDeps): HTM
     'A reference for the tongue and mouth clicks used in echolocation. Every true click is ' +
     'made on a mouth-suction (velaric) airstream: seal the back of the tongue to the soft ' +
     'palate, make a second closure forward, pull the tongue to lower the pressure, then release ' +
-    'the front closure so air pops in. For each click you can hear the recording and the ' +
-    'synthetic probe, read how to make it, and open a "?" for the fine detail.';
+    'the front closure so air pops in. For each click you can hear its recording, read how to ' +
+    'make it, and open a "?" for the fine detail.';
   host.appendChild(intro);
+
+  // ONE shared synthetic probe for the whole page: the app synthesizes a single
+  // canonical mouth click (the 2017 Thaler/Reich model, EE1) — not a separate synth per
+  // consonant — so it lives here once rather than as a misleading per-card button.
+  const synthRow = doc.createElement('p');
+  synthRow.className = 'click-synth-row';
+  const synthLabel = doc.createElement('span');
+  synthLabel.textContent = 'The app’s synthetic echolocation probe (one canonical mouth click): ';
+  synthRow.appendChild(synthLabel);
+  synthRow.appendChild(
+    button(
+      doc,
+      'Play synthetic probe',
+      'Play the app’s synthetic echolocation probe — one canonical modelled mouth click',
+      'click-play-probe',
+      () => deps.onPlayProbe(),
+    ),
+  );
+  host.appendChild(synthRow);
 
   const list = doc.createElement('ul');
   list.className = 'click-list';
@@ -227,15 +246,11 @@ export function buildClickTypesDom(host: HTMLElement, deps: ClickTypesDeps): HTM
       controls.appendChild(noRec);
     }
 
-    controls.appendChild(
-      button(
-        doc,
-        'Play synthetic probe',
-        `Play the synthetic echolocation probe for the ${click.name}`,
-        'click-play-probe',
-        () => deps.onPlayProbe(),
-      ),
-    );
+    // NOTE: no per-card synthetic probe. There is ONE synthetic mouth-click model
+    // (clickProbe.ts, EE1) — not a distinct synth per consonant — so a per-card
+    // "synthetic probe" would falsely imply each click type is separately synthesized.
+    // The single shared synthetic probe lives once, in the page intro (see below).
+    // The per-card RECORDINGS above ARE the genuinely-distinct per-type sounds.
     li.appendChild(controls);
 
     // Attribution / credit line for recordings. REQUIRED for CC BY-SA files.
@@ -301,7 +316,8 @@ export function buildClickTypesDom(host: HTMLElement, deps: ClickTypesDeps): HTM
   h1.focus();
   deps.say(
     `Types of clicks. ${CLICK_TYPES.length} tongue and mouth clicks for echolocation. ` +
-      'For each one you can play a recording and the synthetic probe, and open its help for how to make it.',
+      'For each one you can play its recording and open its help for how to make it. ' +
+      'One shared synthetic probe is at the top.',
   );
 
   return h1;

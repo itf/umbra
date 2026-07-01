@@ -140,6 +140,14 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .progress-uncleared { display: block; font-size: 0.8rem; color: #777; margin-top: 2px; }
 .progress-back { margin-top: 16px; }
 
+/* Probe chooser on the picker: a labelled select, matching the sandbox controls. */
+.probe-chooser-row { display: flex; align-items: center; gap: 12px; margin: 8px 0; }
+.probe-chooser-row span { color: #bbb; font-size: 0.9rem; }
+.probe-chooser-row select {
+  flex: 1; padding: 10px 12px; background: #1a1a1a; color: #fff; border: 1px solid #333;
+  border-radius: 10px; min-height: var(--touch); font-size: 0.95rem;
+}
+
 /* Sandbox / Freeplay section: mode + difficulty controls and generate buttons. */
 .sandbox-form { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
 .sandbox-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: #bbb; flex: 1 1 160px; }

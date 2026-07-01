@@ -658,6 +658,13 @@ async function mountPicker() {
     // Surface each level's stored best ("Best: 42 seconds, 6 claps"). The score is
     // keyed by the level's display label (the same id applyLevel records under).
     bestFor: (item) => summarizeBest(scoreStore.best(item.label)) || undefined,
+    // Probe chooser on the picker — same settings-backed store as the in-game Settings
+    // panel, so a choice here is honoured in-level and stays in sync.
+    probeChooser: {
+      options: () => probeOptions(cachedClicksManifest() ?? []),
+      get: () => settings.probeChoice(),
+      set: (id) => settings.setProbeChoice(id),
+    },
   });
   // Land focus on the first level so the picker is immediately operable eyes-free.
   (host.querySelector('button, [tabindex]') as HTMLElement | null)?.focus();
