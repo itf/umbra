@@ -36,5 +36,10 @@ grep -rl headTracked "$DST/dist" >/dev/null || { echo "FAIL: headTracked missing
 for s in _sa_hrtf_create_sofa _sa_ambisonics_binaural_effect_create _sa_ambisonics_binaural_effect_apply; do
   grep -q "$s" "$DST/dist/bindings/phonon_bindings.js" || { echo "FAIL: WASM export $s missing"; exit 1; }
 done
-echo "OK: vendored dist contains SOFA + head-tracked reflections."
+echo "Verifying pathing (diffraction) support in vendored dist ..."
+for s in _sa_probe_batch_create _sa_path_baker_bake _sa_simulator_run_pathing _sa_source_get_pathing_outputs _sa_path_effect_apply; do
+  grep -q "$s" "$DST/dist/bindings/phonon_bindings.js" || { echo "FAIL: pathing WASM export $s missing"; exit 1; }
+done
+grep -rl createProbeBatch "$DST/dist" >/dev/null || { echo "FAIL: pathing JS API (createProbeBatch) missing from JS dist"; exit 1; }
+echo "OK: vendored dist contains SOFA + head-tracked reflections + pathing diffraction."
 echo "NOTE: vendor/three-steam-audio/package.json is hand-maintained (do not overwrite)."

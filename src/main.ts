@@ -244,6 +244,10 @@ async function buildSteamBackend(
     // the ?engine=steam-sofa URL override. Either enables the fork's custom-SOFA path.
     const wantSofa = settings.steamSofaHrtf()
       || new URLSearchParams(location.search).get('engine') === 'steam-sofa';
+    // PATHING (directional diffraction) — opt-in via the ?engine=steam-path URL override.
+    // Off by default even on the steam path (adds a per-level probe bake + a per-frame
+    // diffraction sim), so plain ?engine=steam is unchanged.
+    const wantPathing = new URLSearchParams(location.search).get('engine') === 'steam-path';
     const reflectionWetLevel = settings.steamReflectionWet();
     const reflectionBusLevel = settings.steamReflectionBus();
     const reverbBusLevel = settings.steamReverbBus();
@@ -256,9 +260,10 @@ async function buildSteamBackend(
       reflectionWetLevel,
       reflectionBusLevel,
       reverbBusLevel,
+      pathing: wantPathing,
     });
     console.info(`[papasangre] Steam levels — reflection (per-source): ${reflectionWetLevel}, reflection bus: ${reflectionBusLevel}, reverb bus: ${reverbBusLevel}.`);
-    console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true).`);
+    console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true, pathing/diffraction: ${wantPathing}).`);
     return steam;
   } catch (e) {
     console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);

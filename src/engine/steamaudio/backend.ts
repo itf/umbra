@@ -123,6 +123,26 @@ export interface SteamBackendOpts {
    * reverb SEND. LIVE-applicable via setBusLevels (no rebuild). Default 1 (no change).
    */
   reverbBusLevel?: number;
+  /**
+   * Enable Steam Audio PATHING — real (directional) DIFFRACTION of a source around
+   * corners / through doorways, decoded to binaural so you can hear WHICH WAY the
+   * bent sound arrives from. Without this, the steam path has occlusion + a
+   * transmission leak but NO diffraction (our default engine's UTD tap has it); this
+   * closes that gap on `?engine=steam`.
+   *
+   * Requires the pathing-capable `three-steam-audio` fork (vendored). Pathing needs a
+   * probe batch + a one-time visibility bake, computed IN MEMORY at level load from the
+   * level AABB (no offline tooling, no shipped assets) — see `setGeometry`. OPT-IN
+   * (off by default), mirroring `headTrackedReflections`/`sofaHrtf`, so the published
+   * package (which ignores `pathing`) is unaffected.
+   */
+  pathing?: boolean;
+  /**
+   * Ambisonic ORDER of the diffracted (pathing) field (1..3). Higher = sharper
+   * directionality of the bent sound at higher CPU. Default 1. Only used when
+   * `pathing` is on.
+   */
+  pathingOrder?: number;
 }
 
 /** URL of OUR measured SADIE SOFA (48 kHz), served from the copied assets tree. */
@@ -176,6 +196,16 @@ export class SteamAudioBackend {
    */
   private liveSources = new Set<LiveSteamSource>();
 
+  /** PATHING (diffraction) is opt-in; when off, none of the pathing code paths run. */
+  private pathing: boolean;
+  /** Shared pathing (diffraction) bus, created only when pathing is on. */
+  private pathingBus: any = null;
+  /**
+   * The current level's probe batch (in-memory bake). Rebuilt in `setGeometry` from the
+   * level AABB; disposed and replaced on the next level so batches don't accumulate.
+   */
+  private probeBatch: { dispose: () => void; readonly numProbes: number } | null = null;
+
   private constructor(world: any, three: any, master: AudioNode, opts: SteamBackendOpts) {
     this.world = world;
     this.three = three;
@@ -187,6 +217,7 @@ export class SteamAudioBackend {
     this.reflectionWetLevel = opts.reflectionWetLevel ?? 1;
     this.reflectionBusLevel = opts.reflectionBusLevel ?? 1;
     this.reverbBusLevel = opts.reverbBusLevel ?? 1;
+    this.pathing = opts.pathing ?? false;
   }
 
   /**
@@ -230,9 +261,18 @@ export class SteamAudioBackend {
     const headTracked = opts.headTrackedReflections
       ? { headTracked: true as const, irTaps: 512 }
       : {};
+    // Pathing (diffraction) — opt-in. Spread in only when enabled so the published
+    // package (which doesn't understand `pathing`) is unaffected on the non-opt-in path,
+    // same gating discipline as sofaHrtf/headTracked. maxOrder sets the diffracted
+    // field's Ambisonic order (directionality of the bent sound).
+    const pathingOn = opts.pathing ?? false;
+    const pathing = pathingOn
+      ? { pathing: { maxOrder: Math.max(1, Math.min(3, Math.round(opts.pathingOrder ?? 1))) } as const }
+      : {};
     const world = await createWorld({
       audioContext,
       ...(hrtf ? { hrtf } : {}),
+      ...pathing,
       reflections: {
         maxDuration: r.maxDuration ?? 1.0,
         // Ambisonic order of the (head-tracked) reflected field. User-selectable via
@@ -254,6 +294,12 @@ export class SteamAudioBackend {
     backend.reverbBus = world.createReverbBus({ wet: BUS_BASE_REVERB * backend.reverbBusLevel });
     backend.reflectionBus.connect(master);
     backend.reverbBus.connect(master);
+    // Shared pathing (diffraction) bus — the decoded-to-binaural diffracted field of
+    // every source mixes here. Only when pathing is on.
+    if (pathingOn && world.createPathingBus) {
+      backend.pathingBus = world.createPathingBus();
+      backend.pathingBus.connect(master);
+    }
     return backend;
   }
 
@@ -282,6 +328,59 @@ export class SteamAudioBackend {
       try { (h as { dispose?: () => void })?.dispose?.(); } catch { /* best-effort */ }
     }
     this.meshHandles = buildSteamScene(this.world.scene, walls, this.sceneDeps(), { scattering: this.scattering });
+    // PATHING: (re)build the in-memory probe batch + bake the visibility graph for THIS
+    // level's geometry. Diffraction paths are found across these probes at run-time
+    // (findAlternatePaths handles moving walls on top of the baked baseline). The batch
+    // is committed to the world scene as it exists NOW, so this must run AFTER the scene
+    // rebuild above. Kept in memory only — no serialized asset, no offline tooling.
+    if (this.pathing) this.rebuildPathingProbes(walls);
+  }
+
+  /**
+   * Generate a uniform-floor probe grid over the level AABB and bake its visibility
+   * graph (in memory). Cheap for our small rooms; runs once per level load, hidden
+   * behind the Begin/calibration screens. Disposes the previous batch first so
+   * moving-level rebuilds don't leak batches.
+   */
+  private rebuildPathingProbes(walls: WallDef[]): void {
+    if (!this.world.createProbeBatch || !this.world.bakePathing) return;
+    if (this.probeBatch) {
+      try { this.probeBatch.dispose(); } catch { /* best-effort */ }
+      this.probeBatch = null;
+    }
+    if (walls.length === 0) return;
+    // AABB from all wall vertices, padded slightly so floor-level probes sit inside.
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (const w of walls) {
+      for (const [x, y, z] of w.verts) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      }
+    }
+    if (!Number.isFinite(minX) || maxX <= minX || maxZ <= minZ) return;
+    try {
+      const t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
+      const batch = this.world.createProbeBatch({
+        aabb: { min: { x: minX, y: minY, z: minZ }, max: { x: maxX, y: maxY, z: maxZ } },
+        // ~1 m grid at ear height — dozens of probes for a room, a fast bake.
+        spacing: 1.0,
+        height: 1.5,
+      });
+      // Bake the probe-pair visibility graph for the current (static) geometry.
+      this.world.bakePathing(batch);
+      this.probeBatch = batch;
+      const dt = (typeof performance !== 'undefined' ? performance.now() : 0) - t0;
+      // eslint-disable-next-line no-console
+      console.info(`[papasangre] pathing probes baked: ${batch.numProbes} probes in ${dt.toFixed(0)} ms.`);
+    } catch (e) {
+      // Non-fatal: without a batch, sources simply get no diffraction (occlusion +
+      // transmission still work). Never break the steam path over a bake failure.
+      // eslint-disable-next-line no-console
+      console.warn('[papasangre] pathing probe bake failed (diffraction disabled for this level)', e);
+      this.probeBatch = null;
+    }
   }
 
   /**
@@ -342,6 +441,13 @@ export class SteamAudioBackend {
     const reverbConn = node.connectReverb
       ? node.connectReverb(this.reverbBus, { gain: refl.reverbSend })
       : null;
+    // PATHING: route this source's diffracted (bent-around-geometry) field, decoded to
+    // binaural, into the shared pathing bus. Only when pathing is on AND the node
+    // supports it (fork). The world's step() drives the per-frame path sim + pushes the
+    // eq/SH + live listener orientation to the worklet, so no per-frame work here.
+    if (this.pathing && this.pathingBus && node.connectPathing) {
+      try { node.connectPathing(this.pathingBus, { gain: 1 }); } catch { /* best-effort */ }
+    }
     // Track this source for live level changes, keyed by its BASE (pre-multiplier)
     // sends so a future setBusLevels recomputes from the original strength.
     const live: LiveSteamSource = {
@@ -388,7 +494,11 @@ export class SteamAudioBackend {
     );
   }
 
-  /** Advance the simulation by `deltaSeconds` (occlusion raycast + reflection trace). */
+  /**
+   * Advance the simulation by `deltaSeconds` (occlusion raycast + reflection trace, and
+   * — when pathing is on — the per-frame diffraction path sim, which the world's step()
+   * runs and whose eq/SH + live listener orientation it pushes to each source's worklet).
+   */
   step(deltaSeconds: number): void {
     this.world.step(deltaSeconds);
   }
@@ -425,8 +535,11 @@ export class SteamAudioBackend {
 
   dispose(): void {
     this.liveSources.clear();
+    try { this.probeBatch?.dispose(); } catch { /* */ }
+    this.probeBatch = null;
     try { this.reflectionBus?.disconnect(); } catch { /* */ }
     try { this.reverbBus?.disconnect(); } catch { /* */ }
+    try { this.pathingBus?.disconnect(); } catch { /* */ }
     try { this.world?.dispose?.(); } catch { /* */ }
   }
 }

@@ -100,6 +100,28 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     // to filter — it does NOT itself convolve or decode. When headTracked is off,
     // output[1] carries the legacy mono-duplicated parametric reflected field.
     this.headTracked = processorOptions.headTracked === true
+    // Pathing / diffraction (opt-in). When enabled this worklet renders a
+    // directional Ambisonic pathing field on output[3]: per block it applies the
+    // baked path effect (eq3 + SH coefficients pushed from the main thread at sim
+    // rate) to the dry mono input, then decodes the resulting Ambisonics to
+    // binaural with the LIVE listener orientation using the same
+    // sa_ambisonics_decode_effect the head-tracked reflection path uses. So the
+    // diffracted sound arrives from the correct direction and rotates with the
+    // head. When pathing is off, output[3] is silent and no pathing effects are
+    // created (existing behavior is unchanged).
+    this.pathingEnabled = processorOptions.pathing === true
+    this.pathingOrder = Math.max(0, Math.min(3, processorOptions.pathingOrder ?? 1))
+    this.pathingChannels = (this.pathingOrder + 1) * (this.pathingOrder + 1)
+    // eq3(3) + SH((order+1)^2) + ahead(3) + up(3) + normalizeEq(1) + wet(1).
+    this.pathControl = new Float32Array(3 + this.pathingChannels + 3 + 3 + 1 + 1)
+    // Sensible defaults: unit eq, W-only SH, canonical orientation, wet 1.
+    this.pathControl[0] = 1
+    this.pathControl[1] = 1
+    this.pathControl[2] = 1
+    // ahead = (0,0,-1), up = (0,1,0).
+    this.pathControl[3 + this.pathingChannels + 2] = -1
+    this.pathControl[3 + this.pathingChannels + 4] = 1
+    this.pathControl[this.pathControl.length - 1] = 1
     this.controlBuffer = processorOptions.controlBuffer
     this.controlSequence = this.controlBuffer
       ? new Int32Array(this.controlBuffer, 0, 1)
@@ -132,6 +154,8 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.reflectionRight = new Float32Array(ringSize)
     this.reverbLeft = new Float32Array(ringSize)
     this.reverbRight = new Float32Array(ringSize)
+    this.pathingLeftRing = new Float32Array(ringSize)
+    this.pathingRightRing = new Float32Array(ringSize)
     this.inputRead = 0
     this.inputWrite = 0
     this.inputCount = 0
@@ -145,6 +169,8 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.port.onmessage = ({ data }) => {
       if (data?.type === 'control' && data.values)
         this.control.set(data.values)
+      else if (data?.type === 'pathing' && data.values)
+        this.pathControl.set(data.values)
       else if (data?.type === 'dispose')
         this.dispose()
     }
@@ -223,6 +249,15 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     module._free(this.reverbPointer)
     module._free(this.reflectionTimesPointer)
     module._free(this.reverbTimesPointer)
+    if (this.pathingEnabled && this.pathEffect) {
+      module._sa_path_effect_release(this.pathEffect)
+      module._sa_ambisonics_decode_effect_release(this.pathDecodeEffect)
+      module._free(this.pathEq3Pointer)
+      module._free(this.pathShPointer)
+      module._free(this.pathListenerPointer)
+      module._free(this.pathAmbisonicPointer)
+      module._free(this.pathBinauralPointer)
+    }
     this.ready = false
   }
 
@@ -249,6 +284,38 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.reverbPointer = allocate(module, this.frameSize * 4)
     this.reflectionTimesPointer = allocate(module, 3 * 4)
     this.reverbTimesPointer = allocate(module, 3 * 4)
+    if (this.pathingEnabled) {
+      // Path effect: Ambisonic output (spatialize=0, hrtf=NULL) — we decode to
+      // binaural separately with the live listener orientation.
+      this.pathEffect = createHandle(module, out =>
+        module._sa_path_effect_create(
+          context,
+          sampleRate,
+          this.frameSize,
+          this.pathingOrder,
+          0,
+          0,
+          out,
+        ))
+      // Same Ambisonic->binaural decode effect used by the head-tracked
+      // reflection path (reflection-simulator-worker.js), so diffraction is
+      // directional.
+      this.pathDecodeEffect = createHandle(module, out =>
+        module._sa_ambisonics_decode_effect_create(
+          context,
+          sampleRate,
+          this.frameSize,
+          hrtf,
+          this.pathingOrder,
+          out,
+        ))
+      this.pathEq3Pointer = allocate(module, 3 * 4)
+      this.pathShPointer = allocate(module, this.pathingChannels * 4)
+      this.pathListenerPointer = allocate(module, 9 * 4)
+      // Ambisonic intermediate ((order+1)^2 channels, channel-major).
+      this.pathAmbisonicPointer = allocate(module, this.pathingChannels * this.frameSize * 4)
+      this.pathBinauralPointer = allocate(module, 2 * this.frameSize * 4)
+    }
     this.ready = true
     this.port.postMessage({ type: 'ready' })
   }
@@ -257,6 +324,8 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     const output = outputs[0]
     const reflectionOutput = outputs[1]
     const reverbOutput = outputs[2]
+    // output[3] (pathing) only exists when the node was created with pathing.
+    const pathingOutput = outputs[3]
     if (!output?.[0] || !output?.[1]
       || !reflectionOutput?.[0] || !reflectionOutput?.[1]
       || !reverbOutput?.[0] || !reverbOutput?.[1]) {
@@ -264,7 +333,9 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     }
     const quantumSize = output[0].length
     if (!this.ready) {
-      for (const target of [output, reflectionOutput, reverbOutput]) {
+      for (const target of [output, reflectionOutput, reverbOutput, pathingOutput]) {
+        if (!target)
+          continue
         for (const channel of target)
           channel.fill(0)
       }
@@ -275,7 +346,7 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.pushInput(inputs[0], quantumSize)
     while (this.inputCount >= this.frameSize)
       this.processBlock()
-    this.pullOutput(output, reflectionOutput, reverbOutput, quantumSize)
+    this.pullOutput(output, reflectionOutput, reverbOutput, pathingOutput, quantumSize)
     return !this.disposed
   }
 
@@ -349,6 +420,15 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     }
     this.applyParametricBuses(module, inputActive)
 
+    // Pathing / diffraction render. monoPointer currently holds the dry input
+    // downmix. Apply the baked path effect (eq3 + SH from the main thread) to
+    // produce an Ambisonic field, then decode it to binaural with the LIVE
+    // listener orientation so the diffracted sound is directional. Writes into
+    // pathBinauralPointer as [L block, R block] (channel-major stereo, matching
+    // the ambisonics decode effect's output layout).
+    if (this.pathingEnabled)
+      this.applyPathing(module, this.monoPointer)
+
     const targetMix = hrtf ? 1 : 0
     const mixStep = 1 / (sampleRate * 0.02)
     const outputOffset = this.outputPointer >>> 2
@@ -385,12 +465,82 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
       this.reflectionRight[this.outputWrite] = reflectionSample
       this.reverbLeft[this.outputWrite] = reverbSample
       this.reverbRight[this.outputWrite] = reverbSample
+      if (this.pathingEnabled) {
+        const wet = this.pathControl[this.pathControl.length - 1]
+        const pathOffset = this.pathBinauralPointer >>> 2
+        this.pathingLeftRing[this.outputWrite]
+          = heap[pathOffset + index] * wet
+        this.pathingRightRing[this.outputWrite]
+          = heap[pathOffset + this.frameSize + index] * wet
+      }
       this.outputWrite = (this.outputWrite + 1) % this.outputLeft.length
       this.outputCount++
     }
   }
 
-  pullOutput(output, reflectionOutput, reverbOutput, quantumSize) {
+  // Render the diffracted (pathing) field for one block. inMonoPointer is the
+  // dry mono input. The path effect turns eq3 + SH into an Ambisonic field; the
+  // ambisonics decode effect turns that into binaural using the live listener
+  // ahead/up (head-tracked), so the diffracted arrival direction is preserved.
+  applyPathing(module, inMonoPointer) {
+    const heap = module.HEAPF32
+    const eqOffset = this.pathEq3Pointer >>> 2
+    const shOffset = this.pathShPointer >>> 2
+    const listenerOffset = this.pathListenerPointer >>> 2
+    // pathControl layout: [eq3(3), SH(channels), ahead(3), up(3), normalizeEq, wet]
+    const aheadBase = 3 + this.pathingChannels
+    for (let i = 0; i < 3; i++)
+      heap[eqOffset + i] = this.pathControl[i]
+    for (let i = 0; i < this.pathingChannels; i++)
+      heap[shOffset + i] = this.pathControl[3 + i]
+    // Listener transform for the decode: position is irrelevant for the SH
+    // rotation, ahead/up carry the head orientation. Feed [pos(3), ahead(3), up(3)].
+    heap[listenerOffset + 0] = 0
+    heap[listenerOffset + 1] = 0
+    heap[listenerOffset + 2] = 0
+    for (let i = 0; i < 6; i++)
+      heap[listenerOffset + 3 + i] = this.pathControl[aheadBase + i]
+    const normalizeEq = this.pathControl[aheadBase + 6]
+
+    module._sa_path_effect_apply(
+      this.pathEffect,
+      this.pathEq3Pointer,
+      this.pathShPointer,
+      this.pathingOrder,
+      0, // binaural=0: emit Ambisonics, we decode below
+      0, // hrtf (unused when binaural=0)
+      heap[listenerOffset + 0],
+      heap[listenerOffset + 1],
+      heap[listenerOffset + 2],
+      heap[listenerOffset + 3],
+      heap[listenerOffset + 4],
+      heap[listenerOffset + 5],
+      heap[listenerOffset + 6],
+      heap[listenerOffset + 7],
+      heap[listenerOffset + 8],
+      normalizeEq > 0 ? 1 : 0,
+      inMonoPointer,
+      this.pathAmbisonicPointer,
+      this.frameSize,
+    )
+    module._sa_ambisonics_decode_effect_apply(
+      this.pathDecodeEffect,
+      this.runtime.hrtf,
+      this.pathingOrder,
+      heap[listenerOffset + 3],
+      heap[listenerOffset + 4],
+      heap[listenerOffset + 5],
+      heap[listenerOffset + 6],
+      heap[listenerOffset + 7],
+      heap[listenerOffset + 8],
+      1, // binaural
+      this.pathAmbisonicPointer,
+      this.pathBinauralPointer,
+      this.frameSize,
+    )
+  }
+
+  pullOutput(output, reflectionOutput, reverbOutput, pathingOutput, quantumSize) {
     const left = output[0]
     const right = output[1]
     for (let index = 0; index < quantumSize; index++) {
@@ -401,6 +551,10 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
         reflectionOutput[1][index] = this.reflectionRight[this.outputRead]
         reverbOutput[0][index] = this.reverbLeft[this.outputRead]
         reverbOutput[1][index] = this.reverbRight[this.outputRead]
+        if (pathingOutput?.[0] && pathingOutput?.[1]) {
+          pathingOutput[0][index] = this.pathingLeftRing[this.outputRead]
+          pathingOutput[1][index] = this.pathingRightRing[this.outputRead]
+        }
         this.outputRead = (this.outputRead + 1) % this.outputLeft.length
         this.outputCount--
       }
@@ -411,6 +565,10 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
         reflectionOutput[1][index] = 0
         reverbOutput[0][index] = 0
         reverbOutput[1][index] = 0
+        if (pathingOutput?.[0] && pathingOutput?.[1]) {
+          pathingOutput[0][index] = 0
+          pathingOutput[1][index] = 0
+        }
       }
     }
   }

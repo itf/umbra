@@ -101,6 +101,33 @@ interface ReflectionSettings {
 interface ReverbBusSettings {
   wet?: number;
 }
+interface PathingBusSettings {
+  wet?: number;
+}
+type PathingConnection = ReflectionConnection;
+interface PathingBakeSettings {
+  numSamples?: number;
+  pathRange?: number;
+  radius?: number;
+  threshold?: number;
+  visRange?: number;
+}
+interface ProbeBatchSettings {
+  aabb: {
+    max: Vector3Like;
+    min: Vector3Like;
+  };
+  height?: number;
+  spacing?: number;
+}
+interface ProbeBatch {
+  dispose: () => void;
+  readonly numProbes: number;
+  save: () => Uint8Array;
+}
+interface PathingConnectionOptions {
+  gain?: number;
+}
 type ReverbConnection = ReflectionConnection;
 interface ReverbSettings {
   enabled?: boolean;
@@ -185,6 +212,13 @@ interface WorldOptions {
   };
   simulation?: SimulationSettings;
   simulationRate?: number;
+  pathing?: false | {
+    maxOrder?: number;
+    rate?: number;
+    visRadius?: number;
+    visRange?: number;
+    visThreshold?: number;
+  };
 }
 //#endregion
 //#region src/three/geometry.d.ts
@@ -263,11 +297,16 @@ interface SteamAudioBindings extends EmscriptenModule {
   _sa_binaural_effect_create(ctx: number, sample_rate: number, frame_size: number, hrtf: number, out_effect: number): number;
   _sa_binaural_effect_release(effect: number): void;
   _sa_binaural_effect_apply(effect: number, hrtf: number, dir_x: number, dir_y: number, dir_z: number, spatial_blend: number, in_buffer: number, out_buffer: number, num_channels: number, num_samples: number): number;
+  _sa_ambisonics_decode_effect_create(ctx: number, sample_rate: number, frame_size: number, hrtf: number, max_order: number, out_effect: number): number;
+  _sa_ambisonics_decode_effect_release(effect: number): void;
+  _sa_ambisonics_decode_effect_reset(effect: number): void;
+  _sa_ambisonics_decode_effect_apply(effect: number, hrtf: number, order: number, ahead_x: number, ahead_y: number, ahead_z: number, up_x: number, up_y: number, up_z: number, binaural: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_direct_effect_create(ctx: number, sample_rate: number, frame_size: number, num_channels: number, out_effect: number): number;
   _sa_direct_effect_release(effect: number): void;
   _sa_direct_effect_apply(effect: number, effect_flags: number, transmission_type: number, distance_attenuation: number, air_absorption: number, directivity: number, occlusion: number, transmission: number, in_buffer: number, out_buffer: number, num_channels: number, num_samples: number): number;
   _sa_reflection_effect_create(ctx: number, sample_rate: number, frame_size: number, num_channels: number, out_effect: number): number;
   _sa_reflection_effect_release(effect: number): void;
+  _sa_reflection_effect_reset(effect: number): void;
   _sa_reflection_effect_apply(effect: number, reverb_times: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_reflection_effect_get_tail(effect: number, out_buffer: number, num_samples: number): number;
   _sa_convolution_reflection_effect_create(ctx: number, sample_rate: number, frame_size: number, order: number, max_duration: number, out_effect: number): number;
@@ -290,6 +329,34 @@ interface SteamAudioBindings extends EmscriptenModule {
   _sa_buffer_free(buffer: number): void;
   _sa_buffer_deinterleave(interleaved: number, deinterleaved: number, num_channels: number, num_samples: number): void;
   _sa_buffer_interleave(deinterleaved: number, interleaved: number, num_channels: number, num_samples: number): void;
+  _sa_probe_array_create(ctx: number, out_array: number): number;
+  _sa_probe_array_generate_probes(array: number, scene: number, gen_type: number, spacing: number, height: number, transform16: number): number;
+  _sa_probe_array_get_num_probes(array: number): number;
+  _sa_probe_array_get_probe(array: number, index: number, out4: number): number;
+  _sa_probe_array_release(array: number): void;
+  _sa_probe_batch_create(ctx: number, out_batch: number): number;
+  _sa_probe_batch_add_probe(batch: number, probe4: number): number;
+  _sa_probe_batch_add_probe_array(batch: number, array: number): number;
+  _sa_probe_batch_get_num_probes(batch: number): number;
+  _sa_probe_batch_commit(batch: number): void;
+  _sa_probe_batch_release(batch: number): void;
+  _sa_probe_batch_save_to_buffer(ctx: number, batch: number, out_size: number): number;
+  _sa_probe_batch_load_from_buffer(ctx: number, buf: number, size_bytes: number, out_batch: number): number;
+  _sa_path_baker_bake(ctx: number, scene: number, batch: number, num_samples: number, radius: number, threshold: number, vis_range: number, path_range: number): number;
+  _sa_path_baker_cancel_bake(ctx: number): void;
+  _sa_simulator_create_pathing(ctx: number, scene: number, sample_rate: number, frame_size: number, max_sources: number, max_occlusion_samples: number, reflections_enabled: number, pathing_enabled: number, max_rays: number, diffuse_samples: number, max_duration: number, max_order: number, reflection_threads: number, convolution: number, out_sim: number): number;
+  _sa_simulator_add_probe_batch(sim: number, batch: number): void;
+  _sa_simulator_remove_probe_batch(sim: number, batch: number): void;
+  _sa_simulator_run_pathing(sim: number): number;
+  _sa_source_create_pathing(sim: number, direct_enabled: number, reflections_enabled: number, pathing_enabled: number, out_source: number): number;
+  _sa_source_set_pathing_inputs(source: number, probe_batch: number, vis_radius: number, vis_threshold: number, vis_range: number, pathing_order: number, enable_validation: number, find_alternate_paths: number): void;
+  _sa_source_get_pathing_outputs(source: number, out_eq3: number, out_sh: number, order: number): number;
+  _sa_path_effect_create(ctx: number, sample_rate: number, frame_size: number, max_order: number, spatialize: number, hrtf: number, out_effect: number): number;
+  _sa_path_effect_apply(effect: number, eq3: number, sh_coeffs: number, order: number, binaural: number, hrtf: number, lx: number, ly: number, lz: number, ax: number, ay: number, az: number, ux: number, uy: number, uz: number, normalize_eq: number, in_mono: number, out_buffer: number, num_samples: number): number;
+  _sa_path_effect_get_tail_size(effect: number): number;
+  _sa_path_effect_get_tail(effect: number, out_buffer: number, num_samples: number): number;
+  _sa_path_effect_reset(effect: number): void;
+  _sa_path_effect_release(effect: number): void;
 }
 //#endregion
 //#region src/three/native.d.ts
@@ -303,6 +370,14 @@ interface PreparedRuntime {
 declare const detectCapabilities: () => SteamAudioCapabilities;
 //#endregion
 //#region src/worker/audio-node.d.ts
+interface PathingUpdate {
+  ahead: readonly [number, number, number];
+  eq3: readonly [number, number, number];
+  normalizeEq?: boolean;
+  order: number;
+  sh: Float32Array;
+  up: readonly [number, number, number];
+}
 interface NodeControlValues {
   airAbsorption: readonly [number, number, number];
   direction: readonly [number, number, number];
@@ -324,6 +399,8 @@ interface NodeOptions {
   frameSize: number;
   headTracked?: boolean;
   onDispose: (node: SteamAudioNode) => void;
+  pathing?: boolean;
+  pathingOrder?: number;
   reflectionOrder?: number;
   sofaData?: ArrayBuffer;
   source: Source;
@@ -350,6 +427,9 @@ declare class SteamAudioBusNode extends AudioWorkletNodeBase {
 declare class ReflectionBusNode extends SteamAudioBusNode {
   constructor(context: AudioContext, settings?: ReflectionBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
 }
+declare class PathingBusNode extends SteamAudioBusNode {
+  constructor(context: AudioContext, settings?: PathingBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
+}
 declare class ReverbBusNode extends SteamAudioBusNode {
   constructor(context: AudioContext, settings?: ReverbBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
 }
@@ -366,9 +446,13 @@ declare class SteamAudioNode extends AudioWorkletNodeBase {
   connectReverb(bus: ReverbBusNode, options?: {
     gain?: number;
   }): ReverbConnection;
+  connectPathing(bus: PathingBusNode, options?: {
+    gain?: number;
+  }): PathingConnection;
   dispose(): void;
   setControl(values: NodeControlValues): void;
   setReflectionIr(ir: StereoReflectionIr): void;
+  setPathing(update: PathingUpdate): void;
 }
 //#endregion
 //#region src/three/world.d.ts
@@ -387,6 +471,15 @@ interface NormalizedReflectionSimulationSettings {
   order: number;
   rays: number;
 }
+interface NormalizedPathingSettings {
+  enabled: boolean;
+  maxOrder: number;
+  order: number;
+  rate: number;
+  visRadius: number;
+  visRange: number;
+  visThreshold: number;
+}
 interface NormalizedSourceSettings {
   directivity: {
     dipolePower: number;
@@ -398,7 +491,7 @@ interface NormalizedSourceSettings {
   reflections: Required<Pick<ReflectionSettings, 'enabled' | 'reverbScale' | 'wet'>>;
   spatialBlend: number;
 }
-type World = Pick<WorldImpl, 'audioContext' | 'createNode' | 'createReflectionBus' | 'createReverbBus' | 'createSource' | 'dispose' | 'listener' | 'scene' | 'setReflectionSettings' | 'step'>;
+type World = Pick<WorldImpl, 'audioContext' | 'bakePathing' | 'createNode' | 'createPathingBus' | 'createProbeBatch' | 'createReflectionBus' | 'createReverbBus' | 'createSource' | 'dispose' | 'listener' | 'loadProbeBatch' | 'scene' | 'setReflectionSettings' | 'step'>;
 declare class AcousticSceneImpl implements AcousticScene {
   #private;
   constructor(world: WorldImpl);
@@ -431,12 +524,24 @@ declare class SourceImpl implements Source {
   publishControl(): void;
   readOutputs(): void;
   readReflectionOutputs(): readonly [number, number, number];
+  setPathingInputs(batch: number): void;
+  readPathingOutputs(): void;
   setDirectOverrides(overrides: DirectOverrides | null): void;
   setOrientation(orientation: QuaternionLike): void;
   setPosition(position: Vector3Like): void;
   setReflectionOutputs(outputs: readonly [number, number, number], ir?: ReflectionIr): void;
   setSettings(settings: Partial<SourceSettings>): void;
   setTransform(position: Vector3Like, orientation: QuaternionLike): void;
+}
+declare class ProbeBatchImpl implements ProbeBatch {
+  #private;
+  readonly native: number;
+  get numProbes(): number;
+  private constructor();
+  static generate(world: WorldImpl, settings: ProbeBatchSettings): ProbeBatchImpl;
+  static load(world: WorldImpl, data: Uint8Array): ProbeBatchImpl;
+  dispose(): void;
+  save(): Uint8Array;
 }
 declare class WorldImpl {
   #private;
@@ -449,6 +554,7 @@ declare class WorldImpl {
   listenerReverbTimes: [number, number, number];
   readonly mainThreadReflections: boolean;
   readonly maxOcclusionSamples: number;
+  readonly pathingSettings: NormalizedPathingSettings;
   readonly maxSources: number;
   readonly module: NativeModule;
   readonly reflectionSettings: NormalizedReflectionSimulationSettings;
@@ -457,10 +563,17 @@ declare class WorldImpl {
   readonly sceneHandle: number;
   readonly simulator: number;
   constructor(runtime: PreparedRuntime, options: WorldOptions);
+  get pathingEq3Pointer(): number;
+  get pathingShPointer(): number;
   assertActive(operation: string): void;
   createNode(sourceValue: Source): SteamAudioNode;
   createReflectionBus(settings?: ReflectionBusSettings): ReflectionBusNode;
   createReverbBus(settings?: ReverbBusSettings): ReverbBusNode;
+  createPathingBus(settings?: PathingBusSettings): PathingBusNode;
+  createProbeBatch(settings: ProbeBatchSettings): ProbeBatch;
+  loadProbeBatch(data: Uint8Array): ProbeBatch;
+  bakePathing(batch: ProbeBatch, settings?: PathingBakeSettings): void;
+  releaseProbeBatch(batch: ProbeBatchImpl): void;
   createSource(settings?: SourceSettings): Source;
   dispose(): void;
   publishSourceControls(): void;
@@ -472,4 +585,4 @@ declare class WorldImpl {
 }
 declare const createWorld: (options: WorldOptions) => Promise<World>;
 //#endregion
-export { Source as A, ReflectionConnection as C, ReverbSettings as D, ReverbConnection as E, SteamAudioModuleOptions as F, ThreeBand as I, Vector3Like as L, StaticMeshInput as M, SteamAudioCapabilities as N, RuntimeSimulationSettings as O, SteamAudioModuleFactory as P, WorldOptions as R, ReflectionBusSettings as S, ReverbBusSettings as T, DynamicMeshInput as _, SteamAudioNode as a, QualityPreset as b, AcousticMaterial as c, AirAbsorptionSettings as d, DirectOutputs as f, DynamicAcousticMeshHandle as g, DistanceAttenuationSettings as h, ReverbBusNode as i, SourceSettings as j, SimulationSettings as k, AcousticMeshHandle as l, DirectSimulationSettings as m, createWorld as n, SteamAudioNodeState as o, DirectOverrides as p, ReflectionBusNode as r, detectCapabilities as s, World as t, AcousticScene as u, HRTFSettings as v, ReflectionSettings as w, QuaternionLike as x, Listener as y };
+export { ReflectionConnection as A, SteamAudioCapabilities as B, PathingConnection as C, QualityPreset as D, ProbeBatchSettings as E, RuntimeSimulationSettings as F, WorldOptions as G, SteamAudioModuleOptions as H, SimulationSettings as I, Source as L, ReverbBusSettings as M, ReverbConnection as N, QuaternionLike as O, ReverbSettings as P, SourceSettings as R, PathingBusSettings as S, ProbeBatch as T, ThreeBand as U, SteamAudioModuleFactory as V, Vector3Like as W, DynamicAcousticMeshHandle as _, ReverbBusNode as a, Listener as b, detectCapabilities as c, AcousticScene as d, AirAbsorptionSettings as f, DistanceAttenuationSettings as g, DirectSimulationSettings as h, ReflectionBusNode as i, ReflectionSettings as j, ReflectionBusSettings as k, AcousticMaterial as l, DirectOverrides as m, createWorld as n, SteamAudioNode as o, DirectOutputs as p, PathingBusNode as r, SteamAudioNodeState as s, World as t, AcousticMeshHandle as u, DynamicMeshInput as v, PathingConnectionOptions as w, PathingBakeSettings as x, HRTFSettings as y, StaticMeshInput as z };

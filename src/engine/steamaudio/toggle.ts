@@ -6,16 +6,21 @@
  *
  * Toggle source: the `engine` URL param.
  *   ?engine=steam → Steam Audio backend
+ *   ?engine=steam-sofa → Steam Audio + our SADIE SOFA HRTF (fork-only)
+ *   ?engine=steam-path → Steam Audio + PATHING (directional diffraction, fork-only)
  *   ?engine=ours  → our engine (explicit)
  *   absent / anything else → our engine (default)
  */
 export type SpatialBackendChoice = 'ours' | 'steam';
 
-/** Resolve the backend choice from a raw `engine` query-param value (or null).
- *  Both `steam` (generic HRTF) and `steam-sofa` (our SADIE SOFA, fork-only) select
- *  the Steam backend; which HRTF it uses is decided downstream. */
+/** All `engine` param values that select the Steam backend. `steam-sofa` also turns on
+ *  the SADIE SOFA HRTF; `steam-path` also turns on pathing/diffraction — both decided
+ *  downstream (see `steamPathingPref` / `wantSofa` in main.ts). */
+const STEAM_ENGINE_VALUES = new Set(['steam', 'steam-sofa', 'steam-path']);
+
+/** Resolve the backend choice from a raw `engine` query-param value (or null). */
 export function selectBackend(engineParam: string | null | undefined): SpatialBackendChoice {
-  return engineParam === 'steam' || engineParam === 'steam-sofa' ? 'steam' : 'ours';
+  return engineParam != null && STEAM_ENGINE_VALUES.has(engineParam) ? 'steam' : 'ours';
 }
 
 /** Read the choice from a query string (e.g. `location.search`). */

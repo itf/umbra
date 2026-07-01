@@ -134,6 +134,14 @@ var ReflectionBusNode = class extends SteamAudioBusNode {
 		});
 	}
 };
+var PathingBusNode = class extends SteamAudioBusNode {
+	constructor(context, settings = {}, onDispose = () => {}) {
+		super(context, {
+			onDispose,
+			wet: settings.wet ?? 1
+		});
+	}
+};
 var ReverbBusNode = class extends SteamAudioBusNode {
 	constructor(context, settings = {}, onDispose = () => {}) {
 		super(context, {
@@ -158,18 +166,25 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 	#headTracked;
 	#lastReflectionIr;
 	#onDispose;
+	#pathing;
 	#reflectionChains = /* @__PURE__ */ new Set();
 	#rejectReady;
 	#resolveReady;
 	#state = "initializing";
 	constructor(context, options) {
 		const controlBuffer = globalThis.crossOriginIsolated === true && typeof SharedArrayBuffer !== "undefined" ? new SharedArrayBuffer(96) : void 0;
+		const pathing = options.pathing === true;
 		super(context, "steam-audio-processor", {
 			channelCount: 2,
 			channelCountMode: "clamped-max",
 			numberOfInputs: 1,
-			numberOfOutputs: 3,
-			outputChannelCount: [
+			numberOfOutputs: pathing ? 4 : 3,
+			outputChannelCount: pathing ? [
+				2,
+				2,
+				2,
+				2
+			] : [
 				2,
 				2,
 				2
@@ -178,6 +193,8 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 				controlBuffer,
 				frameSize: options.frameSize,
 				headTracked: options.headTracked === true,
+				pathing,
+				pathingOrder: options.pathingOrder ?? 1,
 				reflectionOrder: options.reflectionOrder ?? 1,
 				sofaData: options.sofaData,
 				wasmBinary: options.wasmBinary
@@ -185,6 +202,7 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 		});
 		this.source = options.source;
 		this.#headTracked = options.headTracked === true;
+		this.#pathing = pathing;
 		this.#onDispose = options.onDispose;
 		this.ready = new Promise((resolve, reject) => {
 			this.#resolveReady = resolve;
@@ -214,6 +232,10 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 	}
 	connectReverb(bus, options = {}) {
 		return this.#connectSend(bus, 2, options.gain ?? 1);
+	}
+	connectPathing(bus, options = {}) {
+		if (!this.#pathing) throw new Error("This SteamAudioNode was not created with pathing enabled");
+		return this.#connectSend(bus, 3, options.gain ?? 1);
 	}
 	dispose() {
 		if (this.#disposed) return;
@@ -256,6 +278,24 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 		if (this.#disposed || !this.#headTracked) return;
 		this.#lastReflectionIr = ir;
 		for (const chain of this.#reflectionChains) chain.setIr(ir);
+	}
+	setPathing(update) {
+		if (this.#disposed || !this.#pathing) return;
+		const channels = (update.order + 1) * (update.order + 1);
+		const packet = new Float32Array(3 + channels + 3 + 3 + 1 + 1);
+		packet[0] = update.eq3[0];
+		packet[1] = update.eq3[1];
+		packet[2] = update.eq3[2];
+		packet.set(update.sh.subarray(0, channels), 3);
+		const aheadBase = 3 + channels;
+		packet.set(update.ahead, aheadBase);
+		packet.set(update.up, aheadBase + 3);
+		packet[aheadBase + 6] = update.normalizeEq === false ? 0 : 1;
+		packet[packet.length - 1] = 1;
+		this.port.postMessage({
+			type: "pathing",
+			values: packet
+		}, [packet.buffer]);
 	}
 	#connectReflectionConvolver(bus, initialGain) {
 		if (this.#disposed) throw new Error("Cannot connect a disposed SteamAudioNode");
@@ -2925,52 +2965,80 @@ async function Module(moduleArg = {}) {
 		Module["_sa_instanced_mesh_update_transform"] = wasmExports["y"];
 		Module["_sa_instanced_mesh_remove"] = wasmExports["z"];
 		Module["_sa_instanced_mesh_release"] = wasmExports["A"];
-		Module["_sa_hrtf_create"] = wasmExports["B"];
-		Module["_sa_hrtf_create_sofa"] = wasmExports["C"];
-		Module["_sa_hrtf_release"] = wasmExports["D"];
-		Module["_sa_binaural_effect_create"] = wasmExports["E"];
-		Module["_sa_binaural_effect_release"] = wasmExports["F"];
-		Module["_sa_binaural_effect_apply"] = wasmExports["G"];
-		Module["_sa_ambisonics_binaural_effect_create"] = wasmExports["H"];
-		Module["_sa_ambisonics_binaural_effect_release"] = wasmExports["I"];
-		Module["_sa_ambisonics_binaural_effect_reset"] = wasmExports["J"];
-		Module["_sa_ambisonics_binaural_effect_apply"] = wasmExports["K"];
-		Module["_sa_ambisonics_decode_effect_create"] = wasmExports["L"];
-		Module["_sa_ambisonics_decode_effect_release"] = wasmExports["M"];
-		Module["_sa_ambisonics_decode_effect_reset"] = wasmExports["N"];
-		Module["_sa_ambisonics_decode_effect_apply"] = wasmExports["O"];
-		Module["_sa_direct_effect_create"] = wasmExports["P"];
-		Module["_sa_direct_effect_release"] = wasmExports["Q"];
-		Module["_sa_direct_effect_apply"] = wasmExports["R"];
-		Module["_sa_reflection_effect_create"] = wasmExports["S"];
-		Module["_sa_reflection_effect_release"] = wasmExports["T"];
-		Module["_sa_reflection_effect_reset"] = wasmExports["U"];
-		Module["_sa_reflection_effect_apply"] = wasmExports["V"];
-		Module["_sa_reflection_effect_get_tail"] = wasmExports["W"];
-		Module["_sa_convolution_reflection_effect_create"] = wasmExports["X"];
-		Module["_sa_source_apply_convolution_reflection"] = wasmExports["Y"];
-		Module["_sa_simulator_create"] = wasmExports["Z"];
-		Module["_sa_simulator_commit"] = wasmExports["_"];
-		Module["_sa_simulator_release"] = wasmExports["$"];
-		Module["_sa_simulator_run_direct"] = wasmExports["aa"];
-		Module["_sa_simulator_run_reflections"] = wasmExports["ba"];
-		Module["_sa_simulator_set_listener"] = wasmExports["ca"];
-		Module["_sa_source_create"] = wasmExports["da"];
-		Module["_sa_source_release"] = wasmExports["ea"];
-		Module["_sa_source_set_inputs"] = wasmExports["fa"];
-		Module["_malloc"] = wasmExports["ga"];
-		Module["_sa_source_set_reflection_inputs"] = wasmExports["ha"];
-		Module["_sa_source_get_direct_outputs"] = wasmExports["ia"];
-		Module["_sa_source_get_reflection_outputs"] = wasmExports["ja"];
-		Module["_sa_buffer_alloc"] = wasmExports["ka"];
-		Module["_sa_buffer_free"] = wasmExports["la"];
-		Module["_sa_buffer_deinterleave"] = wasmExports["ma"];
-		Module["_sa_buffer_interleave"] = wasmExports["na"];
-		Module["_sa_source_get_reflection_ir_size"] = wasmExports["oa"];
-		Module["_sa_source_get_reflection_ir"] = wasmExports["pa"];
-		__emscripten_stack_restore = wasmExports["qa"];
-		__emscripten_stack_alloc = wasmExports["ra"];
-		_emscripten_stack_get_current = wasmExports["sa"];
+		Module["_sa_probe_array_create"] = wasmExports["B"];
+		Module["_sa_probe_array_generate_probes"] = wasmExports["C"];
+		Module["_sa_probe_array_get_num_probes"] = wasmExports["D"];
+		Module["_sa_probe_array_get_probe"] = wasmExports["E"];
+		Module["_sa_probe_array_release"] = wasmExports["F"];
+		Module["_sa_probe_batch_create"] = wasmExports["G"];
+		Module["_sa_probe_batch_add_probe"] = wasmExports["H"];
+		Module["_sa_probe_batch_add_probe_array"] = wasmExports["I"];
+		Module["_sa_probe_batch_get_num_probes"] = wasmExports["J"];
+		Module["_sa_probe_batch_commit"] = wasmExports["K"];
+		Module["_sa_probe_batch_release"] = wasmExports["L"];
+		Module["_sa_probe_batch_save_to_buffer"] = wasmExports["M"];
+		Module["_malloc"] = wasmExports["N"];
+		Module["_sa_probe_batch_load_from_buffer"] = wasmExports["O"];
+		Module["_sa_path_baker_bake"] = wasmExports["P"];
+		Module["_sa_path_baker_cancel_bake"] = wasmExports["Q"];
+		Module["_sa_hrtf_create"] = wasmExports["R"];
+		Module["_sa_hrtf_create_sofa"] = wasmExports["S"];
+		Module["_sa_hrtf_release"] = wasmExports["T"];
+		Module["_sa_binaural_effect_create"] = wasmExports["U"];
+		Module["_sa_binaural_effect_release"] = wasmExports["V"];
+		Module["_sa_binaural_effect_apply"] = wasmExports["W"];
+		Module["_sa_ambisonics_binaural_effect_create"] = wasmExports["X"];
+		Module["_sa_ambisonics_binaural_effect_release"] = wasmExports["Y"];
+		Module["_sa_ambisonics_binaural_effect_reset"] = wasmExports["Z"];
+		Module["_sa_ambisonics_binaural_effect_apply"] = wasmExports["_"];
+		Module["_sa_ambisonics_decode_effect_create"] = wasmExports["$"];
+		Module["_sa_ambisonics_decode_effect_release"] = wasmExports["aa"];
+		Module["_sa_ambisonics_decode_effect_reset"] = wasmExports["ba"];
+		Module["_sa_ambisonics_decode_effect_apply"] = wasmExports["ca"];
+		Module["_sa_path_effect_create"] = wasmExports["da"];
+		Module["_sa_path_effect_apply"] = wasmExports["ea"];
+		Module["_sa_path_effect_get_tail_size"] = wasmExports["fa"];
+		Module["_sa_path_effect_get_tail"] = wasmExports["ga"];
+		Module["_sa_path_effect_reset"] = wasmExports["ha"];
+		Module["_sa_path_effect_release"] = wasmExports["ia"];
+		Module["_sa_direct_effect_create"] = wasmExports["ja"];
+		Module["_sa_direct_effect_release"] = wasmExports["ka"];
+		Module["_sa_direct_effect_apply"] = wasmExports["la"];
+		Module["_sa_reflection_effect_create"] = wasmExports["ma"];
+		Module["_sa_reflection_effect_release"] = wasmExports["na"];
+		Module["_sa_reflection_effect_reset"] = wasmExports["oa"];
+		Module["_sa_reflection_effect_apply"] = wasmExports["pa"];
+		Module["_sa_reflection_effect_get_tail"] = wasmExports["qa"];
+		Module["_sa_convolution_reflection_effect_create"] = wasmExports["ra"];
+		Module["_sa_source_apply_convolution_reflection"] = wasmExports["sa"];
+		Module["_sa_simulator_create"] = wasmExports["ta"];
+		Module["_sa_simulator_create_pathing"] = wasmExports["ua"];
+		Module["_sa_simulator_add_probe_batch"] = wasmExports["va"];
+		Module["_sa_simulator_remove_probe_batch"] = wasmExports["wa"];
+		Module["_sa_simulator_commit"] = wasmExports["xa"];
+		Module["_sa_simulator_release"] = wasmExports["ya"];
+		Module["_sa_simulator_run_direct"] = wasmExports["za"];
+		Module["_sa_simulator_run_reflections"] = wasmExports["Aa"];
+		Module["_sa_simulator_run_pathing"] = wasmExports["Ba"];
+		Module["_sa_simulator_set_listener"] = wasmExports["Ca"];
+		Module["_sa_source_create"] = wasmExports["Da"];
+		Module["_sa_source_create_pathing"] = wasmExports["Ea"];
+		Module["_sa_source_release"] = wasmExports["Fa"];
+		Module["_sa_source_set_inputs"] = wasmExports["Ga"];
+		Module["_sa_source_set_reflection_inputs"] = wasmExports["Ha"];
+		Module["_sa_source_set_pathing_inputs"] = wasmExports["Ia"];
+		Module["_sa_source_get_pathing_outputs"] = wasmExports["Ja"];
+		Module["_sa_source_get_direct_outputs"] = wasmExports["Ka"];
+		Module["_sa_source_get_reflection_outputs"] = wasmExports["La"];
+		Module["_sa_buffer_alloc"] = wasmExports["Ma"];
+		Module["_sa_buffer_free"] = wasmExports["Na"];
+		Module["_sa_buffer_deinterleave"] = wasmExports["Oa"];
+		Module["_sa_buffer_interleave"] = wasmExports["Pa"];
+		Module["_sa_source_get_reflection_ir_size"] = wasmExports["Qa"];
+		Module["_sa_source_get_reflection_ir"] = wasmExports["Ra"];
+		__emscripten_stack_restore = wasmExports["Sa"];
+		__emscripten_stack_alloc = wasmExports["Ta"];
+		_emscripten_stack_get_current = wasmExports["Ua"];
 		wasmMemory = wasmExports["l"];
 		wasmExports["__indirect_function_table"];
 	}
@@ -3110,6 +3178,7 @@ const DIRECT_OCCLUSION = 8;
 const DIRECT_TRANSMISSION = 16;
 const SIMULATION_DIRECT = 1;
 const SIMULATION_REFLECTIONS = 2;
+const SIMULATION_PATHING = 4;
 const DEFAULT_FRAME_SIZE = 1024;
 const DEFAULT_MAX_SOURCES = 32;
 const DEFAULT_SIMULATION_RATE = 60;
@@ -3460,7 +3529,8 @@ var SourceImpl = class {
 		this.#world = world;
 		this.id = id;
 		this.#settings = normalizeSettings(settings, world.maxOcclusionSamples);
-		this.#native = createHandle(world.module, "iplSourceCreate", (out) => world.module._sa_source_create(world.simulator, SIMULATION_DIRECT | (world.mainThreadReflections ? SIMULATION_REFLECTIONS : 0), out));
+		const simulationFlags = SIMULATION_DIRECT | (world.mainThreadReflections ? SIMULATION_REFLECTIONS : 0) | (world.pathingSettings.enabled ? SIMULATION_PATHING : 0);
+		this.#native = world.pathingSettings.enabled ? createHandle(world.module, "iplSourceCreate", (out) => world.module._sa_source_create_pathing(world.simulator, simulationFlags & SIMULATION_DIRECT ? 1 : 0, simulationFlags & SIMULATION_REFLECTIONS ? 1 : 0, simulationFlags & SIMULATION_PATHING ? 1 : 0, out)) : createHandle(world.module, "iplSourceCreate", (out) => world.module._sa_source_create(world.simulator, simulationFlags, out));
 		this.#outputsPointer = world.module._malloc(48);
 		this.#syncInputs();
 		world.reflectionWorker?.addSource(this.#reflectionWorkerInput());
@@ -3564,6 +3634,42 @@ var SourceImpl = class {
 		];
 		this.publishControl();
 		return this.#reflectionOutputs;
+	}
+	setPathingInputs(batch) {
+		const settings = this.#world.pathingSettings;
+		this.#world.module._sa_source_set_pathing_inputs(this.#native, batch, settings.visRadius, settings.visThreshold, settings.visRange, settings.order, 0, 0);
+	}
+	readPathingOutputs() {
+		const world = this.#world;
+		const order = world.pathingSettings.order;
+		const channels = (order + 1) * (order + 1);
+		assertNativeStatus("iplSourceGetPathingOutputs", world.module._sa_source_get_pathing_outputs(this.#native, world.pathingEq3Pointer, world.pathingShPointer, order));
+		const heap = world.module.HEAPF32;
+		const eqOffset = world.pathingEq3Pointer >>> 2;
+		const shOffset = world.pathingShPointer >>> 2;
+		const eq3 = [
+			heap[eqOffset],
+			heap[eqOffset + 1],
+			heap[eqOffset + 2]
+		];
+		const sh = new Float32Array(channels);
+		for (let i = 0; i < channels; i++) sh[i] = heap[shOffset + i];
+		const [listenerAhead, listenerUp] = directionsFromQuaternion(world.listenerImpl.orientation);
+		for (const node of this.nodes) node.setPathing({
+			ahead: [
+				listenerAhead.x,
+				listenerAhead.y,
+				listenerAhead.z
+			],
+			eq3,
+			order,
+			sh,
+			up: [
+				listenerUp.x,
+				listenerUp.y,
+				listenerUp.z
+			]
+		});
 	}
 	setDirectOverrides(overrides) {
 		this.assertActive("Source.setDirectOverrides");
@@ -3671,6 +3777,94 @@ var SourceImpl = class {
 		withOptionalFloatArray(this.#world.module, distance.curve, (distancePointer) => withOptionalFloatArray(this.#world.module, air.coefficients, (coefficientPointer) => withOptionalFloatArray(this.#world.module, air.curves, (airPointer) => withFloatArray(this.#world.module, settings.reflections.reverbScale, (reverbScalePointer) => this.#world.module._sa_source_set_inputs(this.#native, this.#position.x, this.#position.y, this.#position.z, sourceAhead.x, sourceAhead.y, sourceAhead.z, sourceUp.x, sourceUp.y, sourceUp.z, flags, distance.model, distance.minimum, distance.maximum, distance.curve?.length ?? 0, distancePointer, air.model, coefficientPointer, air.maximum, air.samples, airPointer, settings.directivity.dipoleWeight, settings.directivity.dipolePower, direct.occlusion === "volumetric" ? 1 : 0, direct.occlusionRadius ?? 1, direct.occlusion === "volumetric" ? direct.occlusionSamples ?? 16 : 1, direct.transmission !== false && direct.transmission !== void 0 ? 1 : 0, this.#world.mainThreadReflections ? settings.reflections.enabled ? 1 : 0 : -1, reverbScalePointer)))));
 	}
 };
+const aabbTransform = (min, max) => {
+	const sx = max.x - min.x;
+	const sy = max.y - min.y;
+	const sz = max.z - min.z;
+	return new Float32Array([
+		sx,
+		0,
+		0,
+		min.x,
+		0,
+		sy,
+		0,
+		min.y,
+		0,
+		0,
+		sz,
+		min.z,
+		0,
+		0,
+		0,
+		1
+	]);
+};
+var ProbeBatchImpl = class ProbeBatchImpl {
+	native;
+	get numProbes() {
+		return this.#world.module._sa_probe_batch_get_num_probes(this.native);
+	}
+	#disposed = false;
+	#world;
+	constructor(world, native) {
+		this.#world = world;
+		this.native = native;
+	}
+	static generate(world, settings) {
+		const module = world.module;
+		const spacing = positive("probeBatch.spacing", settings.spacing ?? 2);
+		const height = positive("probeBatch.height", settings.height ?? 1.5);
+		const array = createHandle(module, "iplProbeArrayCreate", (out) => module._sa_probe_array_create(world.context, out));
+		let batch = 0;
+		try {
+			withFloatArray(module, aabbTransform(settings.aabb.min, settings.aabb.max), (transform) => assertNativeStatus("iplProbeArrayGenerateProbes", module._sa_probe_array_generate_probes(array, world.sceneHandle, 1, spacing, height, transform)));
+			batch = createHandle(module, "iplProbeBatchCreate", (out) => module._sa_probe_batch_create(world.context, out));
+			assertNativeStatus("iplProbeBatchAddProbeArray", module._sa_probe_batch_add_probe_array(batch, array));
+			module._sa_probe_batch_commit(batch);
+		} catch (error) {
+			if (batch !== 0) module._sa_probe_batch_release(batch);
+			module._sa_probe_array_release(array);
+			throw error;
+		}
+		module._sa_probe_array_release(array);
+		return new ProbeBatchImpl(world, batch);
+	}
+	static load(world, data) {
+		const module = world.module;
+		const pointer = module._malloc(data.byteLength);
+		try {
+			module.HEAPU8.set(data, pointer);
+			const batch = createHandle(module, "iplProbeBatchLoad", (out) => module._sa_probe_batch_load_from_buffer(world.context, pointer, data.byteLength, out));
+			module._sa_probe_batch_commit(batch);
+			return new ProbeBatchImpl(world, batch);
+		} finally {
+			module._free(pointer);
+		}
+	}
+	dispose() {
+		if (this.#disposed) return;
+		this.#disposed = true;
+		this.#world.releaseProbeBatch(this);
+		this.#world.module._sa_probe_batch_release(this.native);
+	}
+	save() {
+		const module = this.#world.module;
+		const sizePointer = module._malloc(4);
+		try {
+			module.HEAPU32[sizePointer >>> 2] = 0;
+			const bufferPointer = module._sa_probe_batch_save_to_buffer(this.#world.context, this.native, sizePointer);
+			if (bufferPointer === 0) throw new SteamAudioError("iplProbeBatchSave", "failed to serialize probe batch");
+			const sizeBytes = module.HEAPU32[sizePointer >>> 2];
+			const copy = new Uint8Array(sizeBytes);
+			copy.set(module.HEAPU8.subarray(bufferPointer, bufferPointer + sizeBytes));
+			module._sa_buffer_free(bufferPointer);
+			return copy;
+		} finally {
+			module._free(sizePointer);
+		}
+	}
+};
 var WorldImpl = class {
 	audioContext;
 	context;
@@ -3685,6 +3879,7 @@ var WorldImpl = class {
 	];
 	mainThreadReflections;
 	maxOcclusionSamples;
+	pathingSettings;
 	maxSources;
 	module;
 	reflectionSettings;
@@ -3699,6 +3894,14 @@ var WorldImpl = class {
 	#reflectionAccumulator = 0;
 	#reflectionBuses = /* @__PURE__ */ new Set();
 	#reflectionInterval;
+	#pathingAccumulator = 0;
+	#pathingBuses = /* @__PURE__ */ new Set();
+	#pathingInterval;
+	#probeBatches = /* @__PURE__ */ new Set();
+	#activePathingBatch;
+	#pathingSh;
+	#pathingEq3Pointer = 0;
+	#pathingShPointer = 0;
 	#reverbBuses = /* @__PURE__ */ new Set();
 	#simulationInterval;
 	#sofaData;
@@ -3739,11 +3942,26 @@ var WorldImpl = class {
 		};
 		const useReflectionWorker = this.reflectionSettings.enabled && canUseReflectionWorker();
 		this.mainThreadReflections = this.reflectionSettings.enabled && !useReflectionWorker;
+		const pathingOptions = options.pathing === false || options.pathing === void 0 ? void 0 : options.pathing;
+		const pathingOrder = integer("pathing.maxOrder", pathingOptions?.maxOrder ?? 1, 0);
+		if ((pathingOrder + 1) * (pathingOrder + 1) > 16) throw new RangeError("pathing.maxOrder must satisfy (order + 1)^2 <= 16 (max 3)");
+		this.pathingSettings = {
+			enabled: pathingOptions !== void 0,
+			maxOrder: pathingOrder,
+			order: pathingOrder,
+			rate: positive("pathing.rate", pathingOptions?.rate ?? options.reflectionRate ?? DEFAULT_REFLECTION_RATE),
+			visRadius: pathingOptions?.visRadius ?? 1,
+			visRange: pathingOptions?.visRange ?? 1,
+			visThreshold: pathingOptions?.visThreshold ?? .1
+		};
+		this.#pathingInterval = 1 / this.pathingSettings.rate;
+		this.#pathingSh = new Float32Array((pathingOrder + 1) * (pathingOrder + 1));
 		this.context = createHandle(this.module, "iplContextCreate", (out) => this.module._sa_context_create(out));
 		try {
 			this.sceneHandle = createHandle(this.module, "iplSceneCreate", (out) => this.module._sa_scene_create(this.context, out));
 			try {
-				this.simulator = createHandle(this.module, "iplSimulatorCreate", (out) => this.module._sa_simulator_create(this.context, this.sceneHandle, this.audioContext.sampleRate, this.frameSize, this.maxSources + 1, this.maxOcclusionSamples, this.mainThreadReflections ? 1 : 0, maxRays, diffuseSamples, maxDuration, maxOrder, 1, headTracked ? 1 : 0, out));
+				const simulatorMaxOrder = this.pathingSettings.enabled ? Math.max(maxOrder, this.pathingSettings.maxOrder) : maxOrder;
+				this.simulator = this.pathingSettings.enabled ? createHandle(this.module, "iplSimulatorCreate", (out) => this.module._sa_simulator_create_pathing(this.context, this.sceneHandle, this.audioContext.sampleRate, this.frameSize, this.maxSources + 1, this.maxOcclusionSamples, this.mainThreadReflections ? 1 : 0, 1, maxRays, diffuseSamples, maxDuration, simulatorMaxOrder, 1, headTracked ? 1 : 0, out)) : createHandle(this.module, "iplSimulatorCreate", (out) => this.module._sa_simulator_create(this.context, this.sceneHandle, this.audioContext.sampleRate, this.frameSize, this.maxSources + 1, this.maxOcclusionSamples, this.mainThreadReflections ? 1 : 0, maxRays, diffuseSamples, maxDuration, maxOrder, 1, headTracked ? 1 : 0, out));
 			} catch (error) {
 				this.module._sa_scene_release(this.sceneHandle);
 				throw error;
@@ -3753,6 +3971,10 @@ var WorldImpl = class {
 			throw error;
 		}
 		if (useReflectionWorker) this.reflectionWorker = new ReflectionSimulationWorker(this.#wasmBinary, this.audioContext.sampleRate, this.frameSize, this.maxSources + 1, this.reflectionSettings, (outputs) => this.#receiveReflectionOutputs(outputs), this.#sofaData);
+		if (this.pathingSettings.enabled) {
+			this.#pathingEq3Pointer = this.module._malloc(12);
+			this.#pathingShPointer = this.module._malloc(this.#pathingSh.length * 4);
+		}
 		this.scene = new AcousticSceneImpl(this);
 		this.listenerImpl = new ListenerImpl(this);
 		this.listener = this.listenerImpl;
@@ -3767,6 +3989,12 @@ var WorldImpl = class {
 			z: 0
 		});
 	}
+	get pathingEq3Pointer() {
+		return this.#pathingEq3Pointer;
+	}
+	get pathingShPointer() {
+		return this.#pathingShPointer;
+	}
 	assertActive(operation) {
 		if (this.#disposed) throw new SteamAudioError(operation, "World has been disposed");
 	}
@@ -3778,6 +4006,8 @@ var WorldImpl = class {
 			frameSize: this.frameSize,
 			headTracked: this.reflectionSettings.headTracked,
 			onDispose: (disposedNode) => sourceValue.nodes.delete(disposedNode),
+			pathing: this.pathingSettings.enabled,
+			pathingOrder: this.pathingSettings.order,
 			reflectionOrder: this.reflectionSettings.order,
 			sofaData: this.#sofaData,
 			source: sourceValue,
@@ -3801,6 +4031,46 @@ var WorldImpl = class {
 		this.#reverbBuses.add(bus);
 		return bus;
 	}
+	createPathingBus(settings) {
+		this.assertActive("World.createPathingBus");
+		if (!this.pathingSettings.enabled) throw new Error("Pathing is disabled for this World");
+		const bus = new PathingBusNode(this.audioContext, settings, (disposed) => this.#pathingBuses.delete(disposed));
+		this.#pathingBuses.add(bus);
+		return bus;
+	}
+	createProbeBatch(settings) {
+		this.assertActive("World.createProbeBatch");
+		if (!this.pathingSettings.enabled) throw new Error("Pathing is disabled for this World");
+		const batch = ProbeBatchImpl.generate(this, settings);
+		this.#registerProbeBatch(batch);
+		return batch;
+	}
+	loadProbeBatch(data) {
+		this.assertActive("World.loadProbeBatch");
+		if (!this.pathingSettings.enabled) throw new Error("Pathing is disabled for this World");
+		const batch = ProbeBatchImpl.load(this, data);
+		this.#registerProbeBatch(batch);
+		return batch;
+	}
+	bakePathing(batch, settings = {}) {
+		this.assertActive("World.bakePathing");
+		if (!(batch instanceof ProbeBatchImpl) || !this.#probeBatches.has(batch)) throw new TypeError("World.bakePathing requires a ProbeBatch created by this World");
+		assertNativeStatus("iplPathBakerBake", this.module._sa_path_baker_bake(this.context, this.sceneHandle, batch.native, integer("bakePathing.numSamples", settings.numSamples ?? 1), positive("bakePathing.radius", settings.radius ?? 1), positive("bakePathing.threshold", settings.threshold ?? .1), positive("bakePathing.visRange", settings.visRange ?? 50), positive("bakePathing.pathRange", settings.pathRange ?? 50)));
+		this.#activePathingBatch = batch;
+	}
+	releaseProbeBatch(batch) {
+		if (this.#activePathingBatch === batch) this.#activePathingBatch = void 0;
+		if (this.#probeBatches.delete(batch)) {
+			this.module._sa_simulator_remove_probe_batch(this.simulator, batch.native);
+			this.module._sa_simulator_commit(this.simulator);
+		}
+	}
+	#registerProbeBatch(batch) {
+		this.module._sa_simulator_add_probe_batch(this.simulator, batch.native);
+		this.module._sa_simulator_commit(this.simulator);
+		this.#probeBatches.add(batch);
+		this.#activePathingBatch ??= batch;
+	}
 	createSource(settings) {
 		this.assertActive("World.createSource");
 		if (this.#sources.size >= this.maxSources) throw new SteamAudioError("World.createSource", `maxSources (${this.maxSources}) exceeded`);
@@ -3818,9 +4088,13 @@ var WorldImpl = class {
 		this.#listenerReverbSource?.dispose();
 		for (const bus of [...this.#reflectionBuses]) bus.dispose();
 		for (const bus of [...this.#reverbBuses]) bus.dispose();
+		for (const bus of [...this.#pathingBuses]) bus.dispose();
+		for (const batch of [...this.#probeBatches]) batch.dispose();
 		this.scene.dispose();
 		this.reflectionWorker?.dispose();
 		this.#disposed = true;
+		if (this.#pathingEq3Pointer !== 0) this.module._free(this.#pathingEq3Pointer);
+		if (this.#pathingShPointer !== 0) this.module._free(this.#pathingShPointer);
 		this.module._sa_simulator_release(this.simulator);
 		this.module._sa_scene_release(this.sceneHandle);
 		this.module._sa_context_release(this.context);
@@ -3881,6 +4155,7 @@ var WorldImpl = class {
 		if (this.audioContext.state !== "running") return;
 		this.#runDirectSimulation(delta);
 		this.#runReflectionSimulation(delta);
+		this.#runPathingSimulation(delta);
 	}
 	syncListenerReverbSource() {
 		this.#listenerReverbSource?.setTransform(this.listenerImpl.position, this.listenerImpl.orientation);
@@ -3916,6 +4191,18 @@ var WorldImpl = class {
 			this.#runReflectionsNow();
 		}
 	}
+	#runPathingSimulation(delta) {
+		if (!this.pathingSettings.enabled) return;
+		const batch = this.#activePathingBatch;
+		if (!batch) return;
+		this.#pathingAccumulator += delta;
+		while (this.#pathingAccumulator >= this.#pathingInterval) {
+			this.#pathingAccumulator -= this.#pathingInterval;
+			for (const source of this.#sources) source.setPathingInputs(batch.native);
+			assertNativeStatus("iplSimulatorRunPathing", this.module._sa_simulator_run_pathing(this.simulator));
+			for (const source of this.#sources) source.readPathingOutputs();
+		}
+	}
 	#runReflectionsNow() {
 		assertNativeStatus("iplSimulatorRunReflections", this.module._sa_simulator_run_reflections(this.simulator));
 		for (const source of this.#sources) if (source.settings.reflections.enabled) source.readReflectionOutputs();
@@ -3929,4 +4216,4 @@ const createWorld = async (options) => {
 	return createWorldFromRuntime(await prepareWorldRuntime(options), options);
 };
 //#endregion
-export { getPreparedRuntimePromise as a, SteamAudioNode as c, detectCapabilities as i, SteamAudioError as l, createWorldFromRuntime as n, ReflectionBusNode as o, defaultModuleFactory as r, ReverbBusNode as s, createWorld as t };
+export { getPreparedRuntimePromise as a, ReverbBusNode as c, detectCapabilities as i, SteamAudioNode as l, createWorldFromRuntime as n, PathingBusNode as o, defaultModuleFactory as r, ReflectionBusNode as s, createWorld as t, SteamAudioError as u };

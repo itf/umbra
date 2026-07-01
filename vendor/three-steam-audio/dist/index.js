@@ -1,4 +1,4 @@
-import { c as SteamAudioNode, i as detectCapabilities, l as SteamAudioError, o as ReflectionBusNode, s as ReverbBusNode, t as createWorld } from "./world-BbGVRMC8.js";
+import { c as ReverbBusNode, i as detectCapabilities, l as SteamAudioNode, o as PathingBusNode, s as ReflectionBusNode, t as createWorld, u as SteamAudioError } from "./world-Bgcj5GoD.js";
 //#region src/three/materials.ts
 const material = (absorption, scattering, transmission = [
 	0,
@@ -45,4 +45,4 @@ const Materials = Object.freeze({
 	], .05)
 });
 //#endregion
-export { Materials, ReflectionBusNode, ReverbBusNode, SteamAudioError, SteamAudioNode, createWorld, detectCapabilities };
+export { Materials, PathingBusNode, ReflectionBusNode, ReverbBusNode, SteamAudioError, SteamAudioNode, createWorld, detectCapabilities };

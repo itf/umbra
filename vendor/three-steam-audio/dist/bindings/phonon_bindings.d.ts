@@ -27,11 +27,16 @@ export interface SteamAudioBindings extends EmscriptenModule {
   _sa_binaural_effect_create(ctx: number, sample_rate: number, frame_size: number, hrtf: number, out_effect: number): number;
   _sa_binaural_effect_release(effect: number): void;
   _sa_binaural_effect_apply(effect: number, hrtf: number, dir_x: number, dir_y: number, dir_z: number, spatial_blend: number, in_buffer: number, out_buffer: number, num_channels: number, num_samples: number): number;
+  _sa_ambisonics_decode_effect_create(ctx: number, sample_rate: number, frame_size: number, hrtf: number, max_order: number, out_effect: number): number;
+  _sa_ambisonics_decode_effect_release(effect: number): void;
+  _sa_ambisonics_decode_effect_reset(effect: number): void;
+  _sa_ambisonics_decode_effect_apply(effect: number, hrtf: number, order: number, ahead_x: number, ahead_y: number, ahead_z: number, up_x: number, up_y: number, up_z: number, binaural: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_direct_effect_create(ctx: number, sample_rate: number, frame_size: number, num_channels: number, out_effect: number): number;
   _sa_direct_effect_release(effect: number): void;
   _sa_direct_effect_apply(effect: number, effect_flags: number, transmission_type: number, distance_attenuation: number, air_absorption: number, directivity: number, occlusion: number, transmission: number, in_buffer: number, out_buffer: number, num_channels: number, num_samples: number): number;
   _sa_reflection_effect_create(ctx: number, sample_rate: number, frame_size: number, num_channels: number, out_effect: number): number;
   _sa_reflection_effect_release(effect: number): void;
+  _sa_reflection_effect_reset(effect: number): void;
   _sa_reflection_effect_apply(effect: number, reverb_times: number, in_buffer: number, out_buffer: number, num_samples: number): number;
   _sa_reflection_effect_get_tail(effect: number, out_buffer: number, num_samples: number): number;
   _sa_convolution_reflection_effect_create(ctx: number, sample_rate: number, frame_size: number, order: number, max_duration: number, out_effect: number): number;
@@ -54,6 +59,34 @@ export interface SteamAudioBindings extends EmscriptenModule {
   _sa_buffer_free(buffer: number): void;
   _sa_buffer_deinterleave(interleaved: number, deinterleaved: number, num_channels: number, num_samples: number): void;
   _sa_buffer_interleave(deinterleaved: number, interleaved: number, num_channels: number, num_samples: number): void;
+  _sa_probe_array_create(ctx: number, out_array: number): number;
+  _sa_probe_array_generate_probes(array: number, scene: number, gen_type: number, spacing: number, height: number, transform16: number): number;
+  _sa_probe_array_get_num_probes(array: number): number;
+  _sa_probe_array_get_probe(array: number, index: number, out4: number): number;
+  _sa_probe_array_release(array: number): void;
+  _sa_probe_batch_create(ctx: number, out_batch: number): number;
+  _sa_probe_batch_add_probe(batch: number, probe4: number): number;
+  _sa_probe_batch_add_probe_array(batch: number, array: number): number;
+  _sa_probe_batch_get_num_probes(batch: number): number;
+  _sa_probe_batch_commit(batch: number): void;
+  _sa_probe_batch_release(batch: number): void;
+  _sa_probe_batch_save_to_buffer(ctx: number, batch: number, out_size: number): number;
+  _sa_probe_batch_load_from_buffer(ctx: number, buf: number, size_bytes: number, out_batch: number): number;
+  _sa_path_baker_bake(ctx: number, scene: number, batch: number, num_samples: number, radius: number, threshold: number, vis_range: number, path_range: number): number;
+  _sa_path_baker_cancel_bake(ctx: number): void;
+  _sa_simulator_create_pathing(ctx: number, scene: number, sample_rate: number, frame_size: number, max_sources: number, max_occlusion_samples: number, reflections_enabled: number, pathing_enabled: number, max_rays: number, diffuse_samples: number, max_duration: number, max_order: number, reflection_threads: number, convolution: number, out_sim: number): number;
+  _sa_simulator_add_probe_batch(sim: number, batch: number): void;
+  _sa_simulator_remove_probe_batch(sim: number, batch: number): void;
+  _sa_simulator_run_pathing(sim: number): number;
+  _sa_source_create_pathing(sim: number, direct_enabled: number, reflections_enabled: number, pathing_enabled: number, out_source: number): number;
+  _sa_source_set_pathing_inputs(source: number, probe_batch: number, vis_radius: number, vis_threshold: number, vis_range: number, pathing_order: number, enable_validation: number, find_alternate_paths: number): void;
+  _sa_source_get_pathing_outputs(source: number, out_eq3: number, out_sh: number, order: number): number;
+  _sa_path_effect_create(ctx: number, sample_rate: number, frame_size: number, max_order: number, spatialize: number, hrtf: number, out_effect: number): number;
+  _sa_path_effect_apply(effect: number, eq3: number, sh_coeffs: number, order: number, binaural: number, hrtf: number, lx: number, ly: number, lz: number, ax: number, ay: number, az: number, ux: number, uy: number, uz: number, normalize_eq: number, in_mono: number, out_buffer: number, num_samples: number): number;
+  _sa_path_effect_get_tail_size(effect: number): number;
+  _sa_path_effect_get_tail(effect: number, out_buffer: number, num_samples: number): number;
+  _sa_path_effect_reset(effect: number): void;
+  _sa_path_effect_release(effect: number): void;
 }
 
 // The default export is an async factory function.
