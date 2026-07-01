@@ -1,0 +1,62 @@
+[
+  {
+    "id": "percussive-alveolar",
+    "file": "/audio/clicks/original/Percussive_alveolar_click.ogg",
+    "label": "Percussive alveolar click",
+    "ipa": "",
+    "sourceFile": "Percussive_alveolar_click.ogg",
+    "author": "Eshaan011",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "sourceUrl": "https://commons.wikimedia.org/wiki/File:Percussive_alveolar_click.ogg",
+    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing (trim to transient, resample to 48000 Hz, peak-normalize to -1 dBFS, export mono .ogg + .wav) still needs to be done later."
+  },
+  {
+    "id": "palatoalveolar",
+    "file": "/audio/clicks/original/Palatoalveolar_click.ogg",
+    "label": "Palatoalveolar click",
+    "ipa": "ǂ",
+    "sourceFile": "Palatoalveolar_click.ogg",
+    "author": "Peter Isotalo (User:Karmosin)",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "sourceUrl": "https://commons.wikimedia.org/wiki/File:Palatoalveolar_click.ogg",
+    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+  },
+  {
+    "id": "dental",
+    "file": "/audio/clicks/original/Dental_click.ogg",
+    "label": "Dental click",
+    "ipa": "ǀ",
+    "sourceFile": "Dental_click.ogg",
+    "author": "Peter Isotalo (User:Karmosin)",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "sourceUrl": "https://commons.wikimedia.org/wiki/File:Dental_click.ogg",
+    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+  },
+  {
+    "id": "alveolar-lateral",
+    "file": "/audio/clicks/original/Alveolar_lateral_click.ogg",
+    "label": "Alveolar lateral click",
+    "ipa": "ǁ",
+    "sourceFile": "Alveolar_lateral_click.ogg",
+    "author": "Peter Isotalo (User:Karmosin)",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "sourceUrl": "https://commons.wikimedia.org/wiki/File:Alveolar_lateral_click.ogg",
+    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+  },
+  {
+    "id": "bilabial",
+    "file": "/audio/clicks/original/Bilabial_click.ogg",
+    "label": "Bilabial click",
+    "ipa": "ʘ",
+    "sourceFile": "Bilabial_click.ogg",
+    "author": "Peter Isotalo (User:Karmosin)",
+    "license": "CC BY-SA 3.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+    "sourceUrl": "https://commons.wikimedia.org/wiki/File:Bilabial_click.ogg",
+    "processing": "NONE — ffmpeg/ffprobe not installed in this environment. Original unmodified file (Ogg Vorbis, mono, 44100 Hz). Probe-ready processing still pending. Note: any trimmed/normalized/resampled derivative must be released under CC BY-SA 3.0."
+  }
+]
