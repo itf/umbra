@@ -109,6 +109,18 @@ must expose this.
 ## DONE (additional)
 - [x] Off-axis start: player never starts facing the goal within 5°; small ≤45°
       deterministic turn so you must orient by ear (never spun at a wall). load.ts.
+- [x] Sequence (trail) mode — engine + game + EDITOR + tests (TRACK F complete).
+- [x] Reaction fix + occlusion-dip event + onboarding (TRACK B) — merged.
+- [x] Click-types help page /clicks + Credits screen /credits — built + WIRED (TRACK C/D).
+- [x] On-screen Decoy button (mobile stealth parity) — PM P0.
+- [x] Input/settings: debug toggle, auto-step, probe key, arrow remap.
+
+## STILL OPEN (next)
+- [ ] Wire realistic clickProbe.ts as the actual probe (trainer + game echo) — PM P1.
+- [ ] Trainer L1 (click calibration) + L2 (present/absent 2AFC + silence catch-trials) — PM P1.
+- [ ] Real /train route (fold trainer.html into the SPA).
+- [ ] Gate localization exercises behind detection mastery (P2).
+- [ ] Retire/annotate stale docs/product/ux-audit.md.
 
 ## Probe sound assets follow-up
 - [x] ffmpeg processing done (trim/mono/48k/normalize, ogg only).
