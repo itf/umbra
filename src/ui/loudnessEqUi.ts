@@ -95,7 +95,7 @@ export function mountLoudnessEq(root: HTMLElement, deps: LoudnessEqUiDeps): () =
       button('Second tone is QUIETER', () => answer('reference-louder')),
       button("They're EQUAL", () => answer('equal')),
       button('Play again', () => play(q.freq, q.testGainDb)),
-      button('Skip calibration', skip),
+      button('Skip this step', skip),
     );
     (controls.querySelector('button') as HTMLElement | null)?.focus();
   }
@@ -118,7 +118,7 @@ export function mountLoudnessEq(root: HTMLElement, deps: LoudnessEqUiDeps): () =
 
   function skip() {
     stop();
-    deps.say('Loudness calibration skipped.');
+    deps.say('Loudness calibration skipped. Moving on.');
     deps.onDone();
   }
 

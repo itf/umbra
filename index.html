@@ -86,6 +86,15 @@
             High-fidelity audio (Steam Audio, experimental)
           </label>
         </p>
+        <!-- Reaction-cue toggle: only shown for levels with reaction events (main.ts).
+             Off = the event is silent, revealed only by the space changing (default).
+             On = adds a physical hint (a pass-by swoosh / door click) for an easier ear. -->
+        <p class="engine-toggle" id="react-cue-row" hidden>
+          <label>
+            <input type="checkbox" id="react-cue-toggle" />
+            Audible hint for events (easier — adds a pass-by / door sound)
+          </label>
+        </p>
         <button id="start-button" class="primary">Begin (enable sound)</button>
         <button id="back-to-picker" class="secondary">Choose a different level</button>
       </section>
@@ -122,6 +131,10 @@
         <!-- React: press when you DETECT a reaction event (a crossing / a door).
              Hidden unless the level has events; shown by main.ts. Also the R key. -->
         <button id="react" class="listen" type="button" hidden aria-label="React — press the moment the sound dips or is briefly blocked (press R)">React</button>
+
+        <!-- Live reaction tally (hits / misses / false alarms). Shown by main.ts on
+             levels with reaction events; updated on every react press and miss. -->
+        <div id="react-score" class="react-score" hidden aria-live="polite"></div>
 
         <!-- Decoy: throw a sound decoy to lure a monster away (stealth levels). Hidden
              unless the level has monsters; shown by main.ts. Also the T key. On-screen

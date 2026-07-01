@@ -21,6 +21,7 @@
 
 import { loadHrtf, type HrtfSet } from './sofa';
 import { precomputeMinPhase, type MinPhaseHrtf } from './interpolatingDsp';
+import { personalizeMinPhase, isNeutral, type HrtfPersonalization } from './personalize';
 import { DEFAULT_SPEED_OF_SOUND } from '../acoustics/core';
 import { DEFAULT_MAX_DELAY_SEC, propagationDelaySec, clampDelaySec } from './propagation';
 import type { ListenerPose } from './renderer';
@@ -45,8 +46,14 @@ function worldToHead(dx: number, dy: number, dz: number, yaw: number): [number, 
 export class InterpolatingHrtfRenderer {
   readonly ctx: BaseAudioContext;
   readonly set: HrtfSet;
-  readonly mp: MinPhaseHrtf;
+  /** Current (possibly personalized) min-phase table handed to NEW sources' worklets. */
+  mp: MinPhaseHrtf;
+  /** Un-warped base table, kept so live re-personalization starts from clean data. */
+  private readonly baseMp: MinPhaseHrtf;
   readonly maxDelaySec: number;
+  /** Live sources, so `setPersonalization` can hot-swap every worklet's HRIR table
+   *  WITHOUT creating new nodes (rebuilding nodes leaked processors on the audio thread). */
+  private readonly sources = new Set<InterpolatingHrtfSource>();
   private listener: ListenerPose = { x: 0, y: 1.6, z: 0, yaw: 0 };
   private _speedOfSound = DEFAULT_SPEED_OF_SOUND;
   private moduleReady: Promise<void>;
@@ -54,32 +61,56 @@ export class InterpolatingHrtfRenderer {
   get speedOfSound(): number { return this._speedOfSound; }
   setSpeedOfSound(c: number) { if (c > 0 && Number.isFinite(c)) this._speedOfSound = c; }
 
-  private constructor(ctx: BaseAudioContext, set: HrtfSet, mp: MinPhaseHrtf, maxDelaySec: number, moduleReady: Promise<void>) {
+  private constructor(ctx: BaseAudioContext, set: HrtfSet, mp: MinPhaseHrtf, baseMp: MinPhaseHrtf, maxDelaySec: number, moduleReady: Promise<void>) {
     this.ctx = ctx;
     this.set = set;
     this.mp = mp;
+    this.baseMp = baseMp;
     this.maxDelaySec = maxDelaySec;
     this.moduleReady = moduleReady;
   }
 
+  /**
+   * LIVE re-personalization: re-warp from the pristine base table and post the new
+   * HRIR table to every existing source's worklet (reusing the nodes). This is the
+   * leak-free way to drive the free-play "knobs" — no new AudioWorkletNodes.
+   */
+  setPersonalization(p: HrtfPersonalization) {
+    this.mp = isNeutral(p) ? this.baseMp : personalizeMinPhase(this.baseMp, p);
+    for (const s of this.sources) s.updateMp(this.mp);
+  }
+
+  /** @internal — sources register/unregister so setPersonalization can reach them. */
+  _register(s: InterpolatingHrtfSource) { this.sources.add(s); }
+  _unregister(s: InterpolatingHrtfSource) { this.sources.delete(s); }
+
   static async create(
     ctx: AudioContext,
     hrtfUrl: string,
-    opts: { maxDelaySec?: number; k?: number } = {},
+    opts: { maxDelaySec?: number; k?: number; personalize?: HrtfPersonalization } = {},
   ): Promise<InterpolatingHrtfRenderer> {
     const set = await loadHrtf(hrtfUrl);
     return InterpolatingHrtfRenderer.fromSetAsync(ctx, set, opts);
   }
 
-  /** Build from an already-loaded set; adds the worklet module. */
+  /**
+   * Build from an already-loaded set; adds the worklet module. When
+   * `opts.personalize` is supplied and non-neutral, the baked min-phase set is
+   * warped (ITD scale + elevation/front-back tilt) toward the listener's own ears
+   * before it reaches the worklet — see personalize.ts. Zero runtime cost: the
+   * warp happens once here, not per audio block.
+   */
   static async fromSetAsync(
     ctx: BaseAudioContext,
     set: HrtfSet,
-    opts: { maxDelaySec?: number; k?: number } = {},
+    opts: { maxDelaySec?: number; k?: number; personalize?: HrtfPersonalization } = {},
   ): Promise<InterpolatingHrtfRenderer> {
-    const mp = precomputeMinPhase(set);
+    const baseMp = precomputeMinPhase(set);
+    const mp = opts.personalize && !isNeutral(opts.personalize)
+      ? personalizeMinPhase(baseMp, opts.personalize)
+      : baseMp;
     const ready = (ctx as any).audioWorklet.addModule(WORKLET_URL);
-    const r = new InterpolatingHrtfRenderer(ctx, set, mp, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC, ready);
+    const r = new InterpolatingHrtfRenderer(ctx, set, mp, baseMp, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC, ready);
     await ready;
     return r;
   }
@@ -141,6 +172,14 @@ export class InterpolatingHrtfSource {
     this.distanceGain.connect(this.airLowpass);
     this.airLowpass.connect(this.node);
     this.node.connect(this.output);
+
+    r._register(this);
+  }
+
+  /** Hot-swap this source's HRIR table in place (no new node). Used by the
+   *  renderer's live setPersonalization so the knobs don't leak worklets. */
+  updateMp(mp: MinPhaseHrtf) {
+    this.node.port.postMessage({ type: 'mp', mp });
   }
 
   setPosition(x: number, y: number, z: number) {
@@ -179,6 +218,11 @@ export class InterpolatingHrtfSource {
   }
 
   disconnect() {
+    this.r._unregister(this);
+    try { this.input.disconnect(); } catch { /* noop */ }
+    try { this.propDelay.disconnect(); } catch { /* noop */ }
+    try { this.distanceGain.disconnect(); } catch { /* noop */ }
+    try { this.airLowpass.disconnect(); } catch { /* noop */ }
     try { this.output.disconnect(); } catch { /* noop */ }
     try { this.node.disconnect(); } catch { /* noop */ }
   }

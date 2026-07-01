@@ -17,6 +17,8 @@ import { CalibrationMachine, type Side } from './calibrationMachine';
 import type { OnboardingStore } from './onboardingStore';
 import { mountLoudnessEq } from './loudnessEqUi';
 import type { EqBand } from './loudnessEq';
+import { mountHrtfTuning } from './hrtfTuning';
+import type { HrtfPersonalization } from '../engine/hrtf/personalize';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -36,6 +38,18 @@ export interface CalibrationDeps {
    * step. When omitted, the loudness step is skipped entirely (e.g. older callers).
    */
   saveLoudnessEq?: (curve: EqBand[]) => void;
+  /**
+   * Persist + load the parametric HRTF personalization produced by the OPTIONAL
+   * "personalize 3D audio" step. When omitted, that step is skipped entirely.
+   */
+  saveHrtfPersonalization?: (p: HrtfPersonalization) => void;
+  loadHrtfPersonalization?: () => HrtfPersonalization;
+  /** Base measured-HRTF URL the personalization step warps (SADIE by default). */
+  hrtfUrl?: string;
+  /** Currently-chosen base HRTF id + a saver, so the personalization step can offer
+   *  the "which measured head" picker. */
+  loadHrtfBase?: () => string;
+  saveHrtfBase?: (id: string) => void;
 }
 
 export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
@@ -50,7 +64,7 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
   const p = document.createElement('p');
   p.id = 'cal-instruction';
   p.textContent =
-    'Put your headphones on. We will check they are on the right ears and the volume is comfortable. This needs sound, so press Start.';
+    'Optional audio calibration. Put your headphones on and we will check they are on the right ears, set a comfortable volume, and optionally tune the 3D sound to your ears. Or skip — you can run it anytime from Settings.';
   const controls = document.createElement('div');
   controls.className = 'cal-controls';
   root.append(h, p, controls);
@@ -106,9 +120,11 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     clearControls();
     const step = machine.current;
     if (step === 'intro') {
-      deps.say('Calibration. Press Start to enable sound and begin the check.');
-      const start = bigButton('Start (enable sound)', onStart, true);
-      const skip = bigButton('Skip calibration', skip_, false);
+      deps.say(
+        'Audio calibration is optional but recommended. It checks your headphones, sets a comfortable volume, and can tune the 3D sound to your ears. Start it now, or skip — you can always run it later from Settings.',
+      );
+      const start = bigButton('Calibrate now (recommended)', onStart, true);
+      const skip = bigButton('Skip for now', skip_, false);
       controls.append(start, skip);
     } else if (step === 'left') {
       deps.say('Listen. A tone will play on your LEFT. Where did you hear it?');
@@ -240,18 +256,79 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     stopVolumeTone();
     cleanupProbe();
     deps.store.setSwap(machine.swapped);
-    // Equal-loudness EQ step: tune the per-band correction to the user's ears/cans,
-    // then finalize. Skipped (straight to done) when the host didn't wire a saver or
-    // audio failed to start. Reuses the SAME flow the Settings re-run button uses.
-    if (deps.saveLoudnessEq && graph) {
-      deps.say('Headphone check done. Next: a quick loudness calibration.');
-      mountLoudnessEq(root, {
+    // Two OPTIONAL, INDEPENDENT tuning steps follow the headphone check: equal-
+    // loudness EQ and HRTF personalization. Rather than force loudness first, offer
+    // a chooser so the user can do either, both, or neither. Each is wired only when
+    // the host provided its saver + a live graph; if neither is wired, finalize.
+    if ((deps.saveLoudnessEq || deps.saveHrtfPersonalization) && graph) {
+      chooseTuning();
+      return;
+    }
+    done();
+  }
+
+  /** Post-headphone-check menu: pick loudness, HRTF personalization, or finish. */
+  function chooseTuning() {
+    clearControls();
+    p.textContent =
+      'Headphone check done. Two optional tune-ups are available — do either, both, or neither.';
+    deps.say(
+      'Headphone check done. Two optional steps: loudness calibration, and 3D-audio personalization. Choose one, or finish.',
+    );
+    if (deps.saveLoudnessEq) {
+      controls.append(bigButton('Loudness / hearing calibration', runLoudnessStep, true));
+    }
+    if (deps.saveHrtfPersonalization) {
+      controls.append(bigButton('Personalize 3D audio to my ears', runHrtfTuning, !deps.saveLoudnessEq));
+    }
+    controls.append(bigButton('Finish — skip both', done));
+    focusFirst();
+  }
+
+  /** Run the equal-loudness step, then return to the chooser (not straight to HRTF),
+   *  so the user stays in control of what runs next. */
+  function runLoudnessStep() {
+    if (!deps.saveLoudnessEq || !graph) return chooseTuning();
+    deps.say('Loudness calibration.');
+    mountLoudnessEq(root, {
+      ctx: graph.ctx,
+      dest: graph.master,
+      say: deps.say,
+      alert: deps.alert,
+      saveCurve: deps.saveLoudnessEq,
+      onDone: backToChooserOrDone,
+    });
+  }
+
+  /** After a step finishes: if the other step exists, return to the chooser;
+   *  otherwise finalize. Keeps a single-step config from looping the menu. */
+  function backToChooserOrDone() {
+    if (deps.saveLoudnessEq && deps.saveHrtfPersonalization) {
+      chooseTuning();
+    } else {
+      done();
+    }
+  }
+
+  /**
+   * OPTIONAL parametric HRTF personalization — reachable from the chooser without
+   * touching loudness. Only wired when the host provided a saver + a live graph;
+   * on finish it returns to the chooser (so the user can still do loudness) or
+   * finalizes when it's the only tuning step.
+   */
+  function runHrtfTuning() {
+    if (deps.saveHrtfPersonalization && graph) {
+      mountHrtfTuning(root, {
         ctx: graph.ctx,
         dest: graph.master,
+        hrtfUrl: deps.hrtfUrl ?? HRTF_URL,
         say: deps.say,
         alert: deps.alert,
-        saveCurve: deps.saveLoudnessEq,
-        onDone: done,
+        save: deps.saveHrtfPersonalization,
+        start: deps.loadHrtfPersonalization?.(),
+        baseHrtfId: deps.loadHrtfBase?.(),
+        saveBaseHrtf: deps.saveHrtfBase,
+        onDone: backToChooserOrDone,
       });
       return;
     }

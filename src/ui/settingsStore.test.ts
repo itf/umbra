@@ -263,3 +263,59 @@ describe('SettingsStore without storage (degrades to memory)', () => {
     expect(s.steamEngineEnabled()).toBe(true);
   });
 });
+
+describe('HRTF personalization persistence', () => {
+  const NEUTRAL = { itdScale: 1, elevTilt: 0, frontBackTilt: 0, notchHz: 7500, notchDepth: 0 };
+
+  it('defaults to neutral when unset', () => {
+    const s = new SettingsStore(memStorage());
+    expect(s.hrtfPersonalization()).toEqual(NEUTRAL);
+  });
+
+  it('round-trips clamped values across instances', () => {
+    const backing = memStorage();
+    const p = { itdScale: 1.3, elevTilt: -4, frontBackTilt: 5, notchHz: 8200, notchDepth: 10 };
+    new SettingsStore(backing).setHrtfPersonalization(p);
+    expect(new SettingsStore(backing).hrtfPersonalization()).toEqual(p);
+  });
+
+  it('clamps out-of-range on save so corrupt input can never over-drive the renderer', () => {
+    const backing = memStorage();
+    new SettingsStore(backing).setHrtfPersonalization({
+      itdScale: 99, elevTilt: -99, frontBackTilt: 99, notchHz: 99999, notchDepth: 99,
+    });
+    const p = new SettingsStore(backing).hrtfPersonalization();
+    expect(p.itdScale).toBe(2.0);
+    expect(p.elevTilt).toBe(-18);
+    expect(p.frontBackTilt).toBe(18);
+    expect(p.notchHz).toBe(11000);
+    expect(p.notchDepth).toBe(24);
+  });
+
+  it('loads pre-notch profiles with the notch defaulted (forward-compatible)', () => {
+    const backing = memStorage();
+    // A profile saved before the notch fields existed.
+    backing.setItem('ps.settings.hrtfPersonalization', JSON.stringify({
+      version: 1, params: { itdScale: 1.2, elevTilt: 2, frontBackTilt: -2 },
+    }));
+    const p = new SettingsStore(backing).hrtfPersonalization();
+    expect(p.itdScale).toBe(1.2);
+    expect(p.notchHz).toBe(7500); // defaulted, not NaN
+    expect(p.notchDepth).toBe(0);
+  });
+
+  it('falls back to neutral on corrupt / stale-version payload', () => {
+    const backing = memStorage();
+    backing.setItem('ps.settings.hrtfPersonalization', '{not json');
+    expect(new SettingsStore(backing).hrtfPersonalization()).toEqual(NEUTRAL);
+    backing.setItem('ps.settings.hrtfPersonalization', JSON.stringify({ version: 99, params: {} }));
+    expect(new SettingsStore(backing).hrtfPersonalization().itdScale).toBe(1);
+  });
+
+  it('clear reverts to neutral', () => {
+    const s = new SettingsStore(memStorage());
+    s.setHrtfPersonalization({ itdScale: 1.2, elevTilt: 3, frontBackTilt: -3, notchHz: 9000, notchDepth: 8 });
+    s.clearHrtfPersonalization();
+    expect(s.hrtfPersonalization()).toEqual(NEUTRAL);
+  });
+});

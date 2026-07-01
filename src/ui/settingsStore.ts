@@ -13,6 +13,11 @@
  * The clamp + volume math is pure (see `clampVolume`) so it's unit-testable without
  * DOM or storage.
  */
+import {
+  type HrtfPersonalization,
+  clampPersonalization,
+  NEUTRAL_PERSONALIZATION,
+} from '../engine/hrtf/personalize';
 
 export const MASTER_VOLUME_KEY = 'ps.settings.masterVolume';
 // High-fidelity (Steam Audio) engine preference. Mirrors the Begin-screen / URL
@@ -68,6 +73,21 @@ export const PROBE_CHOICE_KEY = 'ps.settings.probeChoice';
  */
 export const LOUDNESS_EQ_KEY = 'ps.settings.loudnessEq';
 export const LOUDNESS_EQ_VERSION = 1;
+
+/**
+ * Per-user PARAMETRIC HRTF personalization — the three scalars the perceptual
+ * calibration game (hrtfTuning.ts) tunes to warp our measured SADIE H3 set toward
+ * the listener's own anatomy: ITD scale (head width), elevation tilt, front/back
+ * tilt. Applied at renderer-build time via personalizeMinPhase(). VERSIONED so a
+ * future parameter change is discarded rather than mis-applied.
+ */
+export const HRTF_PERSONALIZATION_KEY = 'ps.settings.hrtfPersonalization';
+export const HRTF_PERSONALIZATION_VERSION = 1;
+
+/** Which measured BASE head-response the user tunes on top of (see hrtfTuning
+ *  BASE_HRTFS): 'sadie_h3' (default) or 'cipic_124' (Steam's). Stored as a plain id. */
+export const HRTF_BASE_KEY = 'ps.settings.hrtfBase';
+export const DEFAULT_HRTF_BASE = 'sadie_h3';
 
 /** A single EQ correction point (mirrors loudnessEq.EqBand; kept local to avoid a
  *  store→ui import cycle). */
@@ -438,5 +458,54 @@ export class SettingsStore {
     } catch {
       /* memory already cleared */
     }
+  }
+
+  /**
+   * Load the parametric HRTF personalization, or NEUTRAL (an identity warp) when
+   * absent, corrupt, or a stale version. Always clamped so a corrupt payload can
+   * never drive the renderer into nonsense.
+   */
+  hrtfPersonalization(): HrtfPersonalization {
+    const raw = this.read(HRTF_PERSONALIZATION_KEY);
+    if (raw == null) return { ...NEUTRAL_PERSONALIZATION };
+    try {
+      const parsed = JSON.parse(raw) as { version?: number; params?: unknown };
+      if (parsed.version !== HRTF_PERSONALIZATION_VERSION || !parsed.params) {
+        return { ...NEUTRAL_PERSONALIZATION };
+      }
+      // Merge over NEUTRAL so profiles saved before a field existed (e.g. the pinna
+      // notch) load with that field's default instead of NaN; clamp repairs the rest.
+      const p = parsed.params as Partial<HrtfPersonalization>;
+      return clampPersonalization({ ...NEUTRAL_PERSONALIZATION, ...p });
+    } catch {
+      return { ...NEUTRAL_PERSONALIZATION };
+    }
+  }
+
+  /** Persist the HRTF personalization (versioned, clamped). */
+  setHrtfPersonalization(p: HrtfPersonalization) {
+    this.write(
+      HRTF_PERSONALIZATION_KEY,
+      JSON.stringify({ version: HRTF_PERSONALIZATION_VERSION, params: clampPersonalization(p) }),
+    );
+  }
+
+  /** Remove the personalization (revert to the raw measured HRTF). */
+  clearHrtfPersonalization() {
+    this.mem.delete(HRTF_PERSONALIZATION_KEY);
+    try {
+      this.store?.removeItem(HRTF_PERSONALIZATION_KEY);
+    } catch {
+      /* memory already cleared */
+    }
+  }
+
+  /** The chosen base HRTF id ('sadie_h3' default). Stored raw; unknown → default. */
+  hrtfBase(): string {
+    return this.read(HRTF_BASE_KEY) ?? DEFAULT_HRTF_BASE;
+  }
+
+  setHrtfBase(id: string) {
+    this.write(HRTF_BASE_KEY, id);
   }
 }

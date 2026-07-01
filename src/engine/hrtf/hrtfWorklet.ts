@@ -29,16 +29,25 @@ class HrtfProcessor extends AudioWorkletProcessor {
   private earGainL = 1; private earGainR = 1;
   private earTargetL = 1; private earTargetR = 1;
 
+  private k: number;
+
   constructor(options: { processorOptions: { mp: MinPhaseHrtf; k?: number } }) {
     super();
     const { mp, k } = options.processorOptions;
-    this.dsp = new HrtfDsp(mp, k ?? 4);
+    this.k = k ?? 4;
+    this.dsp = new HrtfDsp(mp, this.k);
     (this as any).port.onmessage = (e: MessageEvent) => {
       const d = e.data;
       if (d && d.type === 'dir') {
         this.dir[0] = d.x; this.dir[1] = d.y; this.dir[2] = d.z;
       } else if (d && d.type === 'earGains') {
         this.earTargetL = d.left; this.earTargetR = d.right;
+      } else if (d && d.type === 'mp') {
+        // Live HRIR-table swap (e.g. a personalization re-warp): replace the DSP in
+        // place, REUSING this processor. This is what lets the free-play knobs update
+        // without creating a new AudioWorkletNode per change (which leaked multi-MB
+        // processors on the audio thread until it choked).
+        this.dsp = new HrtfDsp(d.mp, this.k);
       }
     };
   }

@@ -120,6 +120,17 @@ export interface SettingsHooks {
   hasLoudnessEq?: () => boolean;
   clearLoudnessEq?: () => void;
 
+  /**
+   * Parametric HRTF personalization — the OPTIONAL movement-based game that tunes
+   * the 3D-audio head response to the user's ears. Mirrors the loudness-EQ block:
+   * `runHrtfTuning` launches the standalone flow, `hasHrtfPersonalization`/
+   * `clearHrtfPersonalization` drive the "reset to default HRTF" affordance. Hidden
+   * when `runHrtfTuning` is absent (no live audio graph yet).
+   */
+  runHrtfTuning?: () => void;
+  hasHrtfPersonalization?: () => boolean;
+  clearHrtfPersonalization?: () => void;
+
   /** Wipe trainer + streak + onboarding/primer flags; returns after clearing. */
   resetProgress: () => void;
 
@@ -477,6 +488,44 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
 
     refreshEq();
     group.append(eqStatus, run, clearEqBtn);
+    dialog.append(group);
+  }
+
+  // --- Parametric HRTF personalization (optional 3D-audio head-response tuning) ---
+  let hrtfStatus: HTMLElement | null = null;
+  let clearHrtfBtn: HTMLButtonElement | null = null;
+  const refreshHrtf = () => {
+    if (!hrtfStatus) return;
+    const has = hooks.hasHrtfPersonalization?.() ?? false;
+    hrtfStatus.textContent = has
+      ? 'Your 3D audio is personalized to your ears.'
+      : 'Using the default 3D-audio head response.';
+    if (clearHrtfBtn) clearHrtfBtn.hidden = !has;
+  };
+  if (hooks.runHrtfTuning) {
+    const group = document.createElement('div');
+    group.className = 'settings-hrtf';
+    hrtfStatus = document.createElement('p');
+    hrtfStatus.className = 'settings-hrtf-status';
+
+    const run = document.createElement('button');
+    run.type = 'button';
+    run.className = 'settings-hrtf-run';
+    run.textContent = 'Personalize 3D audio to my ears';
+    run.addEventListener('click', () => hooks.runHrtfTuning?.());
+
+    clearHrtfBtn = document.createElement('button');
+    clearHrtfBtn.type = 'button';
+    clearHrtfBtn.className = 'settings-hrtf-clear';
+    clearHrtfBtn.textContent = 'Reset to default head response';
+    clearHrtfBtn.addEventListener('click', () => {
+      hooks.clearHrtfPersonalization?.();
+      hooks.alert('3D-audio personalization reset to default.');
+      refreshHrtf();
+    });
+
+    refreshHrtf();
+    group.append(hrtfStatus, run, clearHrtfBtn);
     dialog.append(group);
   }
 
