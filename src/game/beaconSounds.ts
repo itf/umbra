@@ -23,7 +23,13 @@ export type BeaconPreset =
   // Continuous AMBIENCE presets (Part B): positioned non-goal sources.
   //  - 'fountain'   — gentle continuous filtered water (layered bandpassed noise).
   //  - 'brownnoise' — a steady AC / brown-noise machine (low-passed brown noise).
-  | 'fountain' | 'brownnoise';
+  | 'fountain' | 'brownnoise'
+  // Melodic / pretty presets (Part D): gentle, easily-localizable navigators.
+  //  - 'chime'   — pulsed randomized wind-chime bell plucks from a pentatonic set.
+  //  - 'harp'    — pulsed ascending plucked-string arpeggio (filtered saw pluck).
+  //  - 'kalimba' — pulsed warm sine+triangle thumb-piano note from a short motif.
+  //  - 'glass'   — continuous glass-harmonica: pure sines with slow swelling shimmer.
+  | 'chime' | 'harp' | 'kalimba' | 'glass';
 
 /** The default beacon preset — the music box, the friendliest navigator sound — used
  *  for any beacon with no explicit `sound` (the built-in navigator beacon,
@@ -32,6 +38,7 @@ export const DEFAULT_BEACON_PRESET: BeaconPreset = 'musicbox';
 
 const PRESET_NAMES: readonly BeaconPreset[] = [
   'tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum', 'fountain', 'brownnoise',
+  'chime', 'harp', 'kalimba', 'glass',
 ];
 
 /** Whether a string is a known preset name. */
@@ -74,6 +81,13 @@ export function bellPartials(baseHz: number): { freq: number; gain: number; deca
 /** A short repeating music-box motif as semitone offsets from the base note. */
 export const MUSICBOX_MOTIF: readonly number[] = [0, 7, 12, 7]; // root, fifth, octave, fifth
 
+/** A major-pentatonic scale (semitone offsets, two octaves) — consonant even when
+ *  the note order is shuffled, so it never sounds "wrong" for randomized presets. */
+export const PENTATONIC: readonly number[] = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21];
+
+/** A short warm kalimba motif (major-pentatonic, gently rising then settling). */
+export const KALIMBA_MOTIF: readonly number[] = [0, 4, 7, 9, 7, 4]; // root, 3rd, 5th, 6th, 5th, 3rd
+
 /** Convert a semitone offset to a frequency given a base. */
 export function semitoneToFreq(baseHz: number, semitones: number): number {
   return baseHz * Math.pow(2, semitones / 12);
@@ -103,6 +117,10 @@ const TIMING: Record<BeaconPreset, BeaconTiming> = {
   hum: { loop: 0 },      // continuous drone
   fountain: { loop: 0 }, // continuous filtered water
   brownnoise: { loop: 0 }, // continuous AC / brown-noise machine
+  chime: { loop: 1.8 },    // slow, sparse wind-chime plucks — let them ring
+  harp: { loop: 2.2 },     // a full ascending arpeggio per re-trigger
+  kalimba: { loop: 0.5 },  // one warm note per step of the motif
+  glass: { loop: 0 },      // continuous swelling glass-harmonica shimmer
 };
 
 export function beaconTiming(preset: BeaconPreset): BeaconTiming {
@@ -150,6 +168,7 @@ export class BeaconVoice {
     if (this.preset === 'hum') return this.startHum();
     if (this.preset === 'fountain') return this.startFountain();
     if (this.preset === 'brownnoise') return this.startBrownNoise();
+    if (this.preset === 'glass') return this.startGlass();
     // Pulsed presets: trigger once immediately, then on an interval.
     const period = beaconTiming(this.preset).loop;
     this.trigger();
@@ -175,6 +194,9 @@ export class BeaconVoice {
     if (this.preset === 'bell') this.triggerBell();
     else if (this.preset === 'musicbox') this.triggerMusicbox();
     else if (this.preset === 'drip') this.triggerDrip();
+    else if (this.preset === 'chime') this.triggerChime();
+    else if (this.preset === 'harp') this.triggerHarp();
+    else if (this.preset === 'kalimba') this.triggerKalimba();
   }
 
   // --- continuous presets ---
@@ -334,6 +356,40 @@ export class BeaconVoice {
     this.oscillators.push(osc);
   }
 
+  /**
+   * A glass harmonica: three pure sine partials (root + fifth + octave) each with a
+   * slow, independent gain LFO so they swell and fade against one another — an
+   * ethereal, shimmering continuous drone that is easy to localize but never harsh.
+   */
+  private startGlass() {
+    const ctx = this.ctx;
+    const mix = ctx.createGain();
+    mix.gain.value = 0.4;
+    // Root, fifth, octave — a consonant, bell-clear stack of pure tones.
+    const partials: [number, number][] = [
+      // frequency multiple, base gain
+      [1.0, 0.5], [1.5, 0.32], [2.0, 0.22],
+    ];
+    for (const [mult, g] of partials) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = this.freq * mult;
+      const og = ctx.createGain();
+      og.gain.value = g * 0.5; // the LFO swells it up from here
+      // Slow, per-partial shimmer LFO so the partials breathe out of phase.
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 0.12 + Math.random() * 0.18;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = g * 0.5;
+      lfo.connect(lfoGain).connect(og.gain);
+      lfo.start();
+      osc.connect(og).connect(mix);
+      osc.start();
+      this.oscillators.push(osc, lfo);
+    }
+    mix.connect(this.out);
+  }
+
   // --- pulsed presets ---
 
   /** A struck bell: several inharmonic partials with exponential decay. */
@@ -397,5 +453,92 @@ export class BeaconVoice {
     osc.connect(bp).connect(env).connect(this.out);
     osc.start(t);
     osc.stop(t + 0.2);
+  }
+
+  /**
+   * A wind chime: one or two randomized bell-ish plucks picked from the pentatonic
+   * set, each a soft sine with a fast attack and long exponential ring. Randomized
+   * pitch + tiny stagger make it feel like a breeze catching a couple of tubes.
+   */
+  private triggerChime() {
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const hits = 1 + (Math.random() < 0.5 ? 1 : 0); // usually one, sometimes two
+    for (let i = 0; i < hits; i++) {
+      const semi = PENTATONIC[Math.floor(Math.random() * PENTATONIC.length)];
+      const f = semitoneToFreq(this.freq, semi);
+      const at = t + i * (0.08 + Math.random() * 0.12); // slight stagger
+      const dur = 1.4 + Math.random() * 0.6;
+      // Sine fundamental + a quiet high partial for a glassy metallic edge.
+      for (const [mult, g] of [[1, 0.4], [2.76, 0.08]] as const) {
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = f * mult;
+        const env = ctx.createGain();
+        env.gain.setValueAtTime(0.0008, at);
+        env.gain.exponentialRampToValueAtTime(g, at + 0.004);
+        env.gain.exponentialRampToValueAtTime(0.0008, at + dur);
+        osc.connect(env).connect(this.out);
+        osc.start(at);
+        osc.stop(at + dur + 0.05);
+      }
+    }
+  }
+
+  /**
+   * A plucked-string arpeggio: a short ascending run of pentatonic notes, each a
+   * soft sawtooth through a lowpass with a fast decay — a warm, harp-like pluck.
+   */
+  private triggerHarp() {
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const steps = [0, 2, 4, 7, 9]; // rising major-pentatonic run
+    const gap = 0.11;
+    steps.forEach((semi, i) => {
+      const at = t + i * gap;
+      const f = semitoneToFreq(this.freq, semi);
+      const dur = 0.6;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = f;
+      // Lowpass that closes as the note decays → the "pluck" softening.
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(f * 6, at);
+      lp.frequency.exponentialRampToValueAtTime(f * 1.5, at + dur);
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0008, at);
+      env.gain.exponentialRampToValueAtTime(0.35, at + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0008, at + dur);
+      osc.connect(lp).connect(env).connect(this.out);
+      osc.start(at);
+      osc.stop(at + dur + 0.02);
+    });
+  }
+
+  /**
+   * A thumb-piano (kalimba) note: a single note from a short pentatonic motif, a
+   * warm sine fundamental + a quiet triangle overtone, fast pluck decay — soft and
+   * woody, gentler than the music box.
+   */
+  private triggerKalimba() {
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const semi = KALIMBA_MOTIF[this.motifIndex % KALIMBA_MOTIF.length];
+    this.motifIndex++;
+    const f = semitoneToFreq(this.freq, semi);
+    const dur = 0.55;
+    for (const [mult, g, type] of [[1, 0.45, 'sine'], [2, 0.12, 'triangle']] as const) {
+      const osc = ctx.createOscillator();
+      osc.type = type;
+      osc.frequency.value = f * mult;
+      const env = ctx.createGain();
+      env.gain.setValueAtTime(0.0008, t);
+      env.gain.exponentialRampToValueAtTime(g, t + 0.006);
+      env.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      osc.connect(env).connect(this.out);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    }
   }
 }

@@ -49,7 +49,12 @@ describe('beacon preset recipes', () => {
     const names = beaconPresetNames();
     expect(names).toEqual([
       'tone', 'flat', 'pulse', 'bell', 'musicbox', 'drip', 'hum', 'fountain', 'brownnoise',
+      'chime', 'harp', 'kalimba', 'glass',
     ]);
+    expect(beaconTiming('glass').loop).toBe(0);      // continuous shimmer
+    expect(beaconTiming('chime').loop).toBeGreaterThan(0);
+    expect(beaconTiming('harp').loop).toBeGreaterThan(0);
+    expect(beaconTiming('kalimba').loop).toBeGreaterThan(0);
     expect(beaconTiming('fountain').loop).toBe(0); // continuous ambience
     expect(beaconTiming('brownnoise').loop).toBe(0);
     expect(beaconTiming('hum').loop).toBe(0);      // continuous
