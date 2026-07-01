@@ -123,7 +123,6 @@ export function screenToDirection(
   // when |x|<=1, choosing front vs back by whether the click is in the lower (front)
   // or upper (back) half.
   const clampedX = Math.max(-1, Math.min(1, nx));
-  const ringHalf = cfg.scale * 0.45;
   const lower = sy > cy; // below centre → front hemisphere
   const zMag = Math.sqrt(Math.max(0, 1 - clampedX * clampedX));
   const z = lower ? -zMag : zMag; // front = −z

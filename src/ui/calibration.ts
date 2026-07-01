@@ -271,15 +271,17 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
   function chooseTuning() {
     clearControls();
     p.textContent =
-      'Headphone check done. Two optional tune-ups are available — do either, both, or neither.';
+      'Headphone check done. Two optional tune-ups are available — do either, both, or neither. We recommend 3D-audio (where sounds are) first.';
     deps.say(
-      'Headphone check done. Two optional steps: loudness calibration, and 3D-audio personalization. Choose one, or finish.',
+      'Headphone check done. Two optional steps: 3D-audio personalization, and loudness calibration. We recommend 3D audio first. Choose one, or finish.',
     );
-    if (deps.saveLoudnessEq) {
-      controls.append(bigButton('Loudness / hearing calibration', runLoudnessStep, true));
-    }
+    // 3D-audio personalization FIRST + primary — locating sound is the point of the
+    // game, so tune WHERE sounds are before HOW LOUD they are.
     if (deps.saveHrtfPersonalization) {
-      controls.append(bigButton('Personalize 3D audio to my ears', runHrtfTuning, !deps.saveLoudnessEq));
+      controls.append(bigButton('Personalize 3D audio (where sounds are)', runHrtfTuning, true));
+    }
+    if (deps.saveLoudnessEq) {
+      controls.append(bigButton('Loudness / hearing calibration', runLoudnessStep, !deps.saveHrtfPersonalization));
     }
     controls.append(bigButton('Finish — skip both', done));
     focusFirst();

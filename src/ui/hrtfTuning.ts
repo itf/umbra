@@ -23,6 +23,15 @@ import { NEUTRAL_PERSONALIZATION, type HrtfPersonalization } from '../engine/hrt
 import { Staircase, type StaircaseTrial } from './hrtfStaircase';
 import { EXERCISES, STAIRCASE_CONFIG, type Exercise, type ExerciseParam } from './hrtfExercises';
 import { mountVisualizer } from './hrtfVisualizer';
+import {
+  makeTestDirections,
+  dirToPosition,
+  angularError,
+  screenToDirection,
+  decideWinner,
+  type Direction,
+  type Attempt,
+} from './hrtfLocalize';
 
 /**
  * The measured base head-responses the user can choose to personalize on top of.
@@ -655,21 +664,180 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     (knobs.querySelector('input') as HTMLElement | null)?.focus();
   }
 
+  // ------------------------------------------------------------------------
+  // LOCALIZATION mode — the OBJECTIVE calibration. For each parameter we audition
+  // two candidate warps by playing a probe at a random direction and asking the
+  // listener to POINT to where they heard it (by clicking the diagram). The
+  // candidate whose pointing had the smaller angular error wins the A/B (see
+  // hrtfLocalize.decideWinner) — no "which felt better", just measured accuracy.
+  // Reuses the same per-parameter Staircase as the guided game.
+  // ------------------------------------------------------------------------
+  let locRenderer: InterpolatingHrtfRenderer | null = null;
+  let locSrc: ReturnType<InterpolatingHrtfRenderer['createSource']> | null = null;
+  let locGain: GainNode | null = null;
+  let locViz: ReturnType<typeof mountVisualizer> | null = null;
+  let locExIdx = 0;
+  let locTrial: StaircaseTrial | null = null;
+  let locAttempts: Attempt[] = [];
+  let locWhich: 'a' | 'b' = 'a';
+  let locTarget: Direction | null = null;
+  const locStaircases = new Map<ExerciseParam, Staircase>();
+  const ATTEMPTS_PER_CANDIDATE = 2;
+
+  function teardownLoc() {
+    clearTimers();
+    if (locSrc) { try { noise.disconnect(locSrc.input); } catch { /* noop */ } }
+    try { locSrc?.disconnect(); } catch { /* noop */ }
+    try { locGain?.disconnect(); } catch { /* noop */ }
+    locViz?.dispose();
+    locSrc = null; locGain = null; locRenderer = null; locViz = null;
+  }
+
+  /** (Re)build one renderer+source for the localization probe with warp `warp`. */
+  async function locEnsureRenderer(warp: HrtfPersonalization) {
+    if (locSrc) { try { noise.disconnect(locSrc.input); } catch { /* noop */ } }
+    try { locSrc?.disconnect(); } catch { /* noop */ }
+    try { locGain?.disconnect(); } catch { /* noop */ }
+    locRenderer = await InterpolatingHrtfRenderer.create(ctx, baseUrl(), { personalize: warp });
+    if (disposed) return;
+    locRenderer.setListener({ x: 0, y: 1.6, z: 0, yaw: 0 });
+    locSrc = locRenderer.createSource();
+    locGain = ctx.createGain();
+    locGain.gain.value = 0.5; // half volume — comfortable, per user pref
+    noise.connect(locSrc.input);
+    locSrc.output.connect(locGain);
+    locGain.connect(dest);
+  }
+
+  function locStaircaseFor(ex: Exercise): Staircase {
+    let sc = locStaircases.get(ex.param);
+    if (!sc) {
+      sc = new Staircase({ ...STAIRCASE_CONFIG[ex.param], start: params[ex.param] });
+      locStaircases.set(ex.param, sc);
+    }
+    return sc;
+  }
+
+  /** Play the current candidate's probe at a fresh random direction, hide the true
+   *  dot, and wait for the user to click where they heard it. */
+  async function locPlayAndAsk() {
+    if (disposed) return;
+    // Pick target direction seeded by attempt index for reproducibility across runs.
+    const seed = locExIdx * 101 + locAttempts.length * 7 + 1;
+    locTarget = makeTestDirections(1, seed)[0];
+    const [tx, ty, tz] = dirToPosition(locTarget, 1, 1.6);
+    locViz?.showSource(false);
+    locViz?.setGuess(null);
+    p.textContent = 'Listen…';
+    await playBeeps(ctx, dest, locWhich === 'a' ? 1 : 2);
+    if (disposed) return;
+    // Play a ~1.5 s static burst at the target (a fixed point localizes cleaner than a
+    // moving sweep for a "where is it" judgement).
+    locSrc?.setPosition(tx, ty, tz);
+    if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(0.5, t + 0.03); }
+    p.textContent = 'Where did the sound come from? Click on the diagram to point.';
+    deps.say('Where did it come from? Point on the diagram.');
+    const stop = setTimeout(() => {
+      if (locGain) { const t = ctx.currentTime; locGain.gain.setTargetAtTime(0.0001, t, 0.05); }
+    }, 1500);
+    seqTimers.push(stop);
+  }
+
+  /** The user clicked the diagram: record the angular error, advance the trial. */
+  function locOnPick(sx: number, sy: number, vcfg: { w: number; h: number; scale: number }) {
+    if (!locTarget || !locViz) return;
+    const guess = screenToDirection(sx, sy, vcfg);
+    const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
+    locViz.setGuess({ x: gx, y: gy, z: gz });
+    locViz.showSource(true); // reveal the truth so the user sees how close they were
+    const err = angularError(locTarget, guess);
+    locAttempts.push({ which: locWhich, error: err });
+    const degOff = Math.round((err * 180) / Math.PI);
+    deps.say(degOff < 25 ? 'Close.' : degOff < 60 ? 'Not bad.' : 'Off.');
+    p.textContent = `You were about ${degOff}° off. Next…`;
+    const id = setTimeout(() => locNextAttempt(), 1100);
+    seqTimers.push(id);
+  }
+
+  /** Decide the next probe: alternate A/B until each has enough attempts, then judge. */
+  async function locNextAttempt() {
+    if (disposed) return;
+    const ex = EXERCISES[locExIdx];
+    const sc = locStaircaseFor(ex);
+    const verdict = decideWinner(locAttempts, ATTEMPTS_PER_CANDIDATE);
+    if (verdict && locTrial) {
+      sc.answer(verdict, locTrial);
+      params[ex.param] = sc.current;
+      return locAdvanceExercise();
+    }
+    // Not decided yet — play whichever candidate has fewer attempts next.
+    const na = locAttempts.filter((a) => a.which === 'a').length;
+    const nb = locAttempts.filter((a) => a.which === 'b').length;
+    locWhich = na <= nb ? 'a' : 'b';
+    const warp = withParam(params, ex.param, locWhich === 'a' ? locTrial!.a : locTrial!.b);
+    await locEnsureRenderer(warp);
+    await locPlayAndAsk();
+  }
+
+  /** Move to the next parameter (or finish) — sets up a fresh A/B trial. */
+  async function locAdvanceExercise() {
+    if (disposed) return;
+    // Advance past converged staircases.
+    while (locExIdx < EXERCISES.length) {
+      const ex = EXERCISES[locExIdx];
+      const sc = locStaircaseFor(ex);
+      if (sc.done) { params[ex.param] = sc.current; locExIdx++; continue; }
+      // Start a new trial for this parameter.
+      locTrial = sc.nextTrial();
+      locAttempts = [];
+      locWhich = 'a';
+      const warp = withParam(params, ex.param, locTrial.a);
+      await locEnsureRenderer(warp);
+      await locPlayAndAsk();
+      return;
+    }
+    // All parameters done.
+    teardownLoc();
+    deps.save(params);
+    deps.say('Localization calibration complete. Your 3D audio is tuned to how you actually hear.');
+    deps.alert('Calibration complete.');
+    deps.onDone();
+  }
+
+  function renderLocalization() {
+    controls.innerHTML = '';
+    clearTimers();
+    teardownAudio();
+    teardownFreePlay();
+    h.textContent = 'Point to the sound';
+    p.textContent =
+      'A sound will play somewhere around you. Point to where you heard it by clicking the diagram — front is the bottom of the ring, higher up on screen is farther up/behind. We measure how close you get with two different tunings and keep the one that helps you most. This takes a couple of minutes.';
+    const vizWrap = document.createElement('div');
+    vizWrap.className = 'hrtf-viz-wrap';
+    locViz = mountVisualizer(vizWrap, { onPick: locOnPick });
+    controls.append(vizWrap);
+    const begin = bigButton('Begin', () => { startNoise(); locExIdx = 0; locStaircases.clear(); void locAdvanceExercise(); }, true);
+    const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
+    controls.append(begin, back);
+    begin.focus();
+  }
+
   function showIntro() {
     controls.innerHTML = '';
     h.textContent = 'Personalize your 3D audio';
     p.textContent =
-      'Tune 3D audio to your ears. Prefer to poke at it yourself? Use the KNOBS to make a sound snap to the front. Or take the quick GUIDED test where sounds move and you pick which felt more real. Nothing saves until you choose to.';
-    const knobsBtn = bigButton('Adjust by hand (knobs)', () => { startNoise(); renderFreePlay(); }, true);
-    const guided = bigButton('Guided test', () => { startNoise(); renderExercise(); });
+      'Tune 3D audio to your ears. Best first: POINT TO THE SOUND — we play a sound around you, you point where you heard it, and we keep the tuning that makes you most accurate. Or adjust by hand with the KNOBS, or take the GUIDED “which felt better” test. Nothing saves until you choose to.';
+    const localizeBtn = bigButton('Point to the sound (recommended)', () => { startNoise(); renderLocalization(); }, true);
+    const knobsBtn = bigButton('Adjust by hand (knobs)', () => { startNoise(); renderFreePlay(); });
+    const guided = bigButton('Guided “which felt better” test', () => { startNoise(); renderExercise(); });
     const skipBtn = bigButton('Skip', skip);
-    controls.append(knobsBtn, guided, skipBtn);
+    controls.append(localizeBtn, knobsBtn, guided, skipBtn);
     (controls.querySelector('button') as HTMLElement).focus();
   }
 
-  // Fold free-play teardown into dispose.
+  // Fold free-play + localization teardown into dispose.
   const baseDispose = dispose;
-  const disposeAll = () => { teardownFreePlay(); if (fpApplyTimer) clearTimeout(fpApplyTimer); baseDispose(); };
+  const disposeAll = () => { teardownFreePlay(); teardownLoc(); if (fpApplyTimer) clearTimeout(fpApplyTimer); baseDispose(); };
 
   showIntro();
   return disposeAll;

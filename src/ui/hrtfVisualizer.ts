@@ -77,9 +77,20 @@ function clamp01(v: number): number {
  * Mount a canvas visualizer into `host`. Call `set(x,y,z)` each animation frame with
  * the current listener-relative source position; call `dispose()` to remove it.
  */
-export function mountVisualizer(host: HTMLElement): {
+export function mountVisualizer(
+  host: HTMLElement,
+  opts: {
+    /** When set, the canvas is CLICKABLE: a click reports its pixel coords so the
+     *  caller can inverse-project them to a pointed direction (localization mode). */
+    onPick?: (sx: number, sy: number, cfg: { w: number; h: number; scale: number }) => void;
+  } = {},
+): {
   el: HTMLCanvasElement;
   set: (x: number, y: number, z: number) => void;
+  /** Draw a secondary "guess" marker (the user's pointed direction), or clear it. */
+  setGuess: (pos: { x: number; y: number; z: number } | null) => void;
+  /** Show/hide the moving source dot (hidden while the user is pointing "blind"). */
+  showSource: (on: boolean) => void;
   dispose: () => void;
 } {
   const canvas = document.createElement('canvas');
@@ -98,6 +109,21 @@ export function mountVisualizer(host: HTMLElement): {
   const cfg: ProjectConfig = { w: W, h: H, scale: 70, headY: 1.6 };
 
   let cur = { x: 0, y: cfg.headY, z: -1 };
+  let guess: { x: number; y: number; z: number } | null = null;
+  let sourceVisible = true;
+
+  let onClick: ((e: MouseEvent) => void) | null = null;
+  if (opts.onPick) {
+    canvas.style.cursor = 'crosshair';
+    onClick = (e: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      // Map CSS pixels to backing-store pixels.
+      const sx = ((e.clientX - rect.left) / rect.width) * W;
+      const sy = ((e.clientY - rect.top) / rect.height) * H;
+      opts.onPick!(sx, sy, { w: W, h: H, scale: cfg.scale });
+    };
+    canvas.addEventListener('click', onClick);
+  }
 
   function draw() {
     if (!ctx) return;
@@ -131,6 +157,20 @@ export function mountVisualizer(host: HTMLElement): {
     ctx.closePath();
     ctx.fill();
 
+    // The user's GUESS marker (localization mode) — a hollow ring, drawn under the
+    // true source so a correct guess shows the dot sitting inside the ring.
+    if (guess) {
+      const g = project(guess.x, guess.y, guess.z, cfg);
+      ctx.strokeStyle = 'rgba(120,200,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(g.sx, g.sy, g.r + 3, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+
+    if (!sourceVisible) return;
+
     const p = project(cur.x, cur.y, cur.z, cfg);
 
     // Vertical stalk from ground shadow to the dot (reads height at a glance).
@@ -163,7 +203,16 @@ export function mountVisualizer(host: HTMLElement): {
       cur = { x, y, z };
       draw();
     },
+    setGuess(pos) {
+      guess = pos;
+      draw();
+    },
+    showSource(on) {
+      sourceVisible = on;
+      draw();
+    },
     dispose() {
+      if (onClick) { try { canvas.removeEventListener('click', onClick); } catch { /* noop */ } }
       try { canvas.remove(); } catch { /* noop */ }
     },
   };
