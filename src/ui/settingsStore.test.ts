@@ -236,9 +236,9 @@ describe('SettingsStore Steam reflection / bus levels', () => {
 });
 
 describe('SettingsStore probe choice', () => {
-  it('defaults to the noise-burst clap and round-trips a choice', () => {
+  it('defaults to the realistic mouth click and round-trips a choice', () => {
     const s = new SettingsStore(memStorage());
-    expect(s.probeChoice()).toBe('clap');
+    expect(s.probeChoice()).toBe('mouthclick');
     s.setProbeChoice('rec:dental');
     expect(s.probeChoice()).toBe('rec:dental');
   });

@@ -389,7 +389,7 @@ export class SettingsStore {
     const v = this.read(PROBE_CHOICE_KEY);
     if (v != null && v !== '') return v;
     if (this.read(REALISTIC_CLICK_KEY) === '1') return 'mouthclick'; // migrate old toggle
-    return 'clap';
+    return 'mouthclick'; // the good tongue click — the default, most legible probe
   }
   setProbeChoice(id: string) {
     this.write(PROBE_CHOICE_KEY, id);

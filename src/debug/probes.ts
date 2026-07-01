@@ -30,8 +30,13 @@ export type ProbeGenerator = (sampleRate: number) => Float32Array;
  */
 export type ProbeName = 'clap' | 'click' | 'hiss' | 'snap' | 'stomp' | 'mouthclick';
 
-/** The default probe (byte-compatible with the original hardcoded clap). */
-export const DEFAULT_PROBE: ProbeName = 'clap';
+/**
+ * The default probe: the research-grounded expert mouth click (2017 Thaler/Reich).
+ * This is the "good tongue click" — the recommended, most legible echolocation probe,
+ * so it's what a new player fires by default. (The legacy noise-burst `clap` remains
+ * selectable; it is no longer the default.)
+ */
+export const DEFAULT_PROBE: ProbeName = 'mouthclick';
 
 const PROBE_NAMES: readonly ProbeName[] = ['clap', 'click', 'hiss', 'snap', 'stomp', 'mouthclick'];
 

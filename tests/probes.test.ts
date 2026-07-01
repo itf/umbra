@@ -65,12 +65,13 @@ describe('probe generators', () => {
     expect(Math.abs(b[b.length - 1])).toBeLessThan(1e-2); // thump has decayed by the end
   });
 
-  it('resolveProbe falls back to clap for unknown / missing names', () => {
-    const clapLen = resolveProbe('clap')(SR).length;
-    expect(resolveProbe('nope')(SR).length).toBe(clapLen);
-    expect(resolveProbe(undefined)(SR).length).toBe(clapLen);
-    expect(resolveProbe(42 as unknown)(SR).length).toBe(clapLen);
-    expect(DEFAULT_PROBE).toBe('clap');
+  it('resolveProbe falls back to the default probe for unknown / missing names', () => {
+    const defLen = resolveProbe(DEFAULT_PROBE)(SR).length;
+    expect(resolveProbe('nope')(SR).length).toBe(defLen);
+    expect(resolveProbe(undefined)(SR).length).toBe(defLen);
+    expect(resolveProbe(42 as unknown)(SR).length).toBe(defLen);
+    // The good tongue click is now the default probe.
+    expect(DEFAULT_PROBE).toBe('mouthclick');
   });
 
   it('mouthclick preset resolves to the realistic mouth-click buffer (~3–6ms, non-zero)', () => {

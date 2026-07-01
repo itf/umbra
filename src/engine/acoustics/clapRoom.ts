@@ -10,6 +10,39 @@ import { computeShoeboxTaps, computeRoomTaps, type ShoeboxParams, type WallDef, 
 import { buildRoomIr } from './roomIr';
 import { scatteringFor, absorptionFor } from './materials';
 import { resolveProbe } from '../../debug/probes';
+import { getIrPair, nearestDir, sphericalToVec } from '../hrtf/sofa';
+
+/**
+ * Where your OWN probe is emitted, relative to your head. Rendering the dry probe
+ * through the HRIR for this direction makes the sound you FIRE localize at the
+ * spot on your body it comes from — so the returning wall echoes are heard as
+ * displaced from that reference, which is what makes the echolocation cue legible.
+ * Without it the self-sound is a flat, placeless blip the echoes have nothing to
+ * sit "in front of".
+ *
+ * Each probe has a natural body origin:
+ *  - a tongue/mouth CLICK: between the ears (az 0°), a bit BELOW the interaural
+ *    axis (where the mouth is), essentially on the head.
+ *  - a hand CLAP / snap: below AND in front (hands at chest height).
+ *  - a STOMP: down and in front (foot).
+ * Elevation is negative = below; a slight frontal bias is implicit in az 0°
+ * (the HRTF places az-0 sources in front, not inside the head).
+ */
+interface EmitDir { azDeg: number; elDeg: number }
+const MOUTH_EMIT: EmitDir = { azDeg: 0, elDeg: -20 };
+const EMIT_DIRS: Record<string, EmitDir> = {
+  mouthclick: MOUTH_EMIT,
+  click: MOUTH_EMIT,
+  hiss: MOUTH_EMIT,
+  clap: { azDeg: 0, elDeg: -35 }, // hands at chest, below + in front
+  snap: { azDeg: 0, elDeg: -8 }, // fingers up near the head, just in front
+  stomp: { azDeg: 0, elDeg: -70 }, // foot, well below
+};
+/** Emission direction for a probe name (recorded buffers fall back to mouth). */
+function emitDirFor(probe: string | AudioBuffer | undefined): EmitDir {
+  if (typeof probe === 'string' && EMIT_DIRS[probe]) return EMIT_DIRS[probe];
+  return MOUTH_EMIT;
+}
 
 /** Average mid-band scattering across a room's assigned wall materials. */
 function representativeScattering(params: ShoeboxParams): number {
@@ -176,6 +209,15 @@ export class ClapRoom {
   private wet: GainNode;
   /** The clap excitation feeds whichever convolver(s) are live. */
   private clapBus: GainNode;
+  /**
+   * DRY self-source: the sound of your OWN probe, localized at the spot on your
+   * body it comes from (mouth/hands/foot). The dry click convolves through a
+   * short near-field HRIR for the probe's emit direction and plays at t=0, so you
+   * hear it in front-and-below BEFORE the room echoes return. Its HRIR buffer is
+   * (re)built per emit direction and cached. Null until the first clap builds one.
+   */
+  private selfDry: GainNode;
+  private selfIrCache = new Map<string, AudioBuffer>();
 
   // --- live (moving-walls) throttle + dirty-check state ---
   private lastBuildMs = 0;
@@ -190,6 +232,9 @@ export class ClapRoom {
     this.wet.gain.value = 1.0;
     this.wet.connect(graph.master);
     this.clapBus = ctx.createGain();
+    this.selfDry = ctx.createGain();
+    this.selfDry.gain.value = 1.0;
+    this.selfDry.connect(graph.master);
 
     const makeChain = (): RoomChain => {
       const convolver = ctx.createConvolver();
@@ -341,6 +386,32 @@ export class ClapRoom {
    *   - a pre-decoded AudioBuffer ⇒ played directly (recorded CC click probes; the
    *     caller loads + caches the .ogg since decode is async — see main.ts setupClap).
    */
+  /**
+   * The near-field HRIR (stereo) for an emit direction, as an AudioBuffer, cached.
+   * We reuse the loaded SOFA set: pick the nearest measured direction to (az,el)
+   * and use its L/R pair. That carries the correct ITD≈0 / gentle below-elevation
+   * pinna cue so the dry probe images at the mouth/hands/foot rather than inside
+   * the head. (Measured HRIRs are far-field; at these tiny distances the near-field
+   * ILD boost is minor and we accept the far-field pair — the DIRECTION is what
+   * localizes it, and that's exactly right here.)
+   */
+  private selfIr(dir: EmitDir): AudioBuffer | null {
+    const key = `${dir.azDeg},${dir.elDeg}`;
+    const cached = this.selfIrCache.get(key);
+    if (cached) return cached;
+    const set = this.renderer.set;
+    if (!set || set.count === 0) return null;
+    const [x, y, z] = sphericalToVec(dir.azDeg, dir.elDeg);
+    const idx = nearestDir(set, x, y, z);
+    if (idx < 0) return null;
+    const { left, right } = getIrPair(set, idx);
+    const buf = this.graph.ctx.createBuffer(2, set.taps, set.sampleRate);
+    buf.getChannelData(0).set(left);
+    buf.getChannelData(1).set(right);
+    this.selfIrCache.set(key, buf);
+    return buf;
+  }
+
   clap(opts: { probe?: string | AudioBuffer } = {}) {
     const ctx = this.graph.ctx;
     let buf: AudioBuffer;
@@ -383,6 +454,20 @@ export class ClapRoom {
 
     src.connect(shelf);
     shelf.connect(this.clapBus); // feeds both convolver chains (crossfaded)
+
+    // DRY SELF-SOURCE: the same excitation, convolved through the near-field HRIR
+    // for this probe's emit direction (mouth/hands/foot), played at t=0. This is
+    // the sound of your OWN probe, localized in-front-and-below — the reference the
+    // room echoes are heard to displace from. Uses the RAW click (not the HF-shelved
+    // one) since that shelf exists to brighten the ECHO, not what leaves your body.
+    const selfIr = this.selfIr(emitDirFor(probe));
+    if (selfIr) {
+      const conv = ctx.createConvolver();
+      conv.normalize = false;
+      conv.buffer = selfIr;
+      src.connect(conv).connect(this.selfDry);
+    }
+
     src.start();
   }
 }

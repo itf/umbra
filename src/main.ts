@@ -1720,6 +1720,28 @@ function setupClap(
     (url) => loadCustomLoop(graph.ctx, url),
   );
 
+  // In-game PROBE PICKER: a small <select> beside the echo button so the player can
+  // change which sound they fire without opening Settings. Same persisted choice
+  // (settings.probeChoice) the Settings chooser + ProbeResolver read, so the two stay
+  // in sync and setupClap needs no extra wiring — the resolver reads it live at fire.
+  const probePick = document.getElementById('probe-pick') as HTMLSelectElement | null;
+  if (probePick) {
+    const opts = probeOptions(cachedClicksManifest() ?? []);
+    probePick.replaceChildren(
+      ...opts.map((o) => {
+        const el = document.createElement('option');
+        el.value = o.id;
+        el.textContent = o.label;
+        el.title = o.hint;
+        return el;
+      }),
+    );
+    probePick.value = settings.probeChoice();
+    const onPick = () => settings.setProbeChoice(probePick.value);
+    probePick.addEventListener('change', onPick);
+    teardowns.push(() => probePick.removeEventListener('change', onPick));
+  }
+
   // The sonar budget for THIS run. Absent config ⇒ unlimited (today's free clap):
   // isManaged() is false, so no counter is shown or announced.
   const budget = new ClapBudget({ max: LEVEL.clapBudget, cooldownMs: LEVEL.clapCooldownMs });

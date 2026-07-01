@@ -111,8 +111,13 @@
         </div>
         <div id="turn-pad"><!-- compass dial mounts here --></div>
 
-        <!-- Echo: small button between the compass and the feet. -->
-        <button id="listen" class="listen" aria-label="Listen — clap to hear the room">echo</button>
+        <!-- Echo: small button between the compass and the feet, with a probe
+             chooser right beside it so the player can pick which sound to fire
+             (tongue click by default). Populated + bound in main.ts (setupClap). -->
+        <div class="echo-row">
+          <button id="listen" class="listen" aria-label="Listen — clap to hear the room">echo</button>
+          <select id="probe-pick" class="probe-pick" aria-label="Echo probe — which sound you fire to hear the room"></select>
+        </div>
 
         <!-- React: press when you DETECT a reaction event (a crossing / a door).
              Hidden unless the level has events; shown by main.ts. Also the R key. -->
