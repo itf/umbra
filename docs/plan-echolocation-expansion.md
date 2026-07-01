@@ -115,10 +115,15 @@ must expose this.
 - [x] On-screen Decoy button (mobile stealth parity) — PM P0.
 - [x] Input/settings: debug toggle, auto-step, probe key, arrow remap.
 
+## DONE (probe + trainer wave)
+- [x] Realistic clickProbe wired: selectable in the trainer probe dropdown + a game
+      "Realistic click probe" setting (noise-burst default unchanged). PM P1.
+- [x] Trainer L1 (click calibration, unscored) + L2 (present/absent 2AFC detection with
+      ~1/6 silence catch-trials, placed first so it interleaves early). PM P1.
+- [x] Landing "Train" opens the trainer page directly.
+
 ## STILL OPEN (next)
-- [ ] Wire realistic clickProbe.ts as the actual probe (trainer + game echo) — PM P1.
-- [ ] Trainer L1 (click calibration) + L2 (present/absent 2AFC + silence catch-trials) — PM P1.
-- [ ] Real /train route (fold trainer.html into the SPA).
+- [ ] Real /train route (fold trainer.html into the SPA) — deferred (separate Vite entry).
 - [ ] Gate localization exercises behind detection mastery (P2).
 - [ ] Retire/annotate stale docs/product/ux-audit.md.
 
