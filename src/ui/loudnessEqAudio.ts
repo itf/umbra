@@ -7,6 +7,7 @@
  * the engine: main.ts inserts the returned chain on the shared master GainNode path.
  */
 import type { EqBand } from './loudnessEq';
+import { assetUrl } from '../engine/baseUrl';
 
 /** Q for ~1-octave peaking bands (constant-Q). 1 octave ⇒ Q ≈ 1.41. */
 const BAND_Q = 1.41;
@@ -117,7 +118,7 @@ export function buildBiquadChain(
  * Attribution (CC BY-SA 3.0): derived from the ARI HpIR database, Acoustics Research
  * Institute, Austrian Academy of Sciences (Vienna). Credited on the Credits screen.
  */
-const OVEREAR_COMP_URL = '/assets/hrtf/overear_comp.json';
+const OVEREAR_COMP_URL = assetUrl('assets/hrtf/overear_comp.json');
 let overEarCompPromise: Promise<CompBiquad[] | null> | null = null;
 
 export function loadOverEarComp(): Promise<CompBiquad[] | null> {

@@ -24,8 +24,9 @@ import { Player } from '../game/player';
 import { TutorialMachine, LESSON_GOAL } from './tutorialMachine';
 import { renderControlsSpeech } from '../game/controls';
 import type { OnboardingStore } from './onboardingStore';
+import { assetUrl } from '../engine/baseUrl';
 
-const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
+const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
 
 export interface TutorialDeps {
   store: OnboardingStore;

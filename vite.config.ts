@@ -1,6 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
-import { cpSync, existsSync } from 'node:fs';
+import { cpSync, existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 /**
@@ -69,6 +69,52 @@ function vendorSteamWorkletBindings(): Plugin {
 }
 
 /**
+ * Emit a GitHub Pages SPA `404.html`. Pages has no server-side rewrite, so a HARD
+ * load of a client route (e.g. /umbra/play — a refresh, bookmark, or shared link)
+ * hits the server, finds no such file, and would 404. Pages serves `404.html` for
+ * any missing path, so we make it a tiny redirect that rewrites the requested path
+ * into a query segment and bounces to the app root (/umbra/?/play). The inline
+ * decoder in index.html's <head> restores the real path via history.replaceState
+ * BEFORE the router boots. (rafgraph/spa-github-pages technique.)
+ *
+ * `pathSegmentsToKeep` = number of leading path segments that are the base, not the
+ * route — 1 for base `/umbra/`, 0 for a root-domain base `/`. Derived from the
+ * resolved base so a future domain change (BASE_PATH) stays correct automatically.
+ */
+function spaPages404(base: string): Plugin {
+  const segmentsToKeep = base.split('/').filter(Boolean).length; // '/umbra/' → 1, '/' → 0
+  return {
+    name: 'spa-pages-404',
+    apply: 'build',
+    closeBundle() {
+      const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Umbra</title>
+    <script>
+      // Single Page Apps for GitHub Pages — rafgraph/spa-github-pages (MIT).
+      // Rewrite /umbra/play → /umbra/?/play so the app can restore the route.
+      var pathSegmentsToKeep = ${segmentsToKeep};
+      var l = window.location;
+      l.replace(
+        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+        l.pathname.split('/').slice(0, 1 + pathSegmentsToKeep).join('/') + '/?/' +
+        l.pathname.slice(1).split('/').slice(pathSegmentsToKeep).join('/').replace(/&/g, '~and~') +
+        (l.search ? '&' + l.search.slice(1).replace(/&/g, '~and~') : '') +
+        l.hash
+      );
+    </script>
+  </head>
+  <body></body>
+</html>
+`;
+      writeFileSync(resolve(__dirname, 'dist/404.html'), html);
+    },
+  };
+}
+
+/**
  * SPA deep-link fallback for the MAIN app's client routes (/play, /level/<id>,
  * /progress, /about, /credits, …). The app is a multi-page build (main / debug /
  * editor / trainer), so Vite's built-in singleton SPA fallback isn't enough — and
@@ -113,7 +159,20 @@ function spaFallback(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => {
+  // Deployed to GitHub Pages under the repo-name sub-path (the itf/umbra repo is
+  // served at itf.github.io/umbra/, surfaced as https://ivanaf.com/umbra/ via the
+  // account's existing custom domain). A production BUILD must therefore prefix
+  // every emitted URL with `/umbra/`; `vite dev` stays at `/` so local dev is
+  // unchanged. Runtime asset fetches mirror this via src/engine/baseUrl.ts
+  // (import.meta.env.BASE_URL), and the SPA 404.html derives its segment count from it.
+  //
+  // FUTURE DOMAIN CHANGE: to serve at a different path (e.g. its own domain at
+  // root), build with `BASE_PATH=/ npm run build` — the env var overrides the
+  // default with no code change. Must start and end with '/'.
+  const base = command === 'build' ? (process.env.BASE_PATH ?? '/umbra/') : '/';
+  return {
+    base,
   // AudioWorklet + WASM both need to be served with correct MIME and cross-origin
   // isolation is helpful for high-resolution timers used in acoustics profiling.
   server: {
@@ -162,6 +221,7 @@ export default defineConfig({
     spaFallback(),
     copyAssets(),
     vendorSteamWorkletBindings(),
+    spaPages404(base),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['assets/**/*'],
@@ -191,10 +251,13 @@ export default defineConfig({
         // sibling multi-page HTML entries and asset paths so they resolve to their own
         // files, not the shell.
         navigateFallback: 'index.html',
+        // Match at any path depth: under a deployed sub-path the request paths are
+        // /umbra/assets/… , /umbra/debug.html , etc., so a leading-'/' anchor would
+        // miss them. `(?:^|/)` matches at the root OR after the base prefix.
         navigateFallbackDenylist: [
-          /^\/(debug|editor|trainer)(\/|\.html|$)/,
-          /^\/assets\//,
-          /^\/vendor\//,
+          /(?:^|\/)(debug|editor|trainer)(\/|\.html|$)/,
+          /(?:^|\/)assets\//,
+          /(?:^|\/)vendor\//,
         ],
         // HRTF datasets and audio are large; precache app shell, runtime-cache the rest.
         globPatterns: ['**/*.{js,css,html,wasm}'],
@@ -241,5 +304,6 @@ export default defineConfig({
     // `.claude/**` excludes any transient git worktrees the agent tooling creates
     // under .claude/worktrees/ — otherwise their copies of the specs get collected.
     exclude: ['e2e/**', 'node_modules/**', 'dist/**', '.claude/**', '**/.claude/**'],
-  },
+    },
+  };
 });

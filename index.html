@@ -13,6 +13,25 @@
       content="Umbra — learn to see with sound. Human echolocation training: an eyes-free binaural audio game and echolocation trainer."
     />
     <link rel="stylesheet" href="/src/ui/styles.css" />
+    <!-- SPA deep-link restore for GitHub Pages. 404.html redirects a hard-loaded
+         route (e.g. /umbra/play) to /umbra/?/play; this decodes it back to the real
+         path via replaceState BEFORE the app's router reads location.pathname.
+         rafgraph/spa-github-pages (MIT). No-op for normal loads (no leading "?/"). -->
+    <script>
+      (function () {
+        var l = window.location;
+        if (l.search[1] === '/') {
+          var decoded = l.search
+            .slice(1)
+            .split('&')
+            .map(function (s) {
+              return s.replace(/~and~/g, '&');
+            })
+            .join('?');
+          window.history.replaceState(null, null, l.pathname.slice(0, -1) + decoded + l.hash);
+        }
+      })();
+    </script>
   </head>
   <body>
     <!-- The game is played eyes-free with headphones. Everything visual here is
@@ -50,8 +69,8 @@
           <button id="open-progress" type="button" class="linklike">🏆 Your progress / best times</button>
           <button id="redo-calibration" type="button" class="linklike">🎧 Calibrate audio</button>
           <button id="redo-tutorial" type="button" class="linklike">🚶 Replay tutorial</button>
-          <a href="/trainer.html">🎧 Echolocation trainer</a>
-          <a href="/editor.html">✏️ Level editor</a>
+          <a href="trainer.html">🎧 Echolocation trainer</a>
+          <a href="editor.html">✏️ Level editor</a>
         </nav>
       </section>
 

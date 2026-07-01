@@ -4,6 +4,7 @@
  * and ear. Also plays a clap through the rendered IR.
  */
 import { loadHrtf, sphericalToVec, type HrtfSet } from '../engine/hrtf/sofa';
+import { assetUrl } from '../engine/baseUrl';
 import { buildRoomIr } from '../engine/acoustics/roomIr';
 import { initAcoustics, type Tap } from '../engine/acoustics/core';
 import { MATERIALS, NUM_BANDS } from '../engine/acoustics/materials';
@@ -25,7 +26,7 @@ import {
   waveformPeaks,
 } from '../engine/analysis/measure';
 
-const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
+const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
 const $ = (id: string) => document.getElementById(id)!;
 const num = (id: string) => Number(($(id) as HTMLInputElement).value);
 

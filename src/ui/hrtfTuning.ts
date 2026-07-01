@@ -19,6 +19,7 @@
  */
 import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { InterpolatingHrtfRenderer } from '../engine/hrtf/interpolatingRenderer';
+import { assetUrl } from '../engine/baseUrl';
 import { NEUTRAL_PERSONALIZATION, type HrtfPersonalization } from '../engine/hrtf/personalize';
 import { Staircase, type StaircaseTrial } from './hrtfStaircase';
 import { EXERCISES, STAIRCASE_CONFIG, type Exercise, type ExerciseParam } from './hrtfExercises';
@@ -42,8 +43,8 @@ import {
  */
 export interface BaseHrtf { id: string; label: string; url: string; }
 export const BASE_HRTFS: readonly BaseHrtf[] = [
-  { id: 'sadie_h3', label: 'Default (SADIE H3)', url: '/assets/hrtf/sadie_h3.hrtf' },
-  { id: 'cipic_124', label: 'Steam’s (CIPIC 124)', url: '/assets/hrtf/cipic_124.hrtf' },
+  { id: 'sadie_h3', label: 'Default (SADIE H3)', url: assetUrl('assets/hrtf/sadie_h3.hrtf') },
+  { id: 'cipic_124', label: 'Steam’s (CIPIC 124)', url: assetUrl('assets/hrtf/cipic_124.hrtf') },
 ];
 export function baseHrtfById(id: string | undefined): BaseHrtf {
   return BASE_HRTFS.find((b) => b.id === id) ?? BASE_HRTFS[0];

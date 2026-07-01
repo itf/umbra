@@ -24,6 +24,7 @@
  */
 import type { WallDef } from '../acoustics/core';
 import { buildSteamScene, type SceneDeps, type MeshData } from './convert';
+import { assetUrl } from '../baseUrl';
 
 /** A positioned source, shape-compatible with how game.ts drives a ModeledSource. */
 export interface SteamSourceHandle {
@@ -155,7 +156,7 @@ export interface SteamBackendOpts {
 }
 
 /** URL of OUR measured SADIE SOFA (48 kHz), served from the copied assets tree. */
-export const SADIE_SOFA_URL = '/assets/hrtf/sadie_h3_48k.sofa';
+export const SADIE_SOFA_URL = assetUrl('assets/hrtf/sadie_h3_48k.sofa');
 
 /** The fork's `{ type:'sofa', data }` HRTF setting; `null` means use the generic HRTF. */
 export type SofaHrtfSetting = { type: 'sofa'; data: ArrayBuffer } | null;

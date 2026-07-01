@@ -18,6 +18,8 @@
  * application reuses the FFT already in interpolatingDsp.
  */
 
+import { assetUrl } from '../baseUrl';
+
 export interface HrtfPcaModel {
   subjects: number;
   dirs: number;
@@ -35,7 +37,7 @@ export interface HrtfPcaModel {
 }
 
 /** Default URL of the baked PCA model (copied into the assets tree). */
-export const PCA_MODEL_URL = '/assets/hrtf/cipic_pca.bin';
+export const PCA_MODEL_URL = assetUrl('assets/hrtf/cipic_pca.bin');
 
 let pcaModelCache: Promise<HrtfPcaModel | null> | null = null;
 /** Fetch + parse the PCA model once (cached). Resolves null if the asset is missing

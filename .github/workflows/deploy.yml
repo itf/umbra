@@ -1,0 +1,82 @@
+# Build the Vite app and publish it to GitHub Pages.
+#
+# The repo (itf/umbra) is served at itf.github.io/umbra/, which the account's
+# custom domain surfaces as https://ivanaf.com/umbra/. GitHub Pages cannot run
+# Vite itself, so this workflow runs the full production build (`npm run build`
+# = wasm -> worklet -> icons -> vite build) and uploads the resulting `dist/`.
+#
+# The `/umbra/` base path is baked in by vite.config.ts (command === 'build'),
+# so no BASE_PATH override is needed here. To move to a root domain later, set
+# `BASE_PATH: /` in the build step's env.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: # allow manual runs from the Actions tab
+
+# Least-privilege token scoped for Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One live deployment at a time; don't cancel an in-progress publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The acoustics core is Rust compiled to WASM via wasm-pack; the build's
+      # `wasm` step needs both on PATH. The gitignored WASM output is produced here.
+      - name: Set up Rust (wasm target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: v0.13.1
+
+      # Cache the Rust build so wasm-pack doesn't recompile from scratch each run.
+      - name: Cache cargo + wasm build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            acoustics-core/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('acoustics-core/Cargo.lock') }}
+
+      - run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

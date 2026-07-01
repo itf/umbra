@@ -17,6 +17,7 @@
  * since decode is async). Pure w.r.t. the passed-in manifest, so it's unit-testable.
  */
 import { PROBE_PRESETS, DEFAULT_PROBE, isProbeName, type ProbeName } from '../debug/probes';
+import { assetUrl } from '../engine/baseUrl';
 
 /**
  * One recording entry from public/audio/clicks/manifest.json. The canonical shape,
@@ -89,7 +90,7 @@ export function resolveChoice(
   if (typeof choice === 'string' && choice.startsWith(RECORDING_PREFIX)) {
     const id = choice.slice(RECORDING_PREFIX.length);
     const entry = manifest.find((m) => m.id === id);
-    if (entry?.file) return { url: entry.file };
+    if (entry?.file) return { url: assetUrl(entry.file) };
     return { synth: DEFAULT_PROBE }; // recording vanished → safe fallback
   }
   return { synth: isProbeName(choice) ? choice : DEFAULT_PROBE };

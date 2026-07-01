@@ -20,8 +20,9 @@ import type { EqBand } from './loudnessEq';
 import { mountHrtfTuning } from './hrtfTuning';
 import type { HrtfPersonalization } from '../engine/hrtf/personalize';
 import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
+import { assetUrl } from '../engine/baseUrl';
 
-const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
+const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
 
 export interface CalibrationDeps {
   store: OnboardingStore;

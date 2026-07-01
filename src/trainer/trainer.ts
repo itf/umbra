@@ -12,6 +12,7 @@
  * Everything is announced via an aria-live region so it plays with eyes closed.
  */
 import { initAcoustics } from '../engine/acoustics/core';
+import { assetUrl } from '../engine/baseUrl';
 import { startAudio, getGraph } from '../engine/audioGraph';
 import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { ScenePlayer, type ProbeSpec } from '../debug/scenePlayer';
@@ -47,7 +48,7 @@ import { DailyStreakStore } from './dailyStreakStore';
 import { selectBackendFromSearch } from '../engine/steamaudio/toggle';
 import type { SpatialBackend } from '../game/game';
 
-const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
+const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
 const $ = (id: string) => document.getElementById(id)!;
 
 let player: ScenePlayer | null = null;
