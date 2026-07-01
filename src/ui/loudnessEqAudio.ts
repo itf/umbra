@@ -58,6 +58,99 @@ export function buildEqChain(ctx: BaseAudioContext, curve: EqBand[] | null): EqC
   };
 }
 
+/** One biquad-cascade band with its OWN type + Q (unlike the fixed-Q loudness EQ). */
+export interface CompBiquad {
+  type: BiquadFilterType;
+  freq: number;
+  Q: number;
+  gainDb: number;
+}
+
+/**
+ * Build a peaking/shelf biquad cascade from an explicit per-band list (each band keeps
+ * its own type + Q), multiplying every gain by `scale`. Bands whose SCALED gain is ~0 dB
+ * are skipped; returns null when nothing is left (so the caller keeps the dry path). Used
+ * by the over-ear headphone compensation, which — unlike the loudness EQ — needs per-band
+ * Q and a runtime strength scalar. Mirrors buildEqChain's splice contract (input/output).
+ */
+export function buildBiquadChain(
+  ctx: BaseAudioContext,
+  biquads: CompBiquad[] | null,
+  scale: number,
+): EqChain | null {
+  if (!biquads || biquads.length === 0 || !(scale > 0)) return null;
+  const active = biquads.filter(
+    (b) => Number.isFinite(b.gainDb) && Number.isFinite(b.freq) && b.freq > 0 && Math.abs(b.gainDb * scale) > 0.01,
+  );
+  if (active.length === 0) return null;
+
+  const nodes: BiquadFilterNode[] = active.map((b) => {
+    const f = ctx.createBiquadFilter();
+    f.type = b.type;
+    f.frequency.value = b.freq;
+    f.Q.value = Number.isFinite(b.Q) && b.Q > 0 ? b.Q : 1;
+    f.gain.value = b.gainDb * scale;
+    return f;
+  });
+  for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]);
+
+  return {
+    input: nodes[0],
+    output: nodes[nodes.length - 1],
+    dispose: () => {
+      for (const n of nodes) {
+        try {
+          n.disconnect();
+        } catch {
+          /* already detached */
+        }
+      }
+    },
+  };
+}
+
+/**
+ * The over-ear compensation asset (a static peaking-biquad cascade — the average-inverse
+ * of the ARI HpIR headphone set). Fetched ONCE and cached; returns null if it can't be
+ * loaded so the caller simply keeps the dry path. See assets/hrtf/overear_comp.json.
+ *
+ * Attribution (CC BY-SA 3.0): derived from the ARI HpIR database, Acoustics Research
+ * Institute, Austrian Academy of Sciences (Vienna). Credited on the Credits screen.
+ */
+const OVEREAR_COMP_URL = '/assets/hrtf/overear_comp.json';
+let overEarCompPromise: Promise<CompBiquad[] | null> | null = null;
+
+export function loadOverEarComp(): Promise<CompBiquad[] | null> {
+  if (!overEarCompPromise) {
+    overEarCompPromise = (async () => {
+      try {
+        const res = await fetch(OVEREAR_COMP_URL);
+        if (!res.ok) return null;
+        const json = (await res.json()) as { biquads?: unknown };
+        if (!Array.isArray(json.biquads)) return null;
+        const out: CompBiquad[] = [];
+        for (const b of json.biquads as unknown[]) {
+          const rec = b as { type?: unknown; freq?: unknown; Q?: unknown; gainDb?: unknown };
+          const freq = Number(rec.freq);
+          const gainDb = Number(rec.gainDb);
+          const Q = Number(rec.Q);
+          if (!Number.isFinite(freq) || freq <= 0 || !Number.isFinite(gainDb)) continue;
+          out.push({
+            type: (typeof rec.type === 'string' ? rec.type : 'peaking') as BiquadFilterType,
+            freq,
+            Q: Number.isFinite(Q) && Q > 0 ? Q : 1,
+            gainDb,
+          });
+        }
+        return out.length ? out : null;
+      } catch {
+        return null; // offline / missing asset ⇒ dry path
+      }
+    })();
+  }
+  return overEarCompPromise;
+}
+
 /**
  * Play the equal-loudness comparison pair: the 1 kHz REFERENCE tone (A), a short
  * gap, then the BAND tone (B) at `bandFreq` with `bandGainDb` applied — both routed

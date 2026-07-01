@@ -54,7 +54,13 @@ import { mountLoudnessEq } from './ui/loudnessEqUi';
 import { mountHrtfTuning, baseHrtfById } from './ui/hrtfTuning';
 import { isNeutral as isNeutralPersonalization } from './engine/hrtf/personalize';
 import { encodeProfile as encodeHrtfProfile, decodeProfile as decodeHrtfProfile } from './ui/hrtfProfileCode';
-import { buildEqChain, type EqChain } from './ui/loudnessEqAudio';
+import {
+  buildEqChain,
+  buildBiquadChain,
+  loadOverEarComp,
+  type EqChain,
+  type CompBiquad,
+} from './ui/loudnessEqAudio';
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
 import type { SpatialBackend } from './game/game';
 
@@ -184,20 +190,23 @@ function companionEnabled(): boolean {
 // from startAudio(), so calibration and the real game share one swap node.
 let swapNode: { splitter: ChannelSplitterNode; merger: ChannelMergerNode } | null = null;
 // Per-user loudness-EQ correction chain, spliced at the HEAD of the master path
-// (master → eq → [swap] → limiter), so the swap stage always operates on the node
-// returned by `eqOutNode()` rather than `master` directly.
+// (master → eq → overEarComp → [swap] → limiter), so the downstream stages operate on
+// the EQ output rather than `master` directly when a curve is present.
 let eqChain: EqChain | null = null;
-
-/** The node that feeds the swap/limiter stage: the EQ output if present, else master. */
-function eqOutNode(graph: AudioGraph): AudioNode {
-  return eqChain ? eqChain.output : graph.master;
-}
+// Over-ear headphone COMPENSATION chain, spliced in series AFTER the loudness EQ
+// (master → loudnessEq → overEarComp → [swap] → limiter). Built only when the user has
+// opted into an effective (>0, non-IEM) strength. The asset (a fixed biquad cascade) is
+// fetched once and cached here; loadOverEarComp resolves it and triggers a rebuild so
+// the filter appears without blocking the initial path build.
+let overEarCompChain: EqChain | null = null;
+let overEarCompBiquads: CompBiquad[] | null = null;
+let overEarCompLoaded = false;
 
 /**
  * (Re)build the whole master→limiter path for the current EQ + swap state. Tears down
- * any existing EQ/swap wiring, splices the loudness-EQ chain (when a stored curve
- * exists), then routes through the channel-swap if `wantSwap`. Idempotent: safe to
- * call after a curve change or a swap toggle.
+ * any existing EQ/comp/swap wiring, splices the loudness-EQ chain (when a stored curve
+ * exists) then the over-ear comp chain (when the user opted in), then routes through the
+ * channel-swap if `wantSwap`. Idempotent: safe to call after any of those change.
  */
 function rebuildMasterPath(graph: AudioGraph, wantSwap: boolean) {
   // Fully detach the current chain.
@@ -208,11 +217,29 @@ function rebuildMasterPath(graph: AudioGraph, wantSwap: boolean) {
     swapNode = null;
   }
   if (eqChain) { eqChain.dispose(); eqChain = null; }
+  if (overEarCompChain) { overEarCompChain.dispose(); overEarCompChain = null; }
 
-  // Head: master → (EQ) → tail.
+  // Head → (loudness EQ) → (over-ear comp) → tail. Each stage feeds the next; when a
+  // stage is absent the previous node flows straight through.
   eqChain = buildEqChain(graph.ctx, settings.loudnessEq());
   if (eqChain) graph.master.connect(eqChain.input);
-  const head = eqOutNode(graph);
+  let head: AudioNode = eqChain ? eqChain.output : graph.master;
+
+  // Over-ear comp: only when opted-in (effective strength > 0) AND the asset is loaded.
+  const compStrength = settings.effectiveOverEarCompStrength();
+  if (compStrength > 0) {
+    if (overEarCompLoaded) {
+      overEarCompChain = buildBiquadChain(graph.ctx, overEarCompBiquads, compStrength);
+      if (overEarCompChain) { head.connect(overEarCompChain.input); head = overEarCompChain.output; }
+    } else {
+      // First time we need it: fetch the asset, then rebuild once it's here.
+      void loadOverEarComp().then((bq) => {
+        overEarCompBiquads = bq;
+        overEarCompLoaded = true;
+        if (settings.effectiveOverEarCompStrength() > 0) rebuildMasterPath(graph, onboarding.swap());
+      });
+    }
+  }
 
   // Tail: head → (swap) → limiter.
   if (wantSwap) {
@@ -235,6 +262,11 @@ function applyChannelSwap(graph: AudioGraph, want: boolean) {
 
 /** Re-apply the master path after the loudness-EQ curve changed, keeping the swap. */
 function applyLoudnessEq(graph: AudioGraph) {
+  rebuildMasterPath(graph, onboarding.swap());
+}
+
+/** Re-apply the master path after the over-ear comp type/strength changed (LIVE). */
+function applyOverEarComp(graph: AudioGraph) {
   rebuildMasterPath(graph, onboarding.swap());
 }
 
@@ -1778,6 +1810,48 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       settings.setHrtfBase(prof.base);
       settings.setHrtfPersonalization(prof.params);
       return true;
+    },
+    // Over-ear headphone compensation (advanced, opt-in). Launch the standalone
+    // "Calibrate headphones" flow; on save, persist the type + strength and apply the
+    // master-bus comp filter LIVE. Default is off, so a user who never runs this is
+    // unaffected. Applies immediately (unlike the HRTF warp, this is a master-bus EQ).
+    runHeadphoneCalibration: () => {
+      settingsPanel?.close();
+      const host = document.getElementById('settings-screen');
+      if (!host) return;
+      host.hidden = false;
+      void (async () => {
+        const { mountHeadphoneCalibration } = await import('./ui/headphoneCalibration');
+        mountHeadphoneCalibration(host, {
+          ctx: graph.ctx,
+          dest: graph.master,
+          hrtfUrl: HRTF_URL,
+          say,
+          alert,
+          startType: settings.headphoneType(),
+          startStrength: settings.overEarCompStrength(),
+          save: (type, strength) => {
+            settings.setHeadphoneType(type);
+            settings.setOverEarCompStrength(strength);
+            applyOverEarComp(graph); // live: rebuild master → eq → comp → swap → limiter
+          },
+          onDone: () => {
+            setupSettings(graph, []);
+            settingsPanel?.open();
+          },
+        });
+      })();
+    },
+    headphoneCompStatus: () => {
+      const type = settings.headphoneType();
+      const strength = settings.effectiveOverEarCompStrength();
+      if (!type || strength <= 0) return 'off';
+      const typeLabel = type === 'overear' ? 'over-ear' : type === 'clip' ? 'clip-on' : 'in-ear';
+      return `${typeLabel} at ${Math.round(strength * 100)}%`;
+    },
+    clearHeadphoneComp: () => {
+      settings.clearHeadphoneComp();
+      applyOverEarComp(graph); // live: drop the comp filter from the master path
     },
     // Spoken-voice (TTS). Each setter persists AND re-pushes into the live Speech
     // wrapper so the change applies immediately (and the test-voice sample uses it).

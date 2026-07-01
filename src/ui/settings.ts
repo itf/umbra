@@ -145,6 +145,27 @@ export interface SettingsHooks {
   /** Apply a pasted share code, returning true on success (false = invalid code). */
   loadHrtfProfile?: (code: string) => boolean;
 
+  /**
+   * OVER-EAR headphone compensation (advanced, opt-in). `runHeadphoneCalibration`
+   * launches the standalone "Calibrate headphones" flow (ask type → A/B strength),
+   * persisting + applying the result LIVE. `headphoneCompStatus` returns a short human
+   * status ('off' or e.g. 'over-ear at 50%') for the panel line; `clearHeadphoneComp`
+   * drives the "turn off" affordance. Hidden when `runHeadphoneCalibration` is absent
+   * (no live audio graph yet). DEFAULT is off — this never affects a user who doesn't
+   * opt in.
+   */
+  runHeadphoneCalibration?: () => void;
+  headphoneCompStatus?: () => string;
+  clearHeadphoneComp?: () => void;
+  /**
+   * BASIC over-ear vs in-ear control (mirrors the calibration onboarding question).
+   * `getHeadphoneOverEar` returns true when compensation is on for over-ear, false for
+   * in-ear/off. `setHeadphoneOverEar(true)` applies the gentle default over-ear comp;
+   * `false` turns it off (in-ear). Shown whenever `runHeadphoneCalibration` is wired.
+   */
+  getHeadphoneOverEar?: () => boolean;
+  setHeadphoneOverEar?: (overEar: boolean) => void;
+
   /** Wipe trainer + streak + onboarding/primer flags; returns after clearing. */
   resetProgress: () => void;
 
@@ -610,6 +631,40 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     if (exportHrtfBtn) group.append(exportHrtfBtn);
     if (shareHrtfBtn) group.append(shareHrtfBtn);
     if (loadRow) group.append(loadRow);
+
+    // --- Advanced: over-ear headphone compensation (opt-in) ---
+    if (hooks.runHeadphoneCalibration) {
+      const hpStatus = document.createElement('p');
+      hpStatus.className = 'settings-hrtf-status';
+      const hpClearBtn = document.createElement('button');
+      const refreshHp = () => {
+        const status = hooks.headphoneCompStatus?.() ?? 'off';
+        const on = status !== 'off';
+        hpStatus.textContent = on
+          ? `Headphone compensation: ${status}.`
+          : 'Headphone compensation: off (tune it if you use over-ear headphones).';
+        hpClearBtn.hidden = !on;
+      };
+
+      const hpRun = document.createElement('button');
+      hpRun.type = 'button';
+      hpRun.className = 'settings-hrtf-run';
+      hpRun.textContent = 'Calibrate headphones (advanced)';
+      hpRun.addEventListener('click', () => hooks.runHeadphoneCalibration?.());
+
+      hpClearBtn.type = 'button';
+      hpClearBtn.className = 'settings-hrtf-clear';
+      hpClearBtn.textContent = 'Turn off headphone compensation';
+      hpClearBtn.addEventListener('click', () => {
+        hooks.clearHeadphoneComp?.();
+        hooks.alert('Headphone compensation turned off.');
+        refreshHp();
+      });
+
+      refreshHp();
+      group.append(hpStatus, hpRun, hpClearBtn);
+    }
+
     dialog.append(group);
   }
 

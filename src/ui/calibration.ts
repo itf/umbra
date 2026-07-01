@@ -19,6 +19,7 @@ import { mountLoudnessEq } from './loudnessEqUi';
 import type { EqBand } from './loudnessEq';
 import { mountHrtfTuning } from './hrtfTuning';
 import type { HrtfPersonalization } from '../engine/hrtf/personalize';
+import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
 
 const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
 
@@ -50,6 +51,13 @@ export interface CalibrationDeps {
    *  the "which measured head" picker. */
   loadHrtfBase?: () => string;
   saveHrtfBase?: (id: string) => void;
+  /**
+   * BASIC over-ear vs in-ear question — persist + LIVE-apply the headphone type and its
+   * default comp strength (over-ear ⇒ a gentle default; in-ear ⇒ 0). When omitted, the
+   * question is skipped. This is the everyday path; the advanced A/B fine-tune lives in
+   * Settings.
+   */
+  saveHeadphoneComp?: (type: HeadphoneType, strength: number) => void;
 }
 
 export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
@@ -272,10 +280,43 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     stopVolumeTone();
     cleanupProbe();
     deps.store.setSwap(machine.swapped);
-    // Two OPTIONAL, INDEPENDENT tuning steps follow the headphone check: equal-
-    // loudness EQ and HRTF personalization. Rather than force loudness first, offer
-    // a chooser so the user can do either, both, or neither. Each is wired only when
-    // the host provided its saver + a live graph; if neither is wired, finalize.
+    // BASIC headphone-type question first (over-ear vs in-ear) — a real prompt with a
+    // sensible default that auto-applies a gentle compensation for over-ear users. Then
+    // the two OPTIONAL tuning steps. When the comp saver isn't wired, skip straight to
+    // the tuning chooser.
+    if (deps.saveHeadphoneComp) {
+      askHeadphoneType();
+      return;
+    }
+    afterHeadphoneType();
+  }
+
+  /**
+   * The everyday "over-ear or in-ear?" question. Over-ear applies a gentle default
+   * compensation (our HRTF is measured in-ear and double-filters on over-ear cups);
+   * in-ear applies nothing. A REAL prompt — nothing is enabled until the user picks.
+   */
+  function askHeadphoneType() {
+    clearControls();
+    p.textContent =
+      'One more thing: what are you wearing? Over-ear headphones colour the sound differently from in-ear buds, so we can adjust for it. (Compensation data: ARI HpIR database, Acoustics Research Institute, Vienna.)';
+    deps.say('Are you wearing over-ear headphones, or in-ear earbuds?');
+    const overEar = bigButton('Over-ear headphones (cups over the ears)', () => {
+      deps.saveHeadphoneComp?.('overear', defaultCompStrengthFor('overear'));
+      deps.say('Adjusting for over-ear headphones. You can fine-tune this in Settings.');
+      afterHeadphoneType();
+    }, true);
+    const inEar = bigButton('In-ear / earbuds (tips in your ears)', () => {
+      deps.saveHeadphoneComp?.('iem', 0);
+      deps.say('No adjustment needed for in-ear.');
+      afterHeadphoneType();
+    });
+    controls.append(overEar, inEar);
+    focusFirst();
+  }
+
+  /** Continue past the headphone-type question into the optional tuning steps. */
+  function afterHeadphoneType() {
     if ((deps.saveLoudnessEq || deps.saveHrtfPersonalization) && graph) {
       chooseTuning();
       return;

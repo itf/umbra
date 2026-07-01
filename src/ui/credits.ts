@@ -35,6 +35,14 @@ const CORE_CREDITS: { title: string; body: string; url?: string }[] = [
     url: 'https://www.york.ac.uk/sadie-project/database.html',
   },
   {
+    title: 'Headphone compensation (over-ear)',
+    body:
+      'Optional over-ear headphone EQ derived from the ARI HpIR database — Acoustics ' +
+      'Research Institute, Austrian Academy of Sciences (Vienna). Used under CC BY-SA 3.0; ' +
+      'our derived correction is likewise CC BY-SA 3.0.',
+    url: 'https://www.sofaconventions.org/mediawiki/index.php/Files',
+  },
+  {
     title: 'Steam Audio',
     body: 'Optional high-fidelity spatial-audio engine (Valve), via three-steam-audio.',
   },

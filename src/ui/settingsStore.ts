@@ -89,6 +89,46 @@ export const HRTF_PERSONALIZATION_VERSION = 1;
 export const HRTF_BASE_KEY = 'ps.settings.hrtfBase';
 export const DEFAULT_HRTF_BASE = 'sadie_h3';
 
+/**
+ * OVER-EAR headphone compensation (opt-in, advanced). Our HRTF is measured at the ear
+ * canal (in-ear), which is correct for IEMs but double-filters through the pinna on
+ * over-ear headphones — smearing up/down and front/back cues. A gentle static master-
+ * bus EQ (the average-inverse of the ARI HpIR set, assets/hrtf/overear_comp.json)
+ * partly undoes that. Two stored fields:
+ *  - `headphoneType` — the user's self-reported form factor ('iem' | 'clip' | 'overear'),
+ *    or null when never calibrated. A TAG (seeds a sensible starting strength + drives
+ *    the status line); 'iem' means the comp is inapplicable.
+ *  - `overEarCompStrength` — 0..1 scalar multiplying the asset's (already-conservative)
+ *    biquad gains. DEFAULT 0 = OFF for everyone. Only the advanced "Calibrate headphones"
+ *    flow raises it. strength 0 OR type 'iem' ⇒ no filter is built (dry master path).
+ */
+export const HEADPHONE_TYPE_KEY = 'ps.settings.headphoneType';
+export const OVEREAR_COMP_STRENGTH_KEY = 'ps.settings.overEarCompStrength';
+
+/** The three headphone form factors the calibrate flow recognises. */
+export type HeadphoneType = 'iem' | 'clip' | 'overear';
+const HEADPHONE_TYPES: readonly HeadphoneType[] = ['iem', 'clip', 'overear'];
+
+/** Default over-ear comp strength — OFF (no filter) until the user opts in. */
+export const DEFAULT_OVEREAR_COMP_STRENGTH = 0;
+
+/**
+ * PURE: the WEAK starting comp strength for a headphone type. Deliberately conservative
+ * because the comp curve is derived from ONE headphone (Sennheiser HD 580) but we run
+ * on many others — a gentle default can't hurt, a full one might. IEM needs no comp.
+ * The A/B calibrate flow can raise it toward 1 if the user's choices prefer it.
+ */
+export function defaultCompStrengthFor(type: HeadphoneType): number {
+  switch (type) {
+    case 'iem':
+      return 0;
+    case 'clip':
+      return 0.25;
+    case 'overear':
+      return 0.5;
+  }
+}
+
 /** A single EQ correction point (mirrors loudnessEq.EqBand; kept local to avoid a
  *  store→ui import cycle). */
 export interface LoudnessEqBand {
@@ -507,5 +547,54 @@ export class SettingsStore {
 
   setHrtfBase(id: string) {
     this.write(HRTF_BASE_KEY, id);
+  }
+
+  /**
+   * The user's self-reported headphone form factor, or null when never calibrated
+   * (⇒ over-ear comp OFF). An unknown/corrupt stored value also reads as null.
+   */
+  headphoneType(): HeadphoneType | null {
+    const raw = this.read(HEADPHONE_TYPE_KEY);
+    return raw != null && (HEADPHONE_TYPES as readonly string[]).includes(raw)
+      ? (raw as HeadphoneType)
+      : null;
+  }
+  setHeadphoneType(type: HeadphoneType) {
+    this.write(HEADPHONE_TYPE_KEY, type);
+  }
+
+  /**
+   * Over-ear comp strength in [0,1]; the default (0 = off) when unset/corrupt. A 0..1
+   * MULTIPLIER on the compensation asset's biquad gains. 0 ⇒ no filter is built.
+   */
+  overEarCompStrength(): number {
+    const raw = this.read(OVEREAR_COMP_STRENGTH_KEY);
+    if (raw == null) return DEFAULT_OVEREAR_COMP_STRENGTH;
+    return clampLevel(Number(raw), DEFAULT_OVEREAR_COMP_STRENGTH);
+  }
+  setOverEarCompStrength(v: number) {
+    this.write(OVEREAR_COMP_STRENGTH_KEY, String(clampLevel(v, DEFAULT_OVEREAR_COMP_STRENGTH)));
+  }
+
+  /**
+   * EFFECTIVE comp strength actually applied to audio: the stored strength, unless the
+   * user is on IEMs (which need no comp), in which case 0. The single source of truth
+   * for "should the master path carry the comp filter, and how strong".
+   */
+  effectiveOverEarCompStrength(): number {
+    if (this.headphoneType() === 'iem') return 0;
+    return this.overEarCompStrength();
+  }
+
+  /** Remove the headphone comp calibration (type + strength) — the "reset" path. */
+  clearHeadphoneComp() {
+    for (const key of [HEADPHONE_TYPE_KEY, OVEREAR_COMP_STRENGTH_KEY]) {
+      this.mem.delete(key);
+      try {
+        this.store?.removeItem(key);
+      } catch {
+        /* memory already cleared */
+      }
+    }
   }
 }

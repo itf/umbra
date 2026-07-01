@@ -727,15 +727,23 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       deps.alert('Personalization saved.');
       deps.onDone();
     }, true);
-    const refine = bigButton('Fine-tune with the guided test', () => {
-      // Carry the hand-tuned values into the guided game as its starting point.
-      Object.assign(params, fpParams);
-      teardownFreePlay();
-      renderExercise();
-    });
+    // After rough hand-tuning, offer ALL the next steps (not just one) — pointing is the
+    // recommended objective test, but the guided A/B and the real-ear PCA refinement are
+    // right here too. Each carries the hand-tuned values in as its starting point. (The
+    // old single "guided test" handoff dead-ended into the coarse front/behind flow.)
+    const carry = () => { Object.assign(params, fpParams); teardownFreePlay(); };
+    const nextLabel = document.createElement('span');
+    nextLabel.className = 'hrtf-group-label';
+    nextLabel.textContent = 'Next — test / refine:';
+    const toLocalize = bigButton('Point to where sounds come from (recommended)', () => { carry(); renderLocalization(); });
+    const toGuided = bigButton('Guided “which felt better” test', () => { carry(); renderExercise(); });
+    const toPca = bigButton('Refine to real ears (advanced)', () => { carry(); void renderPca(); });
+    const nextRow = document.createElement('div');
+    nextRow.className = 'hrtf-motions';
+    nextRow.append(nextLabel, toLocalize, toGuided, toPca);
     const back = bigButton('Back', () => { teardownFreePlay(); showIntro(); });
 
-    controls.append(vizWrap, bases, motions, knobs, pcaToggle, save, refine, back);
+    controls.append(vizWrap, bases, motions, knobs, pcaToggle, save, nextRow, back);
     void fpBuild();
     (knobs.querySelector('input') as HTMLElement | null)?.focus();
   }

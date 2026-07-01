@@ -20,6 +20,10 @@ import {
   DEFAULT_STEAM_REFLECTION_WET,
   DEFAULT_STEAM_REFLECTION_BUS,
   DEFAULT_STEAM_REVERB_BUS,
+  defaultCompStrengthFor,
+  DEFAULT_OVEREAR_COMP_STRENGTH,
+  HEADPHONE_TYPE_KEY,
+  OVEREAR_COMP_STRENGTH_KEY,
 } from './settingsStore';
 
 /** A minimal in-memory Storage stand-in for deterministic, isolated tests. */
@@ -317,5 +321,67 @@ describe('HRTF personalization persistence', () => {
     s.setHrtfPersonalization({ itdScale: 1.2, elevTilt: 3, frontBackTilt: -3, notchHz: 9000, notchDepth: 8 });
     s.clearHrtfPersonalization();
     expect(s.hrtfPersonalization()).toEqual(NEUTRAL);
+  });
+});
+
+describe('over-ear headphone compensation', () => {
+  it('defaults to off (strength 0, type null)', () => {
+    const s = new SettingsStore(memStorage());
+    expect(s.headphoneType()).toBe(null);
+    expect(s.overEarCompStrength()).toBe(DEFAULT_OVEREAR_COMP_STRENGTH);
+    expect(s.overEarCompStrength()).toBe(0);
+    expect(s.effectiveOverEarCompStrength()).toBe(0);
+  });
+
+  it('seeds a weak, type-appropriate default strength', () => {
+    expect(defaultCompStrengthFor('iem')).toBe(0);
+    expect(defaultCompStrengthFor('clip')).toBe(0.25);
+    expect(defaultCompStrengthFor('overear')).toBe(0.5);
+    // Deliberately conservative: over-ear default is well below full (1.0).
+    expect(defaultCompStrengthFor('overear')).toBeLessThan(1);
+  });
+
+  it('persists + reads type and strength', () => {
+    const s = new SettingsStore(memStorage());
+    s.setHeadphoneType('overear');
+    s.setOverEarCompStrength(0.6);
+    expect(s.headphoneType()).toBe('overear');
+    expect(s.overEarCompStrength()).toBeCloseTo(0.6);
+    expect(s.effectiveOverEarCompStrength()).toBeCloseTo(0.6);
+  });
+
+  it('clamps strength to [0,1]', () => {
+    const s = new SettingsStore(memStorage());
+    s.setOverEarCompStrength(9);
+    expect(s.overEarCompStrength()).toBe(1);
+    s.setOverEarCompStrength(-1);
+    expect(s.overEarCompStrength()).toBe(0);
+  });
+
+  it('IEM type forces effective strength to 0 even if a strength is stored', () => {
+    const s = new SettingsStore(memStorage());
+    s.setHeadphoneType('iem');
+    s.setOverEarCompStrength(0.5);
+    expect(s.overEarCompStrength()).toBe(0.5); // raw is kept
+    expect(s.effectiveOverEarCompStrength()).toBe(0); // but IEM ⇒ no comp applied
+  });
+
+  it('reads null for an unknown/corrupt stored type', () => {
+    const backing = memStorage();
+    backing.setItem(HEADPHONE_TYPE_KEY, 'bogus');
+    expect(new SettingsStore(backing).headphoneType()).toBe(null);
+  });
+
+  it('clear turns compensation off (type + strength)', () => {
+    const backing = memStorage();
+    const s = new SettingsStore(backing);
+    s.setHeadphoneType('overear');
+    s.setOverEarCompStrength(0.7);
+    s.clearHeadphoneComp();
+    expect(s.headphoneType()).toBe(null);
+    expect(s.overEarCompStrength()).toBe(0);
+    expect(s.effectiveOverEarCompStrength()).toBe(0);
+    expect(backing.map.has(HEADPHONE_TYPE_KEY)).toBe(false);
+    expect(backing.map.has(OVEREAR_COMP_STRENGTH_KEY)).toBe(false);
   });
 });
