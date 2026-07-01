@@ -29,6 +29,7 @@ import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
 import { Router, type ScreenState } from './ui/router';
 import { renderProgressScreen } from './ui/progress';
 import { renderLandingScreen } from './ui/landing';
+import { LandingDemo } from './ui/landingDemo';
 import { mountClickTypes } from './ui/clickTypes';
 import { renderCreditsScreen } from './ui/credits';
 import { loadClicksManifest, cachedClicksManifest } from './game/clicksManifest';
@@ -121,6 +122,9 @@ let currentDebugOverlaySetter: ((on: boolean) => void) | null = null;
  * start, cleared on teardown.
  */
 let currentProbeTrigger: (() => void) | null = null;
+/** The landing page's guided-demo controller, or null when not on the landing. Held so
+ *  leaving the landing disposes its AudioContext. */
+let landingDemo: LandingDemo | null = null;
 /**
  * Whether the live run currently has the Steam Audio engine. Tracked alongside
  * `currentGame` so Apply can decide LIGHT (level tweak on a running Steam backend)
@@ -438,6 +442,8 @@ function applyLevel(level: Level, displayName: string, launch: PickerSelection |
 
 /** Hide every top-level onboarding/start section (game screen left untouched). */
 function hideOnboardingScreens() {
+  // Tear down the landing demo's audio when leaving the landing.
+  if (!landingScreen.hidden) { landingDemo?.dispose(); landingDemo = null; }
   landingScreen.hidden = true;
   pickerScreen.hidden = true;
   startScreen.hidden = true;
@@ -516,6 +522,11 @@ function showLanding() {
     onClicks: () => navigate({ screen: 'clicks' }),
     say,
   });
+  // Mount the guided "which side?" demo into its host (dispose any prior instance so a
+  // re-entry doesn't leak an AudioContext).
+  landingDemo?.dispose();
+  const demoMount = document.getElementById('landing-demo-mount');
+  landingDemo = demoMount ? new LandingDemo(demoMount, { say }) : null;
 }
 
 function showPicker() {

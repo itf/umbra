@@ -74,6 +74,20 @@ export function renderLandingScreen(
   actions.append(playBtn, trainBtn);
   container.appendChild(actions);
 
+  // Guided DEMO — a dead-simple "which side did the sound move to?" trial so a first
+  // visitor immediately hears that this is about direction-by-ear. Mounted lazily by
+  // the caller (needs an AudioContext on gesture); this is just its host container.
+  const demoHost = document.createElement('section');
+  demoHost.className = 'landing-demo-host';
+  demoHost.setAttribute('aria-label', 'Quick demo');
+  const demoH2 = document.createElement('h2');
+  demoH2.textContent = 'Hear it for yourself';
+  demoHost.appendChild(demoH2);
+  const demoMount = document.createElement('div');
+  demoMount.id = 'landing-demo-mount';
+  demoHost.appendChild(demoMount);
+  container.appendChild(demoHost);
+
   // "How it works" — 3 short points grounded in the research doc.
   const how = document.createElement('section');
   how.className = 'landing-how';

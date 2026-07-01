@@ -119,6 +119,15 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   color: #ccc; line-height: 1.45;
 }
 
+/* Landing guided demo — the "which side did the sound move to?" trial. */
+.landing-demo-host { margin: 8px 0 24px; }
+.landing-demo { display: flex; flex-direction: column; gap: 10px; align-items: center; }
+.landing-demo-prompt { color: #ccc; margin: 0; }
+.landing-demo-play { width: min(280px, 80vw); }
+.landing-demo-answers { display: flex; gap: 12px; }
+.landing-demo-answer { min-width: 120px; }
+.landing-demo-feedback { color: var(--accent); min-height: 1.4em; margin: 4px 0 0; font-weight: 600; }
+
 /* Best Times / Progress screen — read-only summary, grouped by mode. Reuses the
    picker group/list styling; rows are plain <li>s (not buttons). */
 .progress-headline { font-size: 1.2rem; font-weight: 700; color: #fff; margin: 8px 0 4px; }
