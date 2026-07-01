@@ -11,12 +11,16 @@
  *
  * Loudness is normalized to [0,1]. Step loudness is derived from the material's
  * step `level` (see stepSounds.ts — the SAME presets that set audible footstep
- * gain), mapped across the observed range of material step levels so the quietest
- * material (acoustic_foam) → ~0 and the loudest hard floor → high. Stumbles and
- * bumps are large FIXED spikes regardless of floor (you trip loudly on carpet
- * too). See docs/engine/noise-events.md.
+ * gain), but mapped through a FIXED ABSOLUTE reference range (not a fragile
+ * min/max of whatever materials happen to be in the table) so the SNEAK intent is
+ * intentional: soft floors (acoustic_foam, curtain, carpet, grass) land well
+ * BELOW the monster's attraction threshold (DEFAULT_NOISE_THRESHOLD = 0.12) and
+ * are genuinely sneakable, while hard/loud floors (concrete, tile, gravel,
+ * rough_stone, wood) land comfortably above it. Stumbles and bumps are large
+ * FIXED spikes regardless of floor (you trip loudly on carpet too).
+ * See docs/engine/noise-events.md.
  */
-import { STEP_SOUNDS, soundsFor } from './stepSounds';
+import { soundsFor } from './stepSounds';
 
 export type NoiseKind = 'step' | 'stumble' | 'bump';
 
@@ -32,11 +36,20 @@ export interface NoiseEvent {
 }
 
 // ---- material → loudness normalization -------------------------------------
-// We map a material's step `level` linearly across the min/max of ALL material
-// step levels in STEP_SOUNDS, so the table stays in sync if presets change.
-const STEP_LEVELS = Object.values(STEP_SOUNDS).map((m) => m.step.level);
-const STEP_LEVEL_MIN = Math.min(...STEP_LEVELS);
-const STEP_LEVEL_MAX = Math.max(...STEP_LEVELS);
+// We map a material's audible step `level` through a FIXED absolute reference
+// range [QUIET_FLOOR_LEVEL, LOUD_FLOOR_LEVEL] and then apply a gamma curve that
+// pushes the soft end down. This is deliberately NOT a min/max of the table:
+// tying "sneakable" to whatever the quietest/loudest preset happens to be made
+// the outcome an accident of the spread (carpet used to normalize to ~0.148,
+// ABOVE the 0.12 threshold, so soft carpet steps wrongly attracted the monster).
+//
+// With the current presets the soft cluster (foam 0.28, curtain 0.30,
+// carpet 0.32, grass 0.40) maps well under DEFAULT_NOISE_THRESHOLD (0.12) and
+// the hard/loud cluster (gravel 0.50, wood/rough_stone/tile/concrete 0.55) maps
+// comfortably above it. Tuned against monster.ts's DEFAULT_NOISE_THRESHOLD.
+const QUIET_FLOOR_LEVEL = 0.35; // step `level` at/below which a floor is silent-to-monster
+const LOUD_FLOOR_LEVEL = 0.52; // step `level` at/above which a floor is max loudness
+const LOUDNESS_GAMMA = 2.0; // >1 pushes the soft end further down
 
 /**
  * Fixed loudness spikes for stumble / bump — large regardless of floor. A stumble
@@ -50,16 +63,16 @@ export const NOISE_DECAY_MS = 2500;
 
 /**
  * Map a material's audible step `level` to a normalized [0,1] step loudness.
- * Soft floors (carpet/foam) → near 0; loud floors (gravel/concrete) → near the
- * top. Falls back to concrete for unknown materials (matching soundsFor).
+ * Soft floors (carpet/foam/grass) → well below the monster threshold (0.12);
+ * loud floors (gravel/concrete) → near the top. Uses a FIXED absolute reference
+ * range + gamma (see above), so the sneak intent doesn't drift if presets change.
+ * Falls back to concrete for unknown materials (matching soundsFor).
  */
 export function stepLoudnessForMaterial(material: string): number {
   const level = soundsFor(material).step.level;
-  // Degenerate single-level table: can't normalize, so report max loudness rather
-  // than leaking a raw (possibly >1) level. Shouldn't happen with the real table.
-  if (STEP_LEVEL_MAX <= STEP_LEVEL_MIN) return 1;
-  const t = (level - STEP_LEVEL_MIN) / (STEP_LEVEL_MAX - STEP_LEVEL_MIN);
-  return Math.max(0, Math.min(1, t));
+  const t = (level - QUIET_FLOOR_LEVEL) / (LOUD_FLOOR_LEVEL - QUIET_FLOOR_LEVEL);
+  const clamped = Math.max(0, Math.min(1, t));
+  return Math.pow(clamped, LOUDNESS_GAMMA);
 }
 
 /**
