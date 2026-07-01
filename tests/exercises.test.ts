@@ -18,6 +18,9 @@ import {
   ALL_TYPES,
   SINGLE_TYPES,
   MATERIAL_LADDER,
+  DETECT_CATCH_RATE,
+  DETECT_CHOICES,
+  CALIBRATE_CHOICES,
   type Question,
 } from '../src/trainer/exercises';
 import type { Scene } from '../src/debug/scenes';
@@ -349,6 +352,120 @@ describe('gap: single-scene mirror; gap is opposite the wall side', () => {
     expect(left!.sceneA.extraWalls![0].absorption).toEqual(right!.sceneA.extraWalls![0].absorption);
     // Both at the same forward distance from the (identical) listener.
     expect(Math.hypot(lc.x - L[0], lc.z - L[2])).toBeCloseTo(Math.hypot(rc.x - L[0], rc.z - L[2]), 6);
+  });
+});
+
+describe('detect (L2 present/absent): fairness, correctness, catch-trials', () => {
+  const hasPanel = (q: Question) => !!(q.sceneA.extraWalls && q.sceneA.extraWalls.length > 0);
+  const hasClap = (q: Question) => q.sceneA.sources.some((s) => s.kind === 'clap');
+
+  it('single-scene 2AFC with Panel/No panel choices', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('detect', seed);
+      expect(q.type).toBe('detect');
+      expect(q.sceneB).toBeUndefined();
+      expect(hasRoomB(q)).toBe(false);
+      expect(q.choices).toEqual(DETECT_CHOICES);
+      expect(q.choices).toContain(q.correctAnswer);
+    }
+  });
+
+  it('correctAnswer matches panel presence; present ⇔ a panel wall exists', () => {
+    for (const seed of SEEDS) {
+      const q = makeQuestion('detect', seed);
+      expect(q.correctAnswer).toBe(q.panelPresent ? 'Panel' : 'No panel');
+      // A panel is present in the geometry exactly when panelPresent is true.
+      expect(hasPanel(q)).toBe(q.panelPresent === true);
+    }
+  });
+
+  it('catch-trials are silent (no clap), have no panel, and answer "No panel"', () => {
+    let sawCatch = false;
+    for (const seed of SEEDS) {
+      const q = makeQuestion('detect', seed);
+      if (q.catchTrial) {
+        sawCatch = true;
+        expect(hasClap(q)).toBe(false);        // no signal emitted (the control)
+        expect(hasPanel(q)).toBe(false);        // nothing to reflect
+        expect(q.panelPresent).toBe(false);
+        expect(q.correctAnswer).toBe('No panel');
+      } else {
+        expect(hasClap(q)).toBe(true);          // non-catch always claps
+      }
+    }
+    expect(sawCatch).toBe(true); // the seed set must exercise the catch branch
+  });
+
+  it('a "Panel" press on a catch-trial is a false alarm (scored wrong)', () => {
+    const catchQ = SEEDS.map((s) => makeQuestion('detect', s)).find((q) => q.catchTrial)!;
+    expect(catchQ).toBeDefined();
+    // Pressing Panel (claiming an echo) on a no-signal trial is incorrect.
+    expect('Panel' === catchQ.correctAnswer).toBe(false);
+    // Pressing No panel (correctly abstaining) is right.
+    expect('No panel' === catchQ.correctAnswer).toBe(true);
+  });
+
+  it('catch-trial rate over many seeds is near DETECT_CATCH_RATE', () => {
+    const N = 3000;
+    let catches = 0;
+    for (let i = 0; i < N; i++) if (makeQuestion('detect', i * 2654435761 + 1).catchTrial) catches++;
+    const rate = catches / N;
+    // Loose bounds around the target rate (mulberry32 is uniform enough).
+    expect(rate).toBeGreaterThan(DETECT_CATCH_RATE - 0.05);
+    expect(rate).toBeLessThan(DETECT_CATCH_RATE + 0.05);
+  });
+
+  it('present/absent split among non-catch trials is roughly 50/50', () => {
+    const N = 3000;
+    let present = 0, nonCatch = 0;
+    for (let i = 0; i < N; i++) {
+      const q = makeQuestion('detect', i * 40503 + 7);
+      if (q.catchTrial) continue;
+      nonCatch++;
+      if (q.panelPresent) present++;
+    }
+    const rate = present / nonCatch;
+    expect(rate).toBeGreaterThan(0.42);
+    expect(rate).toBeLessThan(0.58);
+  });
+
+  it('harder present-trials have a farther/smaller (fainter) panel than easy ones', () => {
+    // Find a seed that yields a PRESENT trial at both difficulties (panelPresent is
+    // seed-driven, not difficulty-driven, so the same seed keeps presence fixed).
+    const seed = SEEDS.find((s) => makeQuestion('detect', s, { difficulty: 0 }).panelPresent)!;
+    const easy = makeQuestion('detect', seed, { difficulty: 0 });
+    const hard = makeQuestion('detect', seed, { difficulty: 1 });
+    expect(easy.panelPresent).toBe(true);
+    expect(hard.panelPresent).toBe(true);
+    const dist = (q: Question) => {
+      let z = 0, n = 0;
+      for (const w of q.sceneA.extraWalls!) for (const v of w.verts) { z += v[2]; n++; }
+      const cz = z / n;
+      return Math.abs(cz - q.sceneA.listener[2]);
+    };
+    expect(dist(hard)).toBeGreaterThan(dist(easy)); // farther = fainter
+  });
+});
+
+describe('calibrate (L1 click calibration): non-scored orientation rung', () => {
+  it('single-scene, anechoic (maxOrder 0, absorbent), always plays the click', () => {
+    for (const seed of SEEDS.slice(0, 8)) {
+      const q = makeQuestion('calibrate', seed);
+      expect(q.type).toBe('calibrate');
+      expect(q.sceneB).toBeUndefined();
+      expect(hasRoomB(q)).toBe(false);
+      expect(q.choices).toEqual(CALIBRATE_CHOICES);
+      expect(q.unscored).toBe(true); // must bow out of the staircase
+      expect(q.sceneA.maxOrder).toBe(0); // direct sound only → no room colour
+      expect(q.sceneA.sources.some((s) => s.kind === 'clap')).toBe(true);
+      expect(q.correctAnswer).toBe('I heard the click');
+    }
+  });
+
+  it('is flagged unscored while normal exercises are not', () => {
+    expect(makeQuestion('calibrate', 1).unscored).toBe(true);
+    expect(makeQuestion('detect', 1).unscored).toBeUndefined();
+    expect(makeQuestion('larger', 1).unscored).toBeUndefined();
   });
 });
 
