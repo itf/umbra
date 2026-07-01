@@ -182,6 +182,8 @@ export default defineConfig({
     // The Playwright e2e specs live in e2e/ and must NOT be collected by vitest
     // (they call Playwright's test(), which throws under the vitest runner). They
     // run via `npm run e2e` instead.
-    exclude: ['e2e/**', 'node_modules/**', 'dist/**'],
+    // `.claude/**` excludes any transient git worktrees the agent tooling creates
+    // under .claude/worktrees/ — otherwise their copies of the specs get collected.
+    exclude: ['e2e/**', 'node_modules/**', 'dist/**', '.claude/**', '**/.claude/**'],
   },
 });
