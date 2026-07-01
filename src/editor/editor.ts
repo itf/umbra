@@ -661,7 +661,7 @@ function renderEvents() {
     return `<fieldset class="event-row" data-i="${i}">
       <legend>${e.id}</legend>
       <label>type<select data-ek="type">${
-        ['crossing', 'door'].map((t) => `<option ${t === e.type ? 'selected' : ''}>${t}</option>`).join('')
+        ['crossing', 'occlusion', 'door'].map((t) => `<option ${t === e.type ? 'selected' : ''}>${t}</option>`).join('')
       }</select></label>
       <label>source<select data-ek="sourceId">${srcOpts}</select></label>
       <label>start s<input data-ek="start" type="number" step="0.5" value="${e.start}"></label>

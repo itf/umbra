@@ -3,7 +3,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  activeEvents, isAnyActive, ReactionScorer, type ReactionEvent,
+  activeEvents, isAnyActive, ReactionScorer, occlusionModulation,
+  DEFAULT_OCCLUSION_DEPTH, type ReactionEvent,
 } from '../src/game/events';
 
 const EV = (id: string, start: number, end: number): ReactionEvent => ({
@@ -84,5 +85,43 @@ describe('ReactionScorer', () => {
     s.advance(5);
     s.advance(1.5); // earlier — must not "un-miss"
     expect(s.score().misses).toBe(1);
+  });
+
+  it('occlusion events score identically to crossings (same timing/scoring path)', () => {
+    const OCC = (id: string, start: number, end: number, depth?: number): ReactionEvent => ({
+      id, type: 'occlusion', sourceId: 'radio', start, end, depth,
+    });
+    const s = new ReactionScorer([OCC('o1', 1, 3, 0.8), OCC('o2', 5, 7, 0.4)]);
+    expect(s.press(2)).toBe('hit');   // hit o1
+    s.advance(8);                     // o2 missed
+    expect(s.score()).toEqual({ hits: 1, misses: 1, falseAlarms: 0 });
+  });
+});
+
+describe('occlusionModulation', () => {
+  it('a deeper dip is quieter and more muffled', () => {
+    const shallow = occlusionModulation(0.2);
+    const deep = occlusionModulation(0.9);
+    expect(deep.factor).toBeLessThan(shallow.factor);     // quieter
+    expect(deep.cutoffHz).toBeLessThan(shallow.cutoffHz); // more muffled
+  });
+
+  it('depth 0 is a negligible, bright dip; depth 1 approaches a full crossing', () => {
+    const none = occlusionModulation(0);
+    const full = occlusionModulation(1);
+    expect(none.factor).toBeGreaterThan(0.9);
+    expect(none.cutoffHz).toBeGreaterThan(10000);
+    expect(full.factor).toBeLessThan(0.5);
+    expect(full.cutoffHz).toBeLessThan(1200);
+  });
+
+  it('clamps out-of-range depth and defaults sensibly', () => {
+    expect(occlusionModulation(-5)).toEqual(occlusionModulation(0));
+    expect(occlusionModulation(5)).toEqual(occlusionModulation(1));
+    expect(occlusionModulation()).toEqual(occlusionModulation(DEFAULT_OCCLUSION_DEPTH));
+    // The default dip must be clearly audible: a real level+HF drop.
+    const def = occlusionModulation();
+    expect(def.factor).toBeLessThan(0.8);
+    expect(def.cutoffHz).toBeLessThan(6000);
   });
 });

@@ -15,7 +15,7 @@ import { Footsteps, type StepRoomCtx } from './footsteps';
 import { ListenerGlide, type AudioPose } from './listenerGlide';
 import { BeaconVoice, resolveBeaconPreset, type BeaconPreset } from './beaconSounds';
 import { NoiseTracker, makeNoiseEvent, type NoiseEvent } from './noiseEvents';
-import { ReactionScorer, type ReactionEvent, type ReactionScore } from './events';
+import { ReactionScorer, occlusionModulation, type ReactionEvent, type ReactionScore } from './events';
 import {
   makeMonster,
   updateMonster,
@@ -803,6 +803,12 @@ export class Game {
   private onEventStart(e: ReactionEvent) {
     if (e.type === 'crossing') {
       this.setAmbientModulation(e.sourceId, 0.35, 700); // duck + muffle (occluded)
+      this.playPassBy(e.sourceId);
+    } else if (e.type === 'occlusion') {
+      // PARTLY occluded — a shorter, shallower dip in level + highs (something
+      // passes in front of the source, not fully between you and it). Depth-tuned.
+      const { factor, cutoffHz } = occlusionModulation(e.depth);
+      this.setAmbientModulation(e.sourceId, factor, cutoffHz);
       this.playPassBy(e.sourceId);
     } else {
       this.setAmbientModulation(e.sourceId, 1.6, 18000); // leak louder + brighter

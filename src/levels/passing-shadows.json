@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "name": "Passing Shadows",
+  "open": false,
+  "room": { "width": 8, "depth": 14, "height": 3.0 },
+  "roomMaterial": "concrete",
+  "floorMaterial": "tile",
+  "hasCeiling": true,
+  "ceilingMaterial": "concrete",
+  "start": { "x": 4, "z": 12.0, "yaw": 0 },
+  "winPoint": { "x": 4, "z": 2.2 },
+  "winRadius": 1.0,
+  "beacons": [],
+  "ambience": [
+    { "id": "radio", "x": 4, "z": 1.5, "sound": "hum", "freq": 180, "gain": 1.0 }
+  ],
+  "events": [
+    { "id": "occ-1", "type": "occlusion", "sourceId": "radio", "start": 5, "end": 6.6, "depth": 0.8 },
+    { "id": "occ-2", "type": "occlusion", "sourceId": "radio", "start": 11, "end": 12.4, "depth": 0.45 },
+    { "id": "occ-3", "type": "occlusion", "sourceId": "radio", "start": 18, "end": 19.5, "depth": 0.65 },
+    { "id": "occ-4", "type": "occlusion", "sourceId": "radio", "start": 24, "end": 25.4, "depth": 0.5 },
+    { "id": "occ-5", "type": "occlusion", "sourceId": "radio", "start": 31, "end": 32.6, "depth": 0.75 }
+  ],
+  "requiredReactions": 3,
+  "walls": [],
+  "floors": [],
+  "ceilings": [],
+  "monsters": []
+}
