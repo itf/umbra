@@ -40,10 +40,19 @@ export function makeRng(seed: number): Rng {
 
 export type ExerciseType =
   | 'larger' | 'wider' | 'longer' | 'carpet' | 'brick' | 'direction' | 'reflector'
-  | 'distance' | 'gap' | 'material' | 'metal' | 'orientation' | 'estimate';
+  | 'distance' | 'gap' | 'material' | 'metal' | 'orientation' | 'estimate'
+  | 'detect' | 'calibrate';
 
 export const AB_TYPES: ExerciseType[] = ['larger', 'wider', 'longer', 'carpet', 'brick', 'reflector', 'distance', 'material', 'metal'];
-export const ALL_TYPES: ExerciseType[] = [...AB_TYPES, 'direction', 'gap', 'orientation'];
+/**
+ * ALL_TYPES = the pool the interleaved scheduler may draw from. `detect` (L2
+ * present/absent) is included FIRST so detection — the canonical "sonar exists"
+ * entry task — appears early and often in the mixed rotation (research §2.4: it's
+ * good to front-load detection). `calibrate` (L1) is deliberately EXCLUDED: it's a
+ * non-scored orientation rung reachable only from the type picker, not something to
+ * interleave into scored practice.
+ */
+export const ALL_TYPES: ExerciseType[] = ['detect', ...AB_TYPES, 'direction', 'gap', 'orientation'];
 
 export type Direction = 'forward' | 'behind' | 'left' | 'right';
 
@@ -66,6 +75,25 @@ export interface Question {
   wallDistsM?: { a: number; b: number };
   /** Estimate-drill only: the true wall distance (m), for scoring + feedback. */
   trueDist?: number;
+  /**
+   * Detection-drill (`detect`) only: whether a reflecting panel is actually PRESENT
+   * in this trial. Present ⇒ correctAnswer 'Panel'; absent ⇒ 'No panel'.
+   */
+  panelPresent?: boolean;
+  /**
+   * Detection-drill only: a SILENCE CATCH-TRIAL — no clap is played and no panel is
+   * present, so there is literally nothing to hear. It is scored as a normal
+   * absent trial (correctAnswer 'No panel'); pressing 'Panel' is a FALSE ALARM. The
+   * research control (Thaler): if a learner "detects" an echo when none was emitted,
+   * they're using an artifact, not sonar. See genDetect for the seeded 1-in-6 logic.
+   */
+  catchTrial?: boolean;
+  /**
+   * Non-scored orientation rung (`calibrate`, L1): this question must NOT perturb the
+   * adaptive staircase, ladders, or persisted session — it's a "just listen to your
+   * probe" calibration, mirroring how onboarding bows out. trainer.ts checks this.
+   */
+  unscored?: boolean;
 }
 
 export interface GenOptions {
@@ -808,6 +836,135 @@ function genEstimate(rng: Rng, difficulty: number): Question {
   };
 }
 
+// --- L2: present/absent detection (2AFC) + silence catch-trials --------------
+
+/**
+ * Fraction of `detect` trials that are SILENCE CATCH-TRIALS. ~1 in 6 ≈ 17%, the
+ * research-standard rate for a no-signal control (Thaler 10-week study): frequent
+ * enough to catch guessers, rare enough not to dominate practice.
+ */
+export const DETECT_CATCH_RATE = 1 / 6;
+
+export const DETECT_CHOICES = ['Panel', 'No panel'];
+
+/**
+ * L2 — PRESENT/ABSENT DETECTION (the canonical entry task, and the trainer's
+ * tutorial). ONE scene: the listener claps in a big, highly-absorbent room whose
+ * own reflections are faint and far-off (reusing genReflector's substrate so the
+ * ONLY salient cue is a panel's echo, not room size/loudness). Either:
+ *   - PRESENT: a hard concrete panel sits close-ish, DIRECTLY AHEAD → a clear early
+ *     echo. Answer 'Panel'.
+ *   - ABSENT: no panel, just the clap in the dead room → essentially nothing comes
+ *     back. Answer 'No panel'.
+ *   - CATCH (silence): NO clap is emitted at all AND no panel — total silence. Also
+ *     answered 'No panel'; a 'Panel' press here is a false alarm. This is the
+ *     no-signal control that proves the learner is using the echo, not an artifact.
+ *
+ * SEEDED, DETERMINISTIC logic (same seed ⇒ same trial):
+ *   1. Draw `r = rng()`. If r < DETECT_CATCH_RATE ⇒ CATCH trial (silent, absent).
+ *   2. Else draw present/absent 50/50 via a second rng() draw.
+ * So catch-trials + present/absent split are all fixed by the seed and testable
+ * without Web Audio.
+ *
+ * DIFFICULTY scales the echo strength of PRESENT trials (absent/catch are
+ * unaffected — fairness): easy = a big panel very close (loud, obvious echo);
+ * hard = a smaller panel farther away (faint echo, easy to miss).
+ */
+function genDetect(rng: Rng, difficulty: number): Question {
+  const roomSize: [number, number, number] = [16, 4, 16];
+  const center: [number, number, number] = [8, 1.6, 8];
+  const faint = allMat('acoustic_foam'); // big dead room → no size/loudness cue
+
+  // Seeded trial-type decision (see doc comment). Draw BOTH randoms unconditionally
+  // so the RNG stream advances identically regardless of branch (determinism).
+  const catchDraw = rng();
+  const presentDraw = rng();
+  const isCatch = catchDraw < DETECT_CATCH_RATE;
+  // Present on a non-catch trial iff the second draw lands in the lower half.
+  const panelPresent = !isCatch && presentDraw < 0.5;
+
+  // PRESENT-trial cue strength: easy = big + close, hard = small + far.
+  const dist = contrast(difficulty, 1.2, 3.0);   // metres ahead
+  const panelSize = contrast(difficulty, 1.6, 0.8); // metres square
+
+  const sources: SceneSource[] = isCatch
+    ? [] // CATCH: no clap emitted → genuine silence (the no-signal control)
+    : [{ pos: center, kind: 'clap', label: 'clap' }];
+
+  const extraWalls: WallDef[] | undefined = panelPresent
+    ? (() => {
+        const [cx, cz] = bearingToPos(center, 0, dist);
+        return makePanel(center, cx, cz, 'concrete', panelSize);
+      })()
+    : undefined;
+
+  const sceneA: Scene = {
+    id: 'detect',
+    title: 'Detect',
+    description: 'Clap and decide whether a panel is ahead.',
+    listener: center,
+    roomSize,
+    materials: faint,
+    extraWalls,
+    sources,
+    maxOrder: 1,
+  };
+
+  return {
+    type: 'detect',
+    id: '',
+    prompt: 'Clap and listen: is there a PANEL ahead, or NOTHING? (Sometimes there is no clap at all — then the answer is "No panel".)',
+    choices: DETECT_CHOICES,
+    correctAnswer: panelPresent ? 'Panel' : 'No panel',
+    sceneA,
+    panelPresent,
+    catchTrial: isCatch,
+  };
+}
+
+// --- L1: click calibration (non-scored orientation rung) ---------------------
+
+export const CALIBRATE_CHOICES = ['I heard the click', 'Silence'];
+
+/**
+ * L1 — CLICK CALIBRATION. An orientation rung, not a scored discrimination: play
+ * the probe click in an anechoic (tiny, maximally-absorbent) room so the learner
+ * hears the OUTGOING reference signal itself — its timbre, loudness, and that it's
+ * *their* probe — before any echo work. Framed as a trivial 2AFC ("did you hear the
+ * click or silence?") purely so it fits the existing answer UI; the click is always
+ * played, so 'I heard the click' is always correct.
+ *
+ * It is flagged `unscored` so it bows out of the staircase/ladders/session-stats,
+ * exactly like onboarding's blind-reference trial — it should never move the
+ * learner's measured threshold.
+ *
+ * Anechoic realisation: a small room with acoustic-foam walls and maxOrder 0, so
+ * effectively only the direct click reaches the ears (no reflections). Single-scene.
+ */
+function genCalibrate(_rng: Rng, _difficulty: number): Question {
+  const roomSize: [number, number, number] = [4, 3, 4];
+  const center: [number, number, number] = [2, 1.6, 2];
+  const sceneA: Scene = {
+    id: 'calibrate',
+    title: 'Calibrate',
+    description: 'Play your probe click and listen to its sound.',
+    listener: center,
+    roomSize,
+    materials: allMat('acoustic_foam'),
+    sources: [{ pos: center, kind: 'clap', label: 'clap' }],
+    maxOrder: 0, // direct sound only → anechoic reference click, no room colour
+  };
+  return {
+    type: 'calibrate',
+    id: '',
+    prompt: 'This is your probe click. Play it and listen to its sound — that\'s the ping you send out.',
+    choices: CALIBRATE_CHOICES,
+    correctAnswer: 'I heard the click',
+    sceneA,
+    unscored: true,
+  };
+}
+
 // --- Entry point -------------------------------------------------------------
 
 const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number, opts: GenOptions) => Question> = {
@@ -824,10 +981,12 @@ const GENERATORS: Record<ExerciseType, (rng: Rng, difficulty: number, opts: GenO
   metal: genMetal,
   orientation: genOrientation,
   estimate: genEstimate,
+  detect: genDetect,
+  calibrate: genCalibrate,
 };
 
 /** Single-scene exercises (one room, play once) rather than A/B. */
-export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap', 'orientation', 'estimate'];
+export const SINGLE_TYPES: ExerciseType[] = ['direction', 'gap', 'orientation', 'estimate', 'detect', 'calibrate'];
 
 /**
  * Pure predicate: does this question have a genuine Room B to play?

@@ -97,6 +97,8 @@ export const TYPE_LABELS: Record<ExerciseType, string> = {
   metal: 'which wall is metal',
   orientation: 'panel orientation',
   estimate: 'distance estimation',
+  detect: 'panel present or absent',
+  calibrate: 'click calibration',
 };
 
 // --- Streak transition (pure) ------------------------------------------------

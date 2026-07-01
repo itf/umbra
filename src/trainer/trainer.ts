@@ -320,6 +320,14 @@ function sizeReveal(q: Question): string {
   if (q.type === 'estimate' && q.trueDist != null) {
     return ` Echo returned about ${echoDelayMs(q.trueDist).toFixed(1)} ms after the clap.`;
   }
+  if (q.type === 'detect') {
+    if (q.catchTrial) {
+      return ' That was a SILENCE catch-trial — no clap was played and no panel was there, so the answer is "No panel". These prove you\'re hearing a real echo, not guessing.';
+    }
+    return q.panelPresent
+      ? ' A panel was there — you heard its echo.'
+      : ' No panel — the clap died in the dead room with nothing to reflect it.';
+  }
   return '';
 }
 
@@ -536,6 +544,15 @@ function estimateVerdict(choice: string, q: Question, diff: number): { correct: 
 function onAnswer(choice: string, btn: HTMLButtonElement) {
   if (!current || answered) return;
   answered = true;
+
+  // Non-scored orientation rung (L1 click calibration): show the verdict but bow
+  // out of scoring AND the staircase/ladder/session machinery entirely — it must
+  // never move the measured threshold or the score (mirrors onboarding's bow-out).
+  if (current.unscored) {
+    onUnscoredAnswer(choice === current.correctAnswer, btn);
+    return;
+  }
+
   // Estimate drill: use graded scoring rather than exact-match correctness.
   const isEstimate = current.type === 'estimate' && current.trueDist != null;
   const correct = isEstimate
@@ -644,6 +661,29 @@ function maybeReplay(correct: boolean) {
   if (!current) return;
   const plan = planReplay(current, correct, replayReveal(current));
   if (plan) void runReplay(plan);
+}
+
+/**
+ * Non-scored rung answer (L1 click calibration): mark the buttons and show a
+ * verdict, but touch NONE of the scoring/staircase/ladder/session state — this rung
+ * is pure orientation. `asked` was bumped in nextQuestion(); roll it back so the
+ * calibration doesn't inflate the question tally either.
+ */
+function onUnscoredAnswer(correct: boolean, btn: HTMLButtonElement) {
+  const q = current!;
+  asked = Math.max(0, asked - 1);
+  for (const el of Array.from($('answers').children) as HTMLButtonElement[]) {
+    el.disabled = true;
+    if (el.textContent === q.correctAnswer) el.classList.add('correct');
+    else if (el === btn) el.classList.add('wrong');
+  }
+  const verdict = correct
+    ? 'That\'s your probe click — the ping you send out to echolocate.'
+    : 'The click did play — listen again; that\'s your outgoing ping.';
+  ($('feedback') as HTMLElement).textContent = verdict;
+  ($('next') as HTMLButtonElement).disabled = false;
+  announce(`${verdict} Press Next to continue.`);
+  ($('next') as HTMLButtonElement).focus();
 }
 
 /**
