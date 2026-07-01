@@ -508,13 +508,9 @@ function showLanding() {
   landingScreen.hidden = false;
   renderLandingScreen(landingScreen, {
     onPlay: () => navigate({ screen: 'picker' }),
-    // The trainer is its own Vite entry (trainer.html), not yet an in-SPA route. Send
-    // "Train" straight there (BASE_URL-aware) rather than bouncing via the picker.
-    // TODO: fold the trainer into a /train SPA route once trainer.html work settles.
-    onTrain: () => {
-      const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
-      location.href = `${base.replace(/\/?$/, '/')}trainer.html`;
-    },
+    // "Train" → the /train route, which redirects to the trainer page (its own Vite
+    // entry). A clean shareable URL; the redirect keeps the mature trainer intact.
+    onTrain: () => navigate({ screen: 'train' }),
     onProgress: () => navigate({ screen: 'progress' }),
     onCredits: () => navigate({ screen: 'credits' }),
     onClicks: () => navigate({ screen: 'clicks' }),
@@ -704,6 +700,11 @@ const router = new Router({
       showClicks();
     } else if (state.screen === 'credits') {
       showCredits();
+    } else if (state.screen === 'train') {
+      // The trainer is its own Vite entry (trainer.html), not an in-SPA screen. /train
+      // is a clean URL that redirects there (full nav). Keeps the mature trainer intact.
+      const base = (import.meta as unknown as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/';
+      location.replace(`${base.replace(/\/?$/, '/')}trainer.html`);
     } else if (state.screen === 'level' && state.level) {
       // An unknown/unloadable id → bounce to the picker (and fix the URL).
       if (!loadLevelById(state.level)) navigate({ screen: 'picker' }, { replace: true });

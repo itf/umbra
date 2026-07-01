@@ -41,7 +41,10 @@
       D plays Room B, Q and E move between answers, Enter confirms.
     </p>
 
-    <div class="panel" id="daily-panel">
+    <!-- DAILY CHALLENGE: disabled (hidden) — low value; superseded by the guided demo
+         on the landing page. The DOM is kept (trainer.ts still references #daily-*),
+         just not shown. Remove `hidden` to bring it back. -->
+    <div class="panel" id="daily-panel" hidden>
       <h2 style="font-size:1.05rem;margin:0 0 6px">Daily Challenge</h2>
       <p id="daily-status" class="hint" style="margin:0 0 10px">One seeded challenge a day. Complete it to build a streak.</p>
       <button id="daily-begin" class="big">★ Today's challenge</button>

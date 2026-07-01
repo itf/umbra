@@ -67,9 +67,10 @@ describe('urlToScreen', () => {
   it('ignores a query string on the path', () => {
     expect(urlToScreen('/level/foo?engine=steam')).toEqual({ screen: 'level', level: 'foo' });
   });
-  it('/clicks and /credits are real screens', () => {
+  it('/clicks, /credits, /train are real screens', () => {
     expect(urlToScreen('/clicks')).toEqual({ screen: 'clicks' });
     expect(urlToScreen('/credits')).toEqual({ screen: 'credits' });
+    expect(urlToScreen('/train')).toEqual({ screen: 'train' });
   });
   it('unknown paths fall back to landing, not throw', () => {
     expect(urlToScreen('/nope/nope')).toEqual({ screen: 'landing' });
@@ -84,6 +85,7 @@ describe('urlToScreen', () => {
       { screen: 'progress' },
       { screen: 'clicks' },
       { screen: 'credits' },
+      { screen: 'train' },
     ];
     for (const s of states) expect(urlToScreen(screenToUrl(s))).toEqual(s);
   });
