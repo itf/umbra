@@ -76,5 +76,39 @@ more instructions" — FIX + document it.
 - [ ] Spawn a product-manager agent to review the whole app state (game + trainer +
       landing + a11y + mobile) and produce a prioritized findings/roadmap report.
 
+## TRACK F — Sequence / multi-beacon mode  [serial, orchestrator]
+User: a mode where you find MULTIPLE beacons in sequence — reaching beacon N starts
+beacon N+1 playing and stops beacon N (arrival-triggered events). The LEVEL EDITOR
+must expose this.
+- [ ] Schema: an ordered `sequence: [beaconId...]` on the level. Only ONE beacon is
+      audible at a time: the first sounds at start; reaching it silences it and starts
+      the next; etc. Each non-active beacon is silent.
+- [ ] Game: WIN = reach the FINAL beacon (single win target). Because every earlier
+      beacon must sound-then-go-silent to reveal the next, the player is naturally led
+      through all of them in order — no separate "collected N" counter needed. Arrival
+      at beacon k (within goalRadius) fades k out + starts k+1. Reuse multi-beacon plumbing.
+      The win target is just the last beacon (off-axis-start already handles facing).
+- [ ] Off-axis start applies to the FIRST beacon (already generalized via winTarget).
+- [ ] Editor: expose sequence authoring (order the beacons; mark sequence mode).
+- [ ] Tests for the sequence progression + editor round-trip.
+
+## PM REVIEW FINDINGS (2026-06-30) — fold into tracks
+- P0 On-screen DECOY button (stealth unwinnable on mobile — keyboard-only T). [mobile parity]
+- P0 Reaction mode clarity → TRACK B (agent running): announce event onset, confirm hits,
+     speak "N reactions left", tutorial, and the OCCLUSION-DIP event type.
+- P1 /credits route + accessible screen (landing link currently 404s) → TRACK C.
+- P1 Wire clickProbe.ts as the ACTUAL probe (currently dead code; live probe is a noise
+     burst in clapRoom.ts) — at least in the trainer, ideally the game echo too.
+- P1 Real /train route (fold trainer into SPA) or clearly frame trainer.html as separate.
+- P1 L2 present/absent 2AFC + silence catch-trials, as the tutorial → TRACK A.
+- P2 Gate localization exercises behind detection mastery.
+- Risk: silent win-failure when requiredReactions unmet (reach goal, no win, no reason).
+- Risk: misconfigured event sourceId silently no-ops (no author warning).
+- Stale docs/product/ux-audit.md claims (keyboard-turn + trainer persistence) — retire/annotate.
+
+## DONE (additional)
+- [x] Off-axis start: player never starts facing the goal within 5°; small ≤45°
+      deterministic turn so you must orient by ear (never spun at a wall). load.ts.
+
 ## Probe sound assets follow-up
 - [x] ffmpeg processing done (trim/mono/48k/normalize, ogg only).

@@ -38,6 +38,45 @@ export interface LoadedLevel {
 /** Default win radius (m) for a `winPoint` with no explicit `winRadius`/beacon. */
 export const DEFAULT_WIN_RADIUS = 0.9;
 
+/**
+ * The player must ORIENT (turn) to reach the goal, not just walk straight. But we also
+ * must NOT spin them toward a wall. So: the goal only needs to be a LITTLE off the
+ * heading (> MIN_START_OFFSET); if it already is, leave the authored yaw alone. If it's
+ * (nearly) dead-ahead, apply a SMALL random-ish turn — at most MAX_START_OFFSET to
+ * either side — so the goal moves just off-centre without pointing the player at a wall.
+ *
+ * PURE + deterministic: the "random" turn is seeded from the start position, so a given
+ * level always starts identically (no per-load jitter). No-op when the goal is already
+ * off-axis or coincident with the start. Convention: yaw 0 faces -z, +yaw turns right;
+ * the goal's bearing from the start is atan2(dx, -dz) in the same frame (see player.ts).
+ */
+export const MIN_START_OFFSET = (5 * Math.PI) / 180;  // goal must be >5° off the heading
+export const MAX_START_OFFSET = (45 * Math.PI) / 180; // …but we turn at most 45° to a side
+
+export function offAxisStartYaw(
+  start: { x: number; z: number; yaw: number },
+  target: { x: number; z: number },
+): number {
+  const dx = target.x - start.x;
+  const dz = target.z - start.z;
+  // Degenerate: start ON the goal — nothing to orient toward; keep the authored yaw.
+  if (Math.hypot(dx, dz) < 1e-3) return start.yaw;
+  const bearing = Math.atan2(dx, -dz); // heading that faces the goal
+  // Signed smallest angle from the current heading to the goal, in (-π, π].
+  let delta = bearing - start.yaw;
+  delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+  if (Math.abs(delta) > MIN_START_OFFSET) return start.yaw; // already more than 5° off
+  // Nearly dead-ahead: turn the heading a small, deterministic amount to one side so the
+  // goal ends up between MIN and MAX offset off-centre (never a big spin toward a wall).
+  // Seed a stable 0..1 fraction from the position (integer hash of cm-quantised coords).
+  const h = (Math.round(start.x * 100) * 73856093 + Math.round(start.z * 100) * 19349663) >>> 0;
+  const frac = (h % 1000) / 1000;
+  const magnitude = MIN_START_OFFSET + frac * (MAX_START_OFFSET - MIN_START_OFFSET);
+  const side = (h & 1) === 0 ? 1 : -1;
+  // Rotate the HEADING away from the goal by `magnitude` → the goal sits `magnitude` off.
+  return bearing + side * magnitude;
+}
+
 /** Forward only a finite, sensible speed of sound; else undefined (⇒ 343). */
 export function sanitizeLevelSpeed(c: number | undefined): number | undefined {
   return c != null && Number.isFinite(c) && c > 1 ? c : undefined;
@@ -451,12 +490,20 @@ export function loadLevel(level: Level, clutterOverride?: number): LoadedLevel {
     ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
     : { x: winFallback.x, z: winFallback.z, freq: 440 };
   const beacons = level.beacons.map((b) => ({ x: b.x, z: b.z, freq: b.freq, sound: b.sound, soundUrl: b.soundUrl }));
+  // Decoupled win point: an explicit `winPoint` else the first beacon's position.
+  const winTarget = level.winPoint ?? { x: beacon.x, z: beacon.z };
+  // The player must turn to find the goal — never start facing straight at it. Rotate
+  // the authored start yaw so the goal is ≥MIN_START_OFFSET off the heading (no-op if
+  // it already is). Applies uniformly to builtin, saved, and sandbox levels.
+  const startYaw = offAxisStartYaw(
+    { x: level.start.x, z: level.start.z, yaw: level.start.yaw },
+    winTarget,
+  );
   const game: GameLevel = {
-    start: { x: level.start.x, z: level.start.z, yaw: level.start.yaw },
+    start: { x: level.start.x, z: level.start.z, yaw: startYaw },
     beacon,
     beacons,
-    // Decoupled win point: an explicit `winPoint` else the first beacon's position.
-    winTarget: level.winPoint ?? { x: beacon.x, z: beacon.z },
+    winTarget,
     // Win radius: explicit `winRadius`, else the first beacon's goalRadius, else 0.9.
     goalRadius: level.winRadius ?? first?.goalRadius ?? DEFAULT_WIN_RADIUS,
     headHeight: 1.6,
