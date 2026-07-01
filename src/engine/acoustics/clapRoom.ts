@@ -9,7 +9,7 @@ import type { HrtfRenderer } from '../hrtf/renderer';
 import { computeShoeboxTaps, computeRoomTaps, type ShoeboxParams, type WallDef, type EdgeDef } from './core';
 import { buildRoomIr } from './roomIr';
 import { scatteringFor, absorptionFor } from './materials';
-import { renderMouthClick } from '../../game/clickProbe';
+import { resolveProbe } from '../../debug/probes';
 
 /** Average mid-band scattering across a room's assigned wall materials. */
 function representativeScattering(params: ShoeboxParams): number {
@@ -331,23 +331,28 @@ export class ClapRoom {
   }
 
   /**
-   * Fire a clap: a few ms of shaped noise through the room IR.
+   * Fire a clap: a shaped excitation through the room IR.
    *
-   * REALISTIC-CLICK HOOK (game path): pass `{ mouthClick: true }` to excite the room
-   * with the research-modelled expert mouth click (game/clickProbe.ts, 2017
-   * Thaler/Reich) instead of the noise burst. This is the in-game opt-in wired from
-   * the 'Realistic click probe' setting (see main.ts). A fresh jitter seed per fire
-   * gives slight natural variation; the default (no opt) path is byte-UNCHANGED.
+   * PROBE SELECTION: `opts.probe` chooses the excitation, so the player can pick the
+   * probe they fire (Settings' probe chooser → this):
+   *   - undefined ⇒ the legacy noise-burst clap (byte-UNCHANGED default),
+   *   - a synth PROBE NAME string ('clap' | 'click' | 'mouthclick' | …) ⇒ resolved via
+   *     resolveProbe() (game/debug share one catalog),
+   *   - a pre-decoded AudioBuffer ⇒ played directly (recorded CC click probes; the
+   *     caller loads + caches the .ogg since decode is async — see main.ts setupClap).
+   * Legacy `opts.mouthClick` is still honoured (⇒ probe 'mouthclick').
    */
-  clap(opts: { mouthClick?: boolean } = {}) {
+  clap(opts: { probe?: string | AudioBuffer; mouthClick?: boolean } = {}) {
     const ctx = this.graph.ctx;
     let buf: AudioBuffer;
-    if (opts.mouthClick) {
-      const data = renderMouthClick(ctx.sampleRate, {
-        voice: 'EE1',
-        jitter: 0.03,
-        seed: (Math.random() * 0x7fffffff) | 0,
-      });
+    const probe = opts.probe ?? (opts.mouthClick ? 'mouthclick' : undefined);
+    // Duck-type the buffer (global `AudioBuffer` isn't defined in the node test env,
+    // where buffers come from node-web-audio-api's context, so `instanceof` throws).
+    if (probe != null && typeof probe !== 'string') {
+      buf = probe; // a recorded probe the caller already decoded
+    } else if (typeof probe === 'string') {
+      // A synth preset (clap/click/hiss/snap/stomp/mouthclick) from the shared catalog.
+      const data = resolveProbe(probe)(ctx.sampleRate);
       buf = ctx.createBuffer(1, data.length, ctx.sampleRate);
       buf.getChannelData(0).set(data);
     } else {

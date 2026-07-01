@@ -34,12 +34,14 @@ export interface SettingsHooks {
   setAutoStep: (on: boolean) => void;
 
   /**
-   * REALISTIC CLICK PROBE: when on, the in-game echo/clap fires the research-modelled
-   * expert mouth click (game/clickProbe.ts) as its excitation instead of the default
-   * broadband noise burst. Applies to the next clap. Setter persists.
+   * PROBE CHOOSER: which echo/probe the player fires — a probe-catalog id (a synth
+   * preset name or 'rec:<id>' for a CC tongue-click recording). `probeOptions` lists
+   * the choices for the dropdown (synth presets + any recordings). Applies to the next
+   * clap. Setter persists.
    */
-  getRealisticClick: () => boolean;
-  setRealisticClick: (on: boolean) => void;
+  getProbeChoice: () => string;
+  setProbeChoice: (id: string) => void;
+  probeOptions: () => { id: string; label: string; hint: string }[];
 
   /**
    * DEBUG OVERLAY (minimap + audio readout). Setter persists AND toggles the live
@@ -165,6 +167,39 @@ function checkboxRow(labelText: string, checked: boolean, onChange: (on: boolean
 }
 
 /**
+ * A labeled <select> row for choosing the probe/echo sound. `options` come from the
+ * shared probe catalog (synth presets + CC recordings); `current` is the stored id.
+ * onChange gets the chosen id + its label (for the spoken confirmation).
+ */
+function probeChooserRow(
+  labelText: string,
+  options: { id: string; label: string; hint: string }[],
+  current: string,
+  onChange: (id: string, label: string) => void,
+): HTMLElement {
+  const row = document.createElement('label');
+  row.className = 'settings-row';
+  const span = document.createElement('span');
+  span.textContent = labelText;
+  const sel = document.createElement('select');
+  sel.setAttribute('aria-label', 'Probe sound — the echo you fire to hear the room');
+  for (const o of options) {
+    const opt = document.createElement('option');
+    opt.value = o.id;
+    opt.textContent = o.label;
+    opt.title = o.hint;
+    if (o.id === current) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener('change', () => {
+    const label = sel.options[sel.selectedIndex]?.text ?? sel.value;
+    onChange(sel.value, label);
+  });
+  row.append(span, sel);
+  return row;
+}
+
+/**
  * A 0..100% range row backed by a 0..1 value. `onInput` receives the 0..1 level;
  * announcements are throttled so dragging doesn't machine-gun the live region.
  */
@@ -263,12 +298,13 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   });
   dialog.append(autoStep.row);
 
-  // --- Realistic mouth-click probe ---
-  const realisticClick = checkboxRow('Realistic click probe (echo)', hooks.getRealisticClick(), (on) => {
-    hooks.setRealisticClick(on);
-    hooks.say(on ? 'Realistic mouth-click probe on.' : 'Realistic click probe off. Using the noise burst.');
-  });
-  dialog.append(realisticClick.row);
+  // --- Probe chooser (the echo/clap you fire) ---
+  dialog.append(
+    probeChooserRow('Probe sound (echo)', hooks.probeOptions(), hooks.getProbeChoice(), (id, label) => {
+      hooks.setProbeChoice(id);
+      hooks.say(`Probe sound: ${label}.`);
+    }),
+  );
 
   // --- Debug overlay (minimap) ---
   const debugOverlay = checkboxRow('Debug overlay (minimap)', hooks.getDebugOverlay(), (on) => {

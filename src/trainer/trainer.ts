@@ -16,6 +16,8 @@ import { startAudio, getGraph } from '../engine/audioGraph';
 import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { ScenePlayer, type ProbeSpec } from '../debug/scenePlayer';
 import { PROBE_PRESETS, isProbeName } from '../debug/probes';
+import { probeOptions, resolveChoice } from '../game/probeCatalog';
+import { loadClicksManifest, cachedClicksManifest } from '../game/clicksManifest';
 import { record as recordClick } from './clickRecorder';
 import {
   makeRandomQuestion,
@@ -239,6 +241,12 @@ let pickedProbeBuffer: AudioBuffer | null = null;
 function selectedProbe(): ProbeSpec {
   const value = ($('probe') as HTMLSelectElement).value;
   if (isProbeName(value)) return value;
+  // A CC recording ('rec:<id>') → its url (ScenePlayer decodes + caches it).
+  if (value.startsWith('rec:')) {
+    const resolved = resolveChoice(value, cachedClicksManifest() ?? []);
+    if ('url' in resolved) return { url: resolved.url };
+    return resolved.synth; // manifest not ready / missing → synth fallback
+  }
   // 'custom'
   if (pickedProbeBuffer) return { buffer: pickedProbeBuffer };
   const url = ($('probe-url') as HTMLInputElement).value.trim();
@@ -771,16 +779,32 @@ function setupProbePicker() {
     const opt = document.createElement('option');
     opt.value = preset.name;
     opt.textContent = preset.label;
+    opt.title = preset.hint;
     sel.appendChild(opt);
   }
   const custom = document.createElement('option');
   custom.value = 'custom';
   custom.textContent = 'Custom recording…';
   sel.appendChild(custom);
+  // Append the CC tongue-click RECORDINGS from the shared manifest as 'rec:<id>'
+  // options (selectedProbe maps them to { url }). Loaded async; harmless if empty.
+  const recHints = new Map<string, string>();
+  void loadClicksManifest().then((manifest) => {
+    for (const o of probeOptions(manifest).filter((p) => p.kind === 'recording')) {
+      const opt = document.createElement('option');
+      opt.value = o.id;
+      opt.textContent = o.label;
+      opt.title = o.hint;
+      recHints.set(o.id, o.hint);
+      sel.insertBefore(opt, custom); // keep "Custom recording…" last
+    }
+  });
 
   const updateHint = () => {
     const preset = PROBE_PRESETS.find((p) => p.name === sel.value);
-    hint.textContent = preset ? preset.hint : 'play your own recording as the echo probe';
+    hint.textContent = preset
+      ? preset.hint
+      : recHints.get(sel.value) ?? 'play your own recording as the echo probe';
   };
   sel.addEventListener('change', updateHint);
   updateHint();

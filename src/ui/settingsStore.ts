@@ -50,6 +50,11 @@ export const AUTO_STEP_KEY = 'ps.settings.autoStep';
  *  research-modelled expert mouth click (game/clickProbe.ts) instead of the default
  *  broadband noise burst. Default OFF (noise burst — unchanged behaviour). */
 export const REALISTIC_CLICK_KEY = 'ps.settings.realisticClick';
+/** PROBE CHOICE: which echo/probe sound the player fires. A probe-catalog id — a synth
+ *  preset name ('clap', 'mouthclick', …) or 'rec:<id>' for a CC recording. Default the
+ *  legacy noise-burst clap so existing behaviour is unchanged. Supersedes the older
+ *  boolean REALISTIC_CLICK toggle (kept for back-compat migration). */
+export const PROBE_CHOICE_KEY = 'ps.settings.probeChoice';
 
 /**
  * Per-user multi-band LOUDNESS-EQ correction curve (a utility, not a game): an
@@ -356,6 +361,22 @@ export class SettingsStore {
   }
   setRealisticClick(on: boolean) {
     this.write(REALISTIC_CLICK_KEY, on ? '1' : '0');
+  }
+
+  /**
+   * PROBE CHOICE — which echo/probe the player fires (a probe-catalog id: a synth
+   * preset name or 'rec:<id>'). Default 'clap' (the legacy noise burst). Migrates the
+   * older boolean `realisticClick` toggle: if the new key is unset but the old flag was
+   * ON, report 'mouthclick' so upgrading users keep their realistic click.
+   */
+  probeChoice(): string {
+    const v = this.read(PROBE_CHOICE_KEY);
+    if (v != null && v !== '') return v;
+    if (this.read(REALISTIC_CLICK_KEY) === '1') return 'mouthclick'; // migrate old toggle
+    return 'clap';
+  }
+  setProbeChoice(id: string) {
+    this.write(PROBE_CHOICE_KEY, id);
   }
 
   /**

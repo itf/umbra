@@ -31,6 +31,9 @@ import { renderProgressScreen } from './ui/progress';
 import { renderLandingScreen } from './ui/landing';
 import { mountClickTypes } from './ui/clickTypes';
 import { renderCreditsScreen } from './ui/credits';
+import { loadClicksManifest, cachedClicksManifest } from './game/clicksManifest';
+import { resolveChoice, probeOptions } from './game/probeCatalog';
+import { loadCustomLoop } from './game/customAudio';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
@@ -716,6 +719,9 @@ function navigate(state: ScreenState, opts: { replace?: boolean } = {}) {
 // Seed the app from the initial URL (deep-link, progress, or picker), replacing the
 // entry so Back never lands on a blank pre-app state.
 router.start();
+// Warm the CC clicks manifest so the Settings probe chooser can list the recordings
+// synchronously (probeOptions reads the cache). Harmless if it fails (⇒ synth-only).
+void loadClicksManifest();
 
 startButton.addEventListener('click', async () => {
   startButton.disabled = true;
@@ -1508,10 +1514,11 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     // live, so no live wiring is needed.
     getAutoStep: () => settings.autoStep(),
     setAutoStep: (on) => settings.setAutoStep(on),
-    // Realistic click probe: persisted pref; setupClap reads it live at fire time, so
-    // no live re-wiring is needed (the next clap picks up the change).
-    getRealisticClick: () => settings.realisticClick(),
-    setRealisticClick: (on) => settings.setRealisticClick(on),
+    // Probe chooser: which echo sound the player fires (synth presets + CC recordings).
+    // Persisted; setupClap reads it live at fire time, so no re-wiring is needed.
+    getProbeChoice: () => settings.probeChoice(),
+    setProbeChoice: (id) => settings.setProbeChoice(id),
+    probeOptions: () => probeOptions(cachedClicksManifest() ?? []),
     // Debug overlay: persist the pref AND, if a level is running, toggle the live
     // overlay via the run's registered hook (mirrors the G key).
     getDebugOverlay: () => settings.debugOverlay(),
@@ -1636,6 +1643,35 @@ function setupClap(
   const clapRoom = new ClapRoom(graph, renderer);
   const listenBtn = document.getElementById('listen') as HTMLButtonElement | null;
 
+  // PROBE CHOICE: resolve the player's chosen echo probe (Settings' probe chooser).
+  // A synth preset fires by name; a CC recording ('rec:<id>') is decoded once (async)
+  // and cached as an AudioBuffer. `probeArg()` returns what to hand clapRoom.clap():
+  // the recording buffer if loaded, else the synth name (recordings fall back to the
+  // default clap until their .ogg finishes decoding). Read live so a mid-run Settings
+  // change takes effect on the next clap.
+  let probeBuffer: AudioBuffer | null = null;
+  let probeBufferFor: string | null = null;
+  const ensureProbeBuffer = () => {
+    const choice = settings.probeChoice();
+    void loadClicksManifest().then((manifest) => {
+      const resolved = resolveChoice(choice, manifest);
+      if (!('url' in resolved)) { probeBuffer = null; probeBufferFor = choice; return; }
+      if (probeBufferFor === choice && probeBuffer) return; // already decoded
+      void loadCustomLoop(graph.ctx, resolved.url).then((buf) => {
+        probeBuffer = buf; probeBufferFor = choice;
+      }).catch(() => { probeBuffer = null; probeBufferFor = choice; });
+    });
+  };
+  ensureProbeBuffer();
+  const probeArg = (): { probe: string | AudioBuffer } => {
+    const choice = settings.probeChoice();
+    if (choice.startsWith('rec:')) {
+      if (probeBufferFor !== choice) ensureProbeBuffer(); // choice changed at runtime
+      return { probe: probeBuffer ?? 'clap' }; // buffer if ready, else fall back
+    }
+    return { probe: choice };
+  };
+
   // The sonar budget for THIS run. Absent config ⇒ unlimited (today's free clap):
   // isManaged() is false, so no counter is shown or announced.
   const budget = new ClapBudget({ max: LEVEL.clapBudget, cooldownMs: LEVEL.clapCooldownMs });
@@ -1688,9 +1724,9 @@ function setupClap(
       edges: EDGES,
       speedOfSound: SPEED_OF_SOUND,
     });
-    // Opt-in: excite the room with the realistic mouth click instead of the noise
-    // burst when the player enabled 'Realistic click probe' in Settings.
-    clapRoom.clap({ mouthClick: settings.realisticClick() });
+    // Fire the player's CHOSEN probe (Settings' probe chooser): a synth preset name or
+    // a decoded CC recording buffer. Defaults to the noise-burst clap.
+    clapRoom.clap(probeArg());
     onClap(); // count this fired clap toward the run's score (claps used)
     say('Clap! Listen to the room around you.');
     // Announce remaining budget eyes-free; unmanaged levels stay exactly as before.
