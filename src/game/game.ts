@@ -47,6 +47,9 @@ export interface MonsterSpawn {
 
 /** One beacon's placement + voice spec (a positioned, audible source). */
 export interface BeaconSpec {
+  /** Author id (from the level). Needed for SEQUENCE mode to order beacons; optional
+   *  for legacy/single-beacon levels that never reference beacons by id. */
+  id?: string;
   x: number; z: number; freq: number; sound?: BeaconPreset; soundUrl?: string;
 }
 
@@ -91,6 +94,13 @@ export interface GameLevel {
    * behaviour). 'absorber'/'escape' modes keep using `goalTarget`.
    */
   winTarget?: { x: number; z: number };
+  /**
+   * SEQUENCE (trail) mode: ordered beacon ids. Only the current beacon in the trail
+   * sounds; reaching it (its goalRadius) silences it and starts the next. The win is
+   * reaching the LAST — but the audio gating leads the player through all in order.
+   * Absent/short (<2) ⇒ normal all-beacons-audible behaviour. See tickSequence().
+   */
+  sequence?: string[];
   /** Win when within this many metres of the beacon. */
   goalRadius: number;
   /**
@@ -212,6 +222,13 @@ export interface GameCallbacks {
   /** Fired once when a monster physically reaches the player (lose state). */
   onCaught?: () => void;
   onProgress?: (distance: number) => void;
+  /**
+   * SEQUENCE (trail) mode: fired when the player reaches a trail beacon and the sound
+   * advances to the next. `index` is the new (1-based) position, `total` the trail
+   * length — so the host can speak "Beacon 2 of 4 — follow the next sound." Only fires
+   * in sequence levels.
+   */
+  onSequenceAdvance?: (index: number, total: number) => void;
   /** Fired whenever the player makes noise (step/stumble/bump). Foundation for monster AI. */
   onNoise?: (event: NoiseEvent) => void;
   /**
@@ -278,6 +295,14 @@ export class Game {
    * enterFreeRoam() from the post-win victory menu; never affects a normal run.
    */
   private freeRoam = false;
+  /**
+   * SEQUENCE (trail) mode runtime. `sequenceUnits` is the ordered beacon units the
+   * trail visits (resolved from level.sequence ids); `sequenceIndex` is the current
+   * target in it. Only the current unit sounds; reaching it advances the index and
+   * hands audibility to the next. Empty ⇒ not a sequence level (normal behaviour).
+   */
+  private sequenceUnits: BeaconUnit[] = [];
+  private sequenceIndex = 0;
   /**
    * Level identity + run-timing for SCORING. `levelId` labels the result (the host
    * passes the picked level's id/name); `startMs` is the monotonic level-start
@@ -403,6 +428,26 @@ export class Game {
       const u = this.makeBeaconUnit(spec);
       this.beacons.push(u);
       this.startBeaconSource(u);
+    }
+
+    // SEQUENCE (trail) mode: resolve the ordered unit list from the level's beacon ids
+    // and silence every beacon EXCEPT the first in the trail, so only the current goal
+    // sounds. Reaching it hands the sound to the next (tickSequence). No-op otherwise.
+    if (level.sequence && level.sequence.length >= 2) {
+      const byId = new Map(this.beacons.map((u) => [u.spec.id, u] as const));
+      this.sequenceUnits = level.sequence
+        .map((id) => byId.get(id))
+        .filter((u): u is BeaconUnit => u != null);
+      if (this.sequenceUnits.length >= 2) {
+        const active = this.sequenceUnits[0];
+        // Silence all trail beacons but the first (immediate — pre-play, no fade needed;
+        // set .value directly so it takes effect without waiting for a render).
+        for (const u of this.sequenceUnits) {
+          if (u !== active) u.output.gain.value = 0;
+        }
+      } else {
+        this.sequenceUnits = []; // fewer than 2 resolved → not a real trail
+      }
     }
 
     // Monsters: a PURE AI state + a looping growl through its own HrtfSource so it's
@@ -757,6 +802,28 @@ export class Game {
     }
     this.tickReactions(nowMs);
     this.tickMonsters(nowMs);
+    this.tickSequence();
+  }
+
+  /**
+   * SEQUENCE (trail) mode: when the player reaches the CURRENT trail beacon (within its
+   * goalRadius) and it isn't the last, fade it out and fade the NEXT one in, advancing
+   * the trail. The win itself is the normal checkWin against the last beacon's position
+   * (winTarget). No-op for non-sequence levels, once won/caught, or in free-roam.
+   */
+  private tickSequence() {
+    if (this.sequenceUnits.length < 2 || this.won || this.caught || this.freeRoam) return;
+    if (this.sequenceIndex >= this.sequenceUnits.length - 1) return; // last one → checkWin handles it
+    const active = this.sequenceUnits[this.sequenceIndex];
+    const d = this.player.distanceTo(active.spec.x, active.spec.z);
+    if (d > this.level.goalRadius) return;
+    // Reached this trail beacon: hand the sound to the next.
+    const next = this.sequenceUnits[this.sequenceIndex + 1];
+    const t = this.graph.ctx.currentTime;
+    active.output.gain.setTargetAtTime(0, t, 0.25);
+    next.output.gain.setTargetAtTime(1, t, 0.25);
+    this.sequenceIndex++;
+    this.cb.onSequenceAdvance?.(this.sequenceIndex, this.sequenceUnits.length);
   }
 
   /**

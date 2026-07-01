@@ -302,6 +302,17 @@ export interface Level {
    */
   requiredReactions?: number;
 
+  /**
+   * SEQUENCE (multi-beacon "trail") mode. An ordered list of beacon ids. When set (2+
+   * ids), only ONE beacon sounds at a time: the first sounds at start; reaching it (its
+   * goalRadius) silences it and starts the next; and so on. The WIN is simply reaching
+   * the LAST beacon in the sequence — but since each earlier beacon must be reached to
+   * reveal the next, the player is naturally led through all of them in order. Ids not
+   * in `beacons` are ignored; absent/short ⇒ normal (all beacons audible) behaviour.
+   * See game.ts. The editor exposes this ordering.
+   */
+  sequence?: string[];
+
   start: StartPoint;
   beacons: BeaconObj[];
   walls: WallObj[];
@@ -344,6 +355,8 @@ export function isLevel(v: unknown): v is Level {
   if (!Array.isArray(l.absorbers)) l.absorbers = [];
   if (!Array.isArray(l.ambience)) l.ambience = [];
   if (l.events != null && !Array.isArray(l.events)) l.events = [];
+  // Sequence (trail) mode is optional; a non-array value is dropped (⇒ normal behaviour).
+  if (l.sequence != null && !Array.isArray(l.sequence)) l.sequence = undefined;
   // Back-fill beacon sound preset: beacons with no `sound` get DEFAULT_BEACON_PRESET.
   if (Array.isArray(l.beacons)) {
     for (const b of l.beacons as BeaconObj[]) {

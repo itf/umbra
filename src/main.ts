@@ -831,6 +831,12 @@ startButton.addEventListener('click', async () => {
           : '';
         alert(`Decoy thrown.${left}`);
       },
+      // SEQUENCE (trail) mode: the sound just moved to the next beacon in the trail.
+      // Announce progress so an eyes-free player knows to follow the new sound.
+      onSequenceAdvance: (index, total) => {
+        if (index >= total) alert('Last beacon — follow the final sound to finish.');
+        else alert(`Beacon ${index} of ${total} reached. Follow the next sound.`);
+      },
       onProgress: (d) => {
         updateFootHints(d);
         // Companion milestone, keyed to the SAME coarse band as the status hint

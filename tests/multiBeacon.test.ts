@@ -288,4 +288,47 @@ d('Game multi-beacon construction (OfflineAudioContext)', () => {
     expect(caught).toBe(false);
     game.destroy();
   });
+
+  it('SEQUENCE mode: only the current trail beacon sounds; reaching it advances', () => {
+    const { graph, renderer } = makeGraph();
+    const base = emptyLevel('trail');
+    // Three beacons in a line; the trail visits b1 → b2 → b3. Generous radii.
+    const lvl: Level = {
+      ...base,
+      start: { x: 2, z: 8, yaw: 0 },
+      beacons: [
+        { id: 'b1', x: 4, z: 8, freq: 440, goalRadius: 1.0 },
+        { id: 'b2', x: 8, z: 8, freq: 480, goalRadius: 1.0 },
+        { id: 'b3', x: 12, z: 8, freq: 520, goalRadius: 1.0 },
+      ],
+      sequence: ['b1', 'b2', 'b3'],
+      room: { width: 16, depth: 16, height: 3 },
+    };
+    let won = false;
+    let advances: Array<[number, number]> = [];
+    const game = new Game(graph, renderer, loadLevel(lvl).game, {
+      onWin: () => { won = true; },
+      onSequenceAdvance: (i, n) => { advances.push([i, n]); },
+    });
+    const units = (game as any).beacons as any[];
+    const gainOf = (id: string) => units.find((u) => u.spec.id === id).output.gain.value;
+    // Only b1 audible at start; b2/b3 silenced.
+    expect(gainOf('b1')).toBeCloseTo(1);
+    expect(gainOf('b2')).toBeCloseTo(0);
+    expect(gainOf('b3')).toBeCloseTo(0);
+
+    const teleport = (x: number, z: number) => { (game as any).player.state.x = x; (game as any).player.state.z = z; };
+    // Reach b1 → advances to b2.
+    teleport(4, 8); game.tick(100);
+    expect(advances[0]).toEqual([1, 3]);
+    // Reach b2 → advances to b3 (the last).
+    teleport(8, 8); game.tick(200);
+    expect(advances[1]).toEqual([2, 3]);
+    expect(won).toBe(false); // not won until the LAST beacon is reached
+    // Reach b3 (= winTarget) and take a real step there → win.
+    teleport(12, 8);
+    game.step('R', 1000); game.step('L', 2000);
+    expect(won).toBe(true);
+    game.destroy();
+  });
 });

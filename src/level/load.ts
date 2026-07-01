@@ -487,11 +487,21 @@ export function loadLevel(level: Level, clutterOverride?: number): LoadedLevel {
   // sounds. The win is the `winPoint` area, decoupled from any beacon.
   const winFallback = level.winPoint ?? { x: level.room.width / 2, z: 1 };
   const beacon = first
-    ? { x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
+    ? { id: first.id, x: first.x, z: first.z, freq: first.freq, sound: first.sound, soundUrl: first.soundUrl }
     : { x: winFallback.x, z: winFallback.z, freq: 440 };
-  const beacons = level.beacons.map((b) => ({ x: b.x, z: b.z, freq: b.freq, sound: b.sound, soundUrl: b.soundUrl }));
-  // Decoupled win point: an explicit `winPoint` else the first beacon's position.
-  const winTarget = level.winPoint ?? { x: beacon.x, z: beacon.z };
+  const beacons = level.beacons.map((b) => ({ id: b.id, x: b.x, z: b.z, freq: b.freq, sound: b.sound, soundUrl: b.soundUrl }));
+  // SEQUENCE mode: an ordered list of beacon ids that actually exist, in order. Only
+  // valid with 2+ resolvable ids; otherwise it's normal (all-audible) behaviour.
+  const seqIds = (level.sequence ?? []).filter((id) => level.beacons.some((b) => b.id === id));
+  const sequence = seqIds.length >= 2 ? seqIds : undefined;
+  // The last beacon in the sequence, if any (its position is the win target below).
+  const lastSeqBeacon = sequence
+    ? level.beacons.find((b) => b.id === sequence[sequence.length - 1])
+    : undefined;
+  // Decoupled win point: an explicit `winPoint`, else in SEQUENCE mode the LAST beacon
+  // (the player is led to it through the trail), else the first beacon's position.
+  const winTarget = level.winPoint
+    ?? (lastSeqBeacon ? { x: lastSeqBeacon.x, z: lastSeqBeacon.z } : { x: beacon.x, z: beacon.z });
   // The player must turn to find the goal — never start facing straight at it. Rotate
   // the authored start yaw so the goal is ≥MIN_START_OFFSET off the heading (no-op if
   // it already is). Applies uniformly to builtin, saved, and sandbox levels.
@@ -503,6 +513,8 @@ export function loadLevel(level: Level, clutterOverride?: number): LoadedLevel {
     start: { x: level.start.x, z: level.start.z, yaw: startYaw },
     beacon,
     beacons,
+    // SEQUENCE (trail) mode: ordered beacon ids, one audible at a time (see game.ts).
+    sequence,
     winTarget,
     // Win radius: explicit `winRadius`, else the first beacon's goalRadius, else 0.9.
     goalRadius: level.winRadius ?? first?.goalRadius ?? DEFAULT_WIN_RADIUS,
