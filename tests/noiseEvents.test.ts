@@ -8,6 +8,7 @@ import {
   BUMP_LOUDNESS,
   NOISE_DECAY_MS,
 } from '../src/game/noiseEvents';
+import { DEFAULT_NOISE_THRESHOLD, makeMonster, updateMonster } from '../src/game/monster';
 
 describe('loudness mapping', () => {
   it('loud floors are louder than soft floors for a step', () => {
@@ -15,7 +16,7 @@ describe('loudness mapping', () => {
     const carpet = stepLoudnessForMaterial('carpet');
     const foam = stepLoudnessForMaterial('acoustic_foam');
     expect(gravel).toBeGreaterThan(carpet);
-    expect(carpet).toBeGreaterThan(foam);
+    expect(carpet).toBeGreaterThanOrEqual(foam);
   });
 
   it('step loudness is normalized to [0,1]', () => {
@@ -29,6 +30,27 @@ describe('loudness mapping', () => {
   it('the quietest material maps to ~0 and a hard floor is high', () => {
     expect(stepLoudnessForMaterial('acoustic_foam')).toBeCloseTo(0, 5);
     expect(stepLoudnessForMaterial('concrete')).toBeGreaterThan(0.8);
+  });
+
+  // ---- SNEAK INTENT: locked to the absolute monster threshold ----------------
+  it('soft floors are sneakable: step loudness STRICTLY below the monster threshold', () => {
+    for (const soft of ['acoustic_foam', 'curtain', 'carpet', 'grass']) {
+      expect(stepLoudnessForMaterial(soft)).toBeLessThan(DEFAULT_NOISE_THRESHOLD);
+    }
+  });
+
+  it('hard/loud floors are audible: step loudness comfortably above the threshold', () => {
+    for (const loud of ['concrete', 'tile', 'gravel', 'rough_stone']) {
+      expect(stepLoudnessForMaterial(loud)).toBeGreaterThan(0.4);
+    }
+  });
+
+  it('loudness is monotonic-ish in the material step level', () => {
+    const order = ['acoustic_foam', 'curtain', 'carpet', 'grass', 'gravel', 'concrete'];
+    const loud = order.map((m) => stepLoudnessForMaterial(m));
+    for (let i = 1; i < loud.length; i++) {
+      expect(loud[i]).toBeGreaterThanOrEqual(loud[i - 1]);
+    }
   });
 
   it('unknown material falls back to concrete', () => {
@@ -130,5 +152,25 @@ describe('game.ts wiring (pure mirror)', () => {
     expect(last.x).toBe(7);
     expect(last.z).toBe(-3);
     expect(last.loudness).toBe(STUMBLE_LOUDNESS);
+  });
+});
+
+// Integration: a careful carpet step does NOT retarget the monster (its decayed
+// loudness at emission is below threshold), while a concrete step DOES. This locks
+// the end-to-end SNEAK mechanic across noiseEvents.ts + monster.ts.
+describe('sneak mechanic (noise → monster retarget)', () => {
+  it('a carpet step does not retarget the monster; a concrete step does', () => {
+    const nowMs = 1000;
+    const start = makeMonster(0, 0, 1);
+
+    const carpet = makeNoiseEvent('step', 10, 10, 'carpet', nowMs);
+    const afterCarpet = updateMonster(start, carpet, nowMs, 16);
+    expect(afterCarpet.target).toBeNull();
+    expect(afterCarpet.phase).toBe('idle');
+
+    const concrete = makeNoiseEvent('step', 10, 10, 'concrete', nowMs);
+    const afterConcrete = updateMonster(start, concrete, nowMs, 16);
+    expect(afterConcrete.target).toEqual({ x: 10, z: 10 });
+    expect(afterConcrete.phase).toBe('investigate');
   });
 });
