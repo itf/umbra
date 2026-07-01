@@ -68,6 +68,51 @@ function vendorSteamWorkletBindings(): Plugin {
   };
 }
 
+/**
+ * SPA deep-link fallback for the MAIN app's client routes (/play, /level/<id>,
+ * /progress, /about, /credits, …). The app is a multi-page build (main / debug /
+ * editor / trainer), so Vite's built-in singleton SPA fallback isn't enough — and
+ * `vite dev` / `vite preview` would 404 a hard reload on /level/foo. This middleware
+ * rewrites navigation requests for unknown, extension-less paths to index.html so the
+ * client router can take over, while leaving the OTHER HTML entries (debug.html,
+ * editor.html, trainer.html), real asset files, and Vite's own internals alone.
+ *
+ * NOTE: for a production HOST (Cloudflare Pages / Netlify / etc.) the same rule must
+ * exist there (e.g. a redirect of /* → /index.html 200, excluding the other .html
+ * pages and /assets). The VitePWA `navigateFallback` below covers the offline/PWA case.
+ */
+function spaFallback(): Plugin {
+  const OTHER_PAGES = ['/debug', '/editor', '/trainer'];
+  const rewrite = (url: string | undefined): boolean => {
+    if (!url) return false;
+    const path = url.split('?')[0].split('#')[0];
+    // Leave Vite internals, real files (anything with a dot → has an extension), and
+    // the sibling HTML pages alone; only rewrite clean app-route paths.
+    if (path.startsWith('/@') || path.startsWith('/node_modules') || path.startsWith('/src')) {
+      return false;
+    }
+    if (path.startsWith('/assets') || path.startsWith('/vendor')) return false;
+    if (path.includes('.')) return false; // has a file extension → serve as-is
+    if (OTHER_PAGES.some((p) => path === p || path.startsWith(`${p}/`))) return false;
+    return true; // /, /play, /level/foo, /progress, /about, /credits …
+  };
+  return {
+    name: 'spa-deep-link-fallback',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.method === 'GET' && rewrite(req.url)) req.url = '/index.html';
+        next();
+      });
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.method === 'GET' && rewrite(req.url)) req.url = '/index.html';
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   // AudioWorklet + WASM both need to be served with correct MIME and cross-origin
   // isolation is helpful for high-resolution timers used in acoustics profiling.
@@ -114,6 +159,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    spaFallback(),
     copyAssets(),
     vendorSteamWorkletBindings(),
     VitePWA({
@@ -140,6 +186,16 @@ export default defineConfig({
         ],
       },
       workbox: {
+        // Client routing: an offline hard-load of /play, /level/x, /progress, /about
+        // serves the app shell (index.html) so the SPA router can render. Exclude the
+        // sibling multi-page HTML entries and asset paths so they resolve to their own
+        // files, not the shell.
+        navigateFallback: 'index.html',
+        navigateFallbackDenylist: [
+          /^\/(debug|editor|trainer)(\/|\.html|$)/,
+          /^\/assets\//,
+          /^\/vendor\//,
+        ],
         // HRTF datasets and audio are large; precache app shell, runtime-cache the rest.
         globPatterns: ['**/*.{js,css,html,wasm}'],
         // Don't precache the LAZY Steam Audio path (three.js ~700 KB + the 6 MB phonon
