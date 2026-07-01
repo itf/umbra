@@ -122,10 +122,19 @@ must expose this.
       ~1/6 silence catch-trials, placed first so it interleaves early). PM P1.
 - [x] Landing "Train" opens the trainer page directly.
 
+## DONE (probe chooser + /train + demo wave)
+- [x] UNIFIED PROBE CHOOSER: pick your echo — synth presets + CC recordings — in
+      Settings (dropdown) AND the trainer; ClapRoom.clap takes a probe (name|buffer);
+      probeCatalog + clicksManifest shared modules. Clicks now actually usable as probes.
+- [x] /train route → redirects to trainer.html (clean URL; trainer stays its own entry).
+- [x] Daily Challenge hidden (low value); interactive "which side?" demo on the landing
+      (built-in HRTF panner, verified in-browser).
+- [x] Fixed stale Begin-screen key hint (D not L; +down-arrow probe).
+
 ## STILL OPEN (next)
-- [ ] Real /train route (fold trainer.html into the SPA) — deferred (separate Vite entry).
 - [ ] Gate localization exercises behind detection mastery (P2).
 - [ ] Retire/annotate stale docs/product/ux-audit.md.
+- [ ] (Optional) fold trainer fully into the SPA instead of a redirect.
 
 ## Probe sound assets follow-up
 - [x] ffmpeg processing done (trim/mono/48k/normalize, ogg only).
