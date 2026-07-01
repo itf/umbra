@@ -317,6 +317,13 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .hrtf-viz-note { font-size: 0.8rem; opacity: 0.7; text-align: center; margin: 0; }
 .settings-hrtf-load { display: flex; gap: 8px; margin-top: 6px; }
 .settings-hrtf-load-input { flex: 1 1 auto; min-width: 0; }
+.dir-picker { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 8px 0; }
+.dir-picker-columns { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; justify-content: center; }
+.dir-compass { touch-action: none; cursor: crosshair; background: rgba(255,255,255,0.03); border-radius: 50%; }
+.dir-compass:focus { outline: 2px solid var(--accent); }
+.dir-height { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.dir-height-slider { writing-mode: vertical-lr; direction: rtl; height: 160px; width: 28px; }
+.dir-readout { font-size: 0.95rem; opacity: 0.85; margin: 0; text-align: center; }
 
 #calibration-screen, #tutorial-screen { max-width: 560px; }
 .tut-body { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 8px 0; }

@@ -24,11 +24,11 @@ import { NEUTRAL_PERSONALIZATION, type HrtfPersonalization } from '../engine/hrt
 import { Staircase, type StaircaseTrial } from './hrtfStaircase';
 import { EXERCISES, STAIRCASE_CONFIG, type Exercise, type ExerciseParam } from './hrtfExercises';
 import { mountVisualizer } from './hrtfVisualizer';
+import { mountDirectionPicker, type DirectionPicker } from './hrtfDirectionPicker';
 import {
   makeTestDirections,
   dirToPosition,
   angularError,
-  screenToDirection,
   decideWinner,
   type Direction,
   type Attempt,
@@ -156,11 +156,24 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     return b;
   }
 
+  /** The base URL the current A/B graph was built for, so a base-head switch rebuilds. */
+  let abBuiltForUrl: string | null = null;
+
   async function ensureRenderers(a: HrtfPersonalization, b: HrtfPersonalization) {
-    // (Re)build both renderers with the two candidate warps. Building is cheap
-    // relative to a trial (a few hundred ms of min-phase precompute) and only
-    // happens once per trial, so tear down + rebuild keeps the code simple and
-    // guarantees each candidate is exactly its warp.
+    // Build the two renderers + graph ONCE, then across trials just HOT-SWAP each
+    // candidate's warp via setPersonalization (re-warps the HRIR table and posts it to
+    // the EXISTING worklet — no new AudioWorkletNode). Previously this tore down and
+    // rebuilt two multi-MB worklets EVERY trial; disconnected worklet processors linger
+    // on the audio thread faster than they're GC'd, so after a handful of trials the
+    // audio thread starved and the tuner went silent. Reuse fixes that (same leak-free
+    // pattern the free-play knobs use). We keep TWO renderers because the 'ab' exercises
+    // genuinely play both A and B; 'guess' only plays B but reuse makes the second one
+    // free to keep around.
+    if (srcA && srcB && abBuiltForUrl === baseUrl()) {
+      rendererA!.setPersonalization(a);
+      rendererB!.setPersonalization(b);
+      return;
+    }
     teardownAudio();
     const set = (await HrtfRenderer.create(ctx, baseUrl())).set;
     rendererA = await InterpolatingHrtfRenderer.fromSetAsync(ctx, set, { personalize: a });
@@ -181,6 +194,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     gainA.connect(gate);
     gainB.connect(gate);
     gate.connect(dest);
+    abBuiltForUrl = baseUrl();
   }
 
   /** Select which warp (A or B) the next sweep uses; instant while gated silent. */
@@ -379,6 +393,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     gainA = gainB = null;
     gate = null;
     rendererA = rendererB = null;
+    abBuiltForUrl = null;
   }
 
   function dispose() {
@@ -761,6 +776,9 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let locSrc: ReturnType<InterpolatingHrtfRenderer['createSource']> | null = null;
   let locGain: GainNode | null = null;
   let locViz: ReturnType<typeof mountVisualizer> | null = null;
+  let locPicker: DirectionPicker | null = null;
+  /** Base URL the localization graph was built for (rebuild on a base switch). */
+  let locBuiltForUrl: string | null = null;
   let locExIdx = 0;
   let locTrial: StaircaseTrial | null = null;
   let locAttempts: Attempt[] = [];
@@ -775,11 +793,22 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     try { locSrc?.disconnect(); } catch { /* noop */ }
     try { locGain?.disconnect(); } catch { /* noop */ }
     locViz?.dispose();
-    locSrc = null; locGain = null; locRenderer = null; locViz = null;
+    locPicker?.dispose();
+    locSrc = null; locGain = null; locRenderer = null; locViz = null; locPicker = null;
+    locBuiltForUrl = null;
   }
 
-  /** (Re)build one renderer+source for the localization probe with warp `warp`. */
+  /** Ensure ONE renderer+source for the localization probe warped to `warp`. Built once
+   *  then HOT-SWAPPED per attempt via setPersonalization — building a fresh worklet each
+   *  attempt leaked multi-MB processors on the audio thread and starved it after a few
+   *  trials (the reported "stops working"). ensurePcaAndApply also loads/caches the PCA
+   *  model so PCA-weight candidates re-warp synchronously on later attempts. */
   async function locEnsureRenderer(warp: HrtfPersonalization) {
+    if (locSrc && locRenderer && locBuiltForUrl === baseUrl()) {
+      await locRenderer.ensurePcaAndApply(warp);
+      return;
+    }
+    // Different base (or first build): tear down the old graph, build fresh.
     if (locSrc) { try { noise.disconnect(locSrc.input); } catch { /* noop */ } }
     try { locSrc?.disconnect(); } catch { /* noop */ }
     try { locGain?.disconnect(); } catch { /* noop */ }
@@ -792,6 +821,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     noise.connect(locSrc.input);
     locSrc.output.connect(locGain);
     locGain.connect(dest);
+    locBuiltForUrl = baseUrl();
   }
 
   function locStaircaseFor(ex: Exercise): Staircase {
@@ -820,18 +850,27 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     // moving sweep for a "where is it" judgement).
     locSrc?.setPosition(tx, ty, tz);
     if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(0.5, t + 0.03); }
-    p.textContent = 'Where did the sound come from? Click on the diagram to point.';
-    deps.say('Where did it come from? Point on the diagram.');
+    p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
+    deps.say('Where did it come from? Set the direction and height, then confirm.');
     const stop = setTimeout(() => {
       if (locGain) { const t = ctx.currentTime; locGain.gain.setTargetAtTime(0.0001, t, 0.05); }
     }, 1500);
     seqTimers.push(stop);
+    // Fresh picker for this answer (disposed + rebuilt each trial so state resets).
+    locPicker?.dispose();
+    locPicker = mountDirectionPicker(controls, { onCommit: onPickerCommit, say: deps.say });
   }
 
-  /** The user clicked the diagram: record the angular error, advance the trial. */
-  function locOnPick(sx: number, sy: number, vcfg: { w: number; h: number; scale: number }) {
+  /** Route a committed pick to whichever stage is active (localization vs PCA). */
+  let pickTarget: 'loc' | 'pca' = 'loc';
+  function onPickerCommit(guess: Direction) {
+    locPicker?.dispose(); locPicker = null; // one answer per trial
+    if (pickTarget === 'pca') pcaOnPick(guess); else locOnPick(guess);
+  }
+
+  /** The user committed a direction (compass + height): score it, advance the trial. */
+  function locOnPick(guess: Direction) {
     if (!locTarget || !locViz) return;
-    const guess = screenToDirection(sx, sy, vcfg);
     const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
     locViz.setGuess({ x: gx, y: gy, z: gz });
     locViz.showSource(true); // reveal the truth so the user sees how close they were
@@ -896,12 +935,12 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     teardownFreePlay();
     h.textContent = 'Point to the sound';
     p.textContent =
-      'A sound will play somewhere around you. Point to where you heard it by clicking the diagram — front is the bottom of the ring, higher up on screen is farther up/behind. We measure how close you get with two different tunings and keep the one that helps you most. This takes a couple of minutes.';
+      'A sound will play somewhere around you. Say where it came from using TWO controls: the COMPASS (which way around you — front, right, behind, left) and the HEIGHT slider (below, ear level, or overhead). Then press “This is where it came from”. We keep whichever tuning helps you locate best. A couple of minutes.';
     const vizWrap = document.createElement('div');
     vizWrap.className = 'hrtf-viz-wrap';
-    locViz = mountVisualizer(vizWrap, { onPick: locOnPick });
+    locViz = mountVisualizer(vizWrap); // display only; input is the picker below
     controls.append(vizWrap);
-    const begin = bigButton('Begin', () => { startNoise(); locExIdx = 0; locStaircases.clear(); void locAdvanceExercise(); }, true);
+    const begin = bigButton('Begin', () => { startNoise(); pickTarget = 'loc'; locExIdx = 0; locStaircases.clear(); void locAdvanceExercise(); }, true);
     const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
     controls.append(begin, back);
     begin.focus();
@@ -937,9 +976,9 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       'Same as before — a sound plays around you and you point to where you heard it. Now we morph your 3D audio along the ways real human ears differ, keeping whatever helps you locate sounds best. A couple of minutes.';
     const vizWrap = document.createElement('div');
     vizWrap.className = 'hrtf-viz-wrap';
-    locViz = mountVisualizer(vizWrap, { onPick: pcaOnPick });
+    locViz = mountVisualizer(vizWrap); // display only; input is the picker
     controls.append(vizWrap);
-    const begin = bigButton('Begin', () => { startNoise(); pcaIdx = 0; pcaStaircases.clear(); void pcaAdvance(); }, true);
+    const begin = bigButton('Begin', () => { startNoise(); pickTarget = 'pca'; pcaIdx = 0; pcaStaircases.clear(); void pcaAdvance(); }, true);
     const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
     controls.append(begin, back);
     begin.focus();
@@ -984,9 +1023,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 
   /** Pointing handler for the PCA stage — scores like localization, but the winner
    *  advances the PCA weight staircase (not a parametric one). */
-  function pcaOnPick(sx: number, sy: number, vcfg: { w: number; h: number; scale: number }) {
+  function pcaOnPick(guess: Direction) {
     if (!locTarget || !locViz) return;
-    const guess = screenToDirection(sx, sy, vcfg);
     const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
     locViz.setGuess({ x: gx, y: gy, z: gz });
     locViz.showSource(true);
