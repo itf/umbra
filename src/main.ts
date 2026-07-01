@@ -1,4 +1,5 @@
 import { startAudio, getGraph, type AudioGraph } from './engine/audioGraph';
+import { assetUrl } from './engine/baseUrl';
 import { HrtfRenderer } from './engine/hrtf/renderer';
 import type { InterpolatingHrtfRenderer } from './engine/hrtf/interpolatingRenderer';
 import { Compass } from './game/compass';
@@ -64,7 +65,7 @@ import {
 import { selectBackendFromSearch } from './engine/steamaudio/toggle';
 import type { SpatialBackend } from './game/game';
 
-const HRTF_URL = '/assets/hrtf/sadie_h3.hrtf';
+const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
 
 const statusEl = document.getElementById('status')!;
 const alertsEl = document.getElementById('alerts')!;
@@ -1772,9 +1773,18 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       const host = document.getElementById('settings-screen');
       if (!host) return;
       host.hidden = false;
+      // PAUSE the room while tuning: mute the master (which the running game's beacon /
+      // monsters / reflections all feed) so it doesn't muddy the calibration probe. The
+      // probe is routed to graph.limiter — the node AFTER master — so it still plays
+      // through the safety chain while everything on master is silenced. Restored on done.
+      const t = graph.ctx.currentTime;
+      graph.master.gain.setTargetAtTime(0, t, 0.02);
+      const restoreRoom = () => {
+        setMasterVolume(graph, settings.masterVolume());
+      };
       mountHrtfTuning(host, {
         ctx: graph.ctx,
-        dest: graph.master,
+        dest: graph.limiter, // bypass the muted master so only the probe is heard
         hrtfUrl: HRTF_URL,
         say,
         alert,
@@ -1786,6 +1796,7 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
         baseHrtfId: settings.hrtfBase(),
         saveBaseHrtf: (id) => settings.setHrtfBase(id),
         onDone: () => {
+          restoreRoom();
           setupSettings(graph, []);
           settingsPanel?.open();
         },
