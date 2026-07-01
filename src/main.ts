@@ -275,10 +275,27 @@ async function buildSteamBackend(
     const reflectionWetLevel = settings.steamReflectionWet();
     const reflectionBusLevel = settings.steamReflectionBus();
     const reverbBusLevel = settings.steamReverbBus();
+    // If the user has PERSONALIZED their head response, bake it into an in-memory SOFA
+    // and feed THAT to Steam as its custom HRTF (so the primary engine uses their own
+    // ears). Best-effort: any failure falls back to the static SADIE / generic HRTF.
+    // Only attempted when the SOFA path is enabled (the fork is the resolved dep) and
+    // the personalization is non-neutral — a neutral warp adds nothing over SADIE.
+    let personalizedSofa: ArrayBuffer | undefined;
+    if (wantSofa && !isNeutralPersonalization(settings.hrtfPersonalization())) {
+      try {
+        const { buildPersonalizedSofa } = await import('./engine/hrtf/personalizedSofa');
+        const baseUrl = baseHrtfById(settings.hrtfBase()).url;
+        personalizedSofa = await buildPersonalizedSofa(baseUrl, settings.hrtfPersonalization());
+        console.info('[papasangre] Steam using PERSONALIZED HRTF (baked from calibration).');
+      } catch (e) {
+        console.warn('[papasangre] personalized SOFA build failed — using default HRTF.', e);
+      }
+    }
     const steam = await SteamAudioBackend.create(ctx, master, {
       hrtf: true,
       scattering: SCATTER,
       sofaHrtf: wantSofa,
+      personalizedSofa,
       headTrackedReflections: true,
       reflectionOrder: settings.steamReflectionOrder(),
       reflectionWetLevel,

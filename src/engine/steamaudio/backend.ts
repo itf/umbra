@@ -87,6 +87,15 @@ export interface SteamBackendOpts {
    */
   sofaHrtf?: boolean;
   /**
+   * A user-PERSONALIZED HRTF as an in-memory SOFA (SimpleFreeFieldHRIR @ 48 kHz),
+   * produced by the calibration flow (warp → reconstruct → writeSofa). When present it
+   * is fed to Steam Audio's custom-HRTF API INSTEAD of fetching the static SADIE file,
+   * so the PRIMARY (Steam) engine renders with the user's own tuned ears. Requires the
+   * SOFA-capable fork (same gate as `sofaHrtf`); takes precedence over it. Clearing the
+   * user's personalization simply omits this, reverting to the default HRTF.
+   */
+  personalizedSofa?: ArrayBuffer;
+  /**
    * Render the reflected/reverberant field as a HEAD-TRACKED Ambisonic decode
    * (order-1, `irTaps`-tap convolution) instead of the published wrapper's
    * mono-duplicated, dead-center parametric reverb. With this on, reflections rotate
@@ -253,7 +262,14 @@ export class SteamAudioBackend {
     // keep `npm install` against the published package working. Enable it (via
     // `?engine=steam-sofa`) only when the SOFA-capable fork is the resolved dependency.
     // Even then it's best-effort: a failed fetch falls back to the generic HRTF.
-    const hrtf = opts.sofaHrtf ? await loadSofaHrtf() : null;
+    // Prefer the user's PERSONALIZED SOFA (from calibration) when supplied; otherwise
+    // fall back to fetching our static SADIE SOFA; otherwise the generic HRTF. Both
+    // custom paths need the SOFA-capable fork, so both honour the `sofaHrtf` gate.
+    const hrtf: SofaHrtfSetting = opts.personalizedSofa
+      ? { type: 'sofa', data: opts.personalizedSofa }
+      : opts.sofaHrtf
+        ? await loadSofaHrtf()
+        : null;
     // Head-tracked Ambisonic reflections (fork-only). Spread in only when opted in so an
     // unknown `headTracked`/`irTaps` can't reach (and confuse) the published package on
     // the non-opt-in path — same gating discipline as `sofaHrtf`. With `maxOrder:1` the
