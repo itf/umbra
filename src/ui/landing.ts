@@ -39,8 +39,13 @@ export function renderLandingScreen(
   container.replaceChildren();
 
   const h1 = document.createElement('h1');
-  h1.textContent = 'Audio Navigator';
+  h1.textContent = 'Umbra';
   container.appendChild(h1);
+
+  const tagline = document.createElement('p');
+  tagline.className = 'landing-tagline';
+  tagline.textContent = 'Learn to see with sound. Human echolocation training.';
+  container.appendChild(tagline);
 
   // Hero: what the project is, in one honest sentence.
   const hero = document.createElement('p');
@@ -160,7 +165,7 @@ export function renderLandingScreen(
   // Eyes-free: land focus on the first action, then announce the overview (rides TTS).
   playBtn.focus();
   opts.say(
-    'Audio Navigator. An eyes-free binaural audio game and echolocation trainer. ' +
+    'Umbra. Learn to see with sound. An eyes-free binaural audio game and echolocation trainer. ' +
       'Put on headphones. Choose Play to pick a level, or Train for echolocation exercises.',
   );
 

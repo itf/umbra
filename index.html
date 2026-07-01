@@ -7,7 +7,11 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#000000" />
-    <title>Papa Sangre — Audio Navigator</title>
+    <title>Umbra — learn to see with sound</title>
+    <meta
+      name="description"
+      content="Umbra — learn to see with sound. Human echolocation training: an eyes-free binaural audio game and echolocation trainer."
+    />
     <link rel="stylesheet" href="/src/ui/styles.css" />
   </head>
   <body>
@@ -15,7 +19,7 @@
          a fallback / control surface; all state is also announced via ARIA. -->
     <a class="skip-link" href="#step-left">Skip to controls</a>
 
-    <main id="app" aria-label="Audio navigation game">
+    <main id="app" aria-label="Umbra — audio navigation game">
       <!-- Polite region for status; assertive for stumbles/falls/goal. -->
       <div id="status" class="sr-region" aria-live="polite" aria-atomic="true"></div>
       <div id="alerts" class="sr-region" role="alert" aria-live="assertive"></div>
@@ -24,7 +28,7 @@
            eyes-free audio game AND an echolocation trainer, with Play / Train
            actions. Content mounted by src/ui/landing.ts. Shown for a first-time
            visit at "/"; deep links (/play, /level/x, /progress) bypass it. -->
-      <section id="landing-screen" aria-label="About Audio Navigator" hidden></section>
+      <section id="landing-screen" aria-label="About Umbra" hidden></section>
 
       <!-- "Types of clicks" help page. Content mounted by src/ui/clickTypes.ts
            (mountClickTypes / showClickTypes). Wire from a "/clicks" route or a
@@ -38,7 +42,7 @@
            Pick a level, then the Begin screen appears. Eyes-free: real buttons with
            descriptive labels under headings. -->
       <section id="picker-screen" aria-label="Choose a level" hidden>
-        <h1>Audio Navigator</h1>
+        <h1>Umbra</h1>
         <p>Choose a level to play. Put on headphones first.</p>
         <div id="level-picker" aria-label="Level list"></div>
         <nav class="page-links" aria-label="Other pages">
@@ -66,7 +70,7 @@
       <section id="tutorial-screen" aria-label="Tutorial" hidden></section>
 
       <section id="start-screen" aria-label="Start" hidden>
-        <h1>Audio Navigator</h1>
+        <h1>Umbra</h1>
         <p id="start-level-name" class="start-level"></p>
         <p>
           Put on headphones. Close your eyes. Walk to the beacon by sound alone.

@@ -166,10 +166,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['assets/**/*'],
       manifest: {
-        name: 'Papa Sangre — Audio Navigator',
-        short_name: 'AudioNav',
+        name: 'Umbra — learn to see with sound',
+        short_name: 'Umbra',
         description:
-          'Navigate by sound alone. An audio-only game and echolocation trainer.',
+          'Umbra — learn to see with sound. Human echolocation training: an audio-only game and echolocation trainer.',
         theme_color: '#000000',
         background_color: '#000000',
         display: 'standalone',

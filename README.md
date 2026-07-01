@@ -1,4 +1,7 @@
-# Papa Sangre–style Audio Navigator (PWA)
+# Umbra — learn to see with sound (PWA)
+
+Human echolocation training, disguised as a game. (Movement and mechanics are
+inspired by the iOS game *Papa Sangre*.)
 
 An audio-only navigation game and echolocation trainer, played by sound through
 headphones. Walk to a beacon using binaural spatial audio; estimate room size and
