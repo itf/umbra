@@ -257,6 +257,24 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
   background: transparent; border: 1px solid #555; color: #ccc;
   padding: 8px 12px; font-size: 0.9rem;
 }
+/* Victory menu: a centered overlay of "what next?" choices shown after a win.
+   Fixed over the game screen so it's the clear focus; hidden until main.ts un-hides
+   it. Buttons are large, stacked, and keyboard-operable (first one is auto-focused). */
+.victory-menu:not([hidden]) {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0,0,0,0.88);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px;
+}
+.victory-menu .victory-title {
+  color: #eee; font-size: 1.6rem; margin: 0 0 8px;
+}
+.victory-menu button {
+  width: min(340px, 84vw);
+  background: #161616; border: 1px solid #555; color: #eee;
+  padding: 14px 20px; border-radius: 8px; font-size: 1.1rem; cursor: pointer;
+}
+.victory-menu button:hover, .victory-menu button:focus { border-color: #2f7d45; }
 /* The settings section, when shown, fixed-overlays everything. */
 #settings-screen:not([hidden]) {
   position: fixed; inset: 0; z-index: 50;

@@ -245,4 +245,47 @@ d('Game multi-beacon construction (OfflineAudioContext)', () => {
     expect(game.reactionScore().misses).toBe(0);
     game.destroy();
   });
+
+  it('free-roam (Explore) freezes monsters: cannot be caught after a win', () => {
+    const { graph, renderer } = makeGraph();
+    // A monster level whose win point is the start, so the first real step wins with
+    // the monster still far away (no catch during the winning step).
+    const base = emptyLevel('roam');
+    // Start ON the (single) beacon at ROOM CENTRE (so the winning step stays inside
+    // the room, not through a corner wall), with a generous goal radius so the step
+    // still lands inside it. Monster starts in a far corner (no catch during the win).
+    const lvl: Level = {
+      ...base,
+      beacons: [{ ...base.beacons[0], x: 6, z: 8, goalRadius: 5.0 }],
+      start: { x: 6, z: 8, yaw: 0 },
+      monsters: [{ id: 'm', x: 1, z: 1, speed: 1, sound: 'growl' }],
+    };
+    // catchRadius lives on the GameLevel (not the JSON schema); set it small so the
+    // teleport-onto-player below is unambiguously inside it.
+    const gl = { ...loadLevel(lvl).game, catchRadius: 0.5 };
+    let won = false;
+    let caught = false;
+    const game = new Game(graph, renderer, gl, {
+      onWin: () => { won = true; },
+      onCaught: () => { caught = true; },
+    });
+    // Win in place: alternate steps until one lands cleanly on the goal (each is
+    // within the generous radius). Cadence-spaced so they register as steps, not
+    // stumbles.
+    game.step('R', 0);
+    game.step('L', 1000);
+    game.step('R', 2000);
+    expect(won).toBe(true);
+    expect(caught).toBe(false);
+    // Enter Explore, then teleport the monster ONTO the player — well inside catchRadius.
+    game.enterFreeRoam();
+    const monster = (game as any).monsters[0];
+    const p = game.debugState().player;
+    monster.state.x = p.x; monster.state.z = p.z;
+    // Ticking would normally fire the catch test; free-roam must skip tickMonsters.
+    game.tick(2000);
+    game.tick(3000);
+    expect(caught).toBe(false);
+    game.destroy();
+  });
 });

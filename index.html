@@ -79,6 +79,17 @@
       <section id="game-screen" hidden aria-label="Game">
         <button id="open-settings" class="settings-open" type="button" aria-label="Settings">⚙ Settings</button>
         <button id="game-back-to-picker" class="game-back" type="button" aria-label="Back to level select (press B)">← Levels</button>
+        <!-- VICTORY MENU: shown after a win (main.ts un-hides it). Eyes-free choices
+             for what to do next: replay, free-roam, advance, or go harder. Hidden
+             until a win; the first button is focused so it's operable by keyboard. -->
+        <div id="victory-menu" class="victory-menu" role="group" aria-label="Level complete — what next?" hidden>
+          <p class="victory-title">Level complete!</p>
+          <button id="victory-repeat" type="button">Repeat this level</button>
+          <button id="victory-explore" type="button">Explore (free roam)</button>
+          <button id="victory-next" type="button">Next level</button>
+          <button id="victory-harder" type="button">Harder version</button>
+          <button id="victory-levels" type="button">Level select</button>
+        </div>
         <div id="turn-pad"><!-- compass dial mounts here --></div>
 
         <!-- Echo: small button between the compass and the feet. -->

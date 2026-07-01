@@ -22,6 +22,7 @@ import {
 } from './game/heading';
 import { currentEditorLevel, loadLevel, boxRoomWalls, wallsAt, diffractionEdgesAt, liveRebuildSignature } from './level/load';
 import { getBuiltin, builtinLevels } from './level/builtins';
+import { repeatSelection, nextSelection, harderSelection } from './game/nextRun';
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
@@ -358,6 +359,12 @@ let LEVEL: GameLevel = {
 let SRC_LEVEL: Level | null = null;
 /** The picked level's display name — used as the SCORE id (per-level bests). */
 let LEVEL_ID = 'default-room';
+/**
+ * The selection that launched the currently-applied level, or null for the default
+ * room. Retained so the post-win victory menu can compute Repeat / Next / Harder
+ * (see game/nextRun.ts) — those re-run the SAME kind of level the player just beat.
+ */
+let LAST_LAUNCH: PickerSelection | null = null;
 let HAS_MOVING_WALLS = false;
 // Per-level speed of sound (m/s), or undefined ⇒ engine default 343. Threaded
 // into BOTH the clap (echo timing) and the renderer (live propagation + Doppler).
@@ -386,7 +393,7 @@ function stopActiveRun() {
  * picked (or preselected via ?level=…), BEFORE the Begin gesture — Begin still
  * owns the user-gesture-to-start-audio step.
  */
-function applyLevel(level: Level, displayName: string) {
+function applyLevel(level: Level, displayName: string, launch: PickerSelection | null = null) {
   // CLUTTER: the settings slider only ADDS to a level's own clutter (max), so a level
   // that authored clutter is never made more live by a low slider. 0 ⇒ no extra.
   const effClutter = Math.max(level.clutter ?? 0, settings.clutter());
@@ -405,6 +412,7 @@ function applyLevel(level: Level, displayName: string) {
   LEVEL.acousticEdges = EDGES;
   LEVEL.acousticScattering = SCATTER;
   LEVEL_ID = displayName;
+  LAST_LAUNCH = launch;
   if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
 }
 
@@ -540,6 +548,27 @@ async function resolveSelection(sel: PickerSelection): Promise<Level | undefined
   return loadSavedLevel(sel.ref);
 }
 
+/**
+ * Launch a picker selection: for builtins, route (deep-linkable ?level=<id>, so
+ * reload restores it and Back returns to the picker); for saved/generated levels
+ * apply directly (no stable URL id — transient, as before) then gate onboarding →
+ * Begin. Factored out of the picker's onSelect so the victory menu (Repeat / Next /
+ * Harder) can re-launch the same way the picker does.
+ */
+async function launchSelection(sel: PickerSelection) {
+  if (sel.source === 'builtin') {
+    navigate({ screen: 'level', level: sel.ref });
+    return;
+  }
+  const level = await resolveSelection(sel);
+  if (!level) {
+    alert(`Could not load "${sel.label}".`);
+    return;
+  }
+  applyLevel(level, sel.label, sel);
+  gateOnboarding(showStartScreen);
+}
+
 async function mountPicker() {
   const host = document.getElementById('level-picker');
   if (!host) return;
@@ -552,24 +581,7 @@ async function mountPicker() {
   renderLevelPicker(host, {
     builtins: builtinLevels(),
     savedNames: saved,
-    onSelect: async (sel) => {
-      // Builtin levels are deep-linkable (?level=<id>), so route them — this adds a
-      // history entry + URL so reload restores the level and Back returns to the
-      // picker. Saved/generated levels have no stable URL id, so apply them directly
-      // (transient; reload falls back to the picker, as before).
-      if (sel.source === 'builtin') {
-        navigate({ screen: 'level', level: sel.ref });
-        return;
-      }
-      const level = await resolveSelection(sel);
-      if (!level) {
-        alert(`Could not load "${sel.label}".`);
-        return;
-      }
-      applyLevel(level, sel.label);
-      // First-run onboarding (calibration → tutorial) runs once, then Begin.
-      gateOnboarding(showStartScreen);
-    },
+    onSelect: (sel) => { void launchSelection(sel); },
     // Surface each level's stored best ("Best: 42 seconds, 6 claps"). The score is
     // keyed by the level's display label (the same id applyLevel records under).
     bestFor: (item) => summarizeBest(scoreStore.best(item.label)) || undefined,
@@ -602,7 +614,7 @@ function loadLevelById(id: string): boolean {
   } else {
     const builtin = getBuiltin(id);
     if (!builtin) return false;
-    applyLevel(builtin, builtin.name);
+    applyLevel(builtin, builtin.name, { source: 'builtin', ref: id, label: builtin.name });
   }
   // First-run onboarding (calibration → tutorial) runs once, then the Begin screen.
   gateOnboarding(showStartScreen);
@@ -743,6 +755,12 @@ startButton.addEventListener('click', async () => {
             : 'You reached the beacon. Level complete!');
         // Companion arrival line — sequenced AFTER the win alert (never clobbers it).
         companion.win();
+        // Offer "what next?" (repeat / explore / next / harder / levels). Delayed past
+        // the win + score alerts so it doesn't clobber them, and focused for eyes-free
+        // keyboard use. Cancellable: if the player leaves (B / navigate) before it
+        // fires, teardown clears it so it can't pop over the picker. `victoryTimer` +
+        // `showVictoryMenu` are defined in the run setup below.
+        victoryTimer = setTimeout(() => showVictoryMenu(), 2600);
       },
       // SCORING (additive, after onWin): persist the completion + announce a new best
       // or a comparison to the standing best. Never alters the win path above.
@@ -858,6 +876,68 @@ startButton.addEventListener('click', async () => {
       alert('Leaving the level. Back to level select.');
       navigate({ screen: 'picker' });
     };
+
+    // --- VICTORY MENU: shown after a win (from onWin, above). Offers Repeat / Explore
+    // / Next / Harder / Level-select. Repeat/Next/Harder re-launch a computed
+    // PickerSelection (see game/nextRun.ts) exactly as the picker would; Explore
+    // un-freezes THIS run in place with the goal disabled (free roam). Wired here so it
+    // has the run's `game`/`ended`/`backToPicker` in scope; torn down with the run. ---
+    const victoryMenu = document.getElementById('victory-menu');
+    // The delayed "show menu" timer (set in onWin). Held so teardown can cancel it —
+    // otherwise leaving within 2.6s of a win pops the menu over the next screen.
+    let victoryTimer: ReturnType<typeof setTimeout> | null = null;
+    const hideVictoryMenu = () => { if (victoryMenu) victoryMenu.hidden = true; };
+    // Re-launch a computed selection; a null selection (e.g. Harder off a showcase
+    // builtin) has no meaningful target — say so and leave the menu up.
+    const launchNext = (sel: PickerSelection | null, noneMsg: string) => {
+      if (!sel) { alert(noneMsg); return; }
+      hideVictoryMenu();
+      void launchSelection(sel);
+    };
+    const builtins = builtinLevels();
+    const onVRepeat = () => { if (LAST_LAUNCH) launchNext(repeatSelection(LAST_LAUNCH), ''); };
+    const onVNext = () =>
+      launchNext(LAST_LAUNCH ? nextSelection(LAST_LAUNCH, builtins) : null, 'No next level for this one.');
+    const onVHarder = () =>
+      launchNext(LAST_LAUNCH ? harderSelection(LAST_LAUNCH, builtins) : null, 'This is already the hardest version.');
+    const onVExplore = () => {
+      hideVictoryMenu();
+      ended = false; // un-freeze input for free roam
+      game.enterFreeRoam();
+      alert('Explore mode. The goal is off — walk the room freely. Press B to leave.');
+    };
+    // showVictoryMenu is referenced by onWin (above) via setTimeout; hoisted so the
+    // forward reference resolves. Only shows for a WIN (never after being caught).
+    function showVictoryMenu() {
+      if (!victoryMenu || outcome !== 'won') return;
+      // Next/Harder may have no target for saved/showcase levels — hide rather than
+      // offer a dead button. Repeat/Explore/Levels always apply.
+      const nextBtn = document.getElementById('victory-next') as HTMLButtonElement | null;
+      const harderBtn = document.getElementById('victory-harder') as HTMLButtonElement | null;
+      if (nextBtn) nextBtn.hidden = !(LAST_LAUNCH && nextSelection(LAST_LAUNCH, builtins));
+      if (harderBtn) harderBtn.hidden = !(LAST_LAUNCH && harderSelection(LAST_LAUNCH, builtins));
+      victoryMenu.hidden = false;
+      (document.getElementById('victory-repeat') as HTMLElement | null)?.focus();
+    }
+    const vRepeat = document.getElementById('victory-repeat');
+    const vExplore = document.getElementById('victory-explore');
+    const vNext = document.getElementById('victory-next');
+    const vHarder = document.getElementById('victory-harder');
+    const vLevels = document.getElementById('victory-levels');
+    vRepeat?.addEventListener('click', onVRepeat);
+    vExplore?.addEventListener('click', onVExplore);
+    vNext?.addEventListener('click', onVNext);
+    vHarder?.addEventListener('click', onVHarder);
+    vLevels?.addEventListener('click', backToPicker);
+    teardowns.push(() => {
+      if (victoryTimer != null) { clearTimeout(victoryTimer); victoryTimer = null; }
+      hideVictoryMenu();
+      vRepeat?.removeEventListener('click', onVRepeat);
+      vExplore?.removeEventListener('click', onVExplore);
+      vNext?.removeEventListener('click', onVNext);
+      vHarder?.removeEventListener('click', onVHarder);
+      vLevels?.removeEventListener('click', backToPicker);
+    });
     // Keyboard controls. A = left step, D = right step; Left/Right arrows turn
     // (the CRITICAL keyboard-turning fix — without this the game is uncompletable
     // without a pointer drag); B = back to level select; ? or H speaks the controls.

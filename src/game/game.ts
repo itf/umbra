@@ -273,6 +273,12 @@ export class Game {
   private won = false;
   private caught = false;
   /**
+   * Free-roam ("Explore") mode: once set, the win is disabled so the player can walk
+   * the finished room freely with the beacons still sounding. Entered via
+   * enterFreeRoam() from the post-win victory menu; never affects a normal run.
+   */
+  private freeRoam = false;
+  /**
    * Level identity + run-timing for SCORING. `levelId` labels the result (the host
    * passes the picked level's id/name); `startMs` is the monotonic level-start
    * timestamp (audio clock, ms) captured at construction; `clapsUsed` is an injected
@@ -897,7 +903,9 @@ export class Game {
     if (this.monsters.length === 0) { this.lastTickMs = nowMs; return; }
     const dtMs = this.lastTickMs == null ? 0 : Math.max(0, nowMs - this.lastTickMs);
     this.lastTickMs = nowMs;
-    if (this.won || this.caught) return;
+    // Frozen once the run is over (won/caught) AND during free-roam Explore — a
+    // post-win walkthrough must never turn into a loss.
+    if (this.won || this.caught || this.freeRoam) return;
 
     const noise = this.noise.lastNoise();
     const p = this.player.state;
@@ -1259,6 +1267,7 @@ export class Game {
   }
 
   private checkWin() {
+    if (this.freeRoam) return; // Explore mode: the goal is disabled — never re-win.
     const t = this.winTarget();
     const d = this.player.distanceTo(t.x, t.z);
     // Reaction gate: a level with `requiredReactions` only wins once that many HITS
@@ -1291,6 +1300,20 @@ export class Game {
   /** The scored result of the completed run (null until a win). */
   lastResult(): LevelResult | null {
     return this.lastResultValue;
+  }
+
+  /**
+   * Enter free-roam ("Explore") after a win: clear the won flag so input un-freezes,
+   * disable any further win, and fade the beacons back in (checkWin faded them out on
+   * arrival). The player can now walk the room with the beacons sounding, no timer,
+   * no scoring. Idempotent; a no-op if the run was lost (caught) rather than won.
+   */
+  enterFreeRoam() {
+    if (this.caught) return;
+    this.won = false;
+    this.freeRoam = true;
+    const ft = this.graph.ctx.currentTime;
+    for (const u of this.beacons) u.output.gain.setTargetAtTime(1, ft, 0.3);
   }
 
   destroy() {
