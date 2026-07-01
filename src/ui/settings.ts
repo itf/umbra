@@ -632,37 +632,50 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     if (shareHrtfBtn) group.append(shareHrtfBtn);
     if (loadRow) group.append(loadRow);
 
-    // --- Advanced: over-ear headphone compensation (opt-in) ---
+    // --- Headphone compensation: a BASIC over-ear toggle (mirrors the calibration
+    //     onboarding question) plus an ADVANCED by-ear fine-tune. ---
     if (hooks.runHeadphoneCalibration) {
       const hpStatus = document.createElement('p');
       hpStatus.className = 'settings-hrtf-status';
-      const hpClearBtn = document.createElement('button');
+      const hpRun = document.createElement('button');
       const refreshHp = () => {
         const status = hooks.headphoneCompStatus?.() ?? 'off';
         const on = status !== 'off';
         hpStatus.textContent = on
           ? `Headphone compensation: ${status}.`
-          : 'Headphone compensation: off (tune it if you use over-ear headphones).';
-        hpClearBtn.hidden = !on;
+          : 'Headphone compensation: off (for in-ear / earbuds).';
+        // The advanced fine-tune only makes sense once compensation is on (over-ear).
+        hpRun.hidden = !on;
       };
 
-      const hpRun = document.createElement('button');
+      // BASIC: a plain "I use over-ear headphones" checkbox. On ⇒ apply the gentle
+      // default over-ear comp; off ⇒ in-ear (compensation off).
+      const basic = hooks.getHeadphoneOverEar && hooks.setHeadphoneOverEar
+        ? checkboxRow(
+            'I use over-ear headphones (adjust the 3D sound for them)',
+            hooks.getHeadphoneOverEar(),
+            (on) => {
+              hooks.setHeadphoneOverEar?.(on);
+              hooks.say(
+                on
+                  ? 'Adjusting for over-ear headphones.'
+                  : 'Compensation off — set for in-ear.',
+              );
+              refreshHp();
+            },
+          ).row
+        : null;
+
+      // ADVANCED: refine the strength by ear (only shown/relevant when comp is on).
       hpRun.type = 'button';
       hpRun.className = 'settings-hrtf-run';
-      hpRun.textContent = 'Calibrate headphones (advanced)';
+      hpRun.textContent = 'Fine-tune headphone compensation by ear (advanced)';
       hpRun.addEventListener('click', () => hooks.runHeadphoneCalibration?.());
 
-      hpClearBtn.type = 'button';
-      hpClearBtn.className = 'settings-hrtf-clear';
-      hpClearBtn.textContent = 'Turn off headphone compensation';
-      hpClearBtn.addEventListener('click', () => {
-        hooks.clearHeadphoneComp?.();
-        hooks.alert('Headphone compensation turned off.');
-        refreshHp();
-      });
-
       refreshHp();
-      group.append(hpStatus, hpRun, hpClearBtn);
+      group.append(hpStatus);
+      if (basic) group.append(basic);
+      group.append(hpRun);
     }
 
     dialog.append(group);

@@ -1,4 +1,4 @@
-import { startAudio, type AudioGraph } from './engine/audioGraph';
+import { startAudio, getGraph, type AudioGraph } from './engine/audioGraph';
 import { HrtfRenderer } from './engine/hrtf/renderer';
 import type { InterpolatingHrtfRenderer } from './engine/hrtf/interpolatingRenderer';
 import { Compass } from './game/compass';
@@ -39,7 +39,7 @@ import { loadCustomLoop } from './game/customAudio';
 import type { LevelInfo, ProgressCategory, TrainerInfo } from './game/progressSummary';
 import { generateLevel } from './game/sandbox';
 import { OnboardingStore, type PrimerMode } from './ui/onboardingStore';
-import { SettingsStore, DEFAULT_HRTF_BASE } from './ui/settingsStore';
+import { SettingsStore, DEFAULT_HRTF_BASE, defaultCompStrengthFor } from './ui/settingsStore';
 import { mountSettings, type SettingsPanel } from './ui/settings';
 import { Speech } from './ui/speech';
 import { TrainerStore } from './trainer/trainerStore';
@@ -582,6 +582,14 @@ function runCalibration(after: () => void) {
     loadHrtfPersonalization: () => settings.hrtfPersonalization(),
     loadHrtfBase: () => settings.hrtfBase(),
     saveHrtfBase: (id) => settings.setHrtfBase(id),
+    // BASIC over-ear vs in-ear question: persist the type + default strength and apply
+    // the master-bus comp LIVE (over-ear ⇒ gentle default; in-ear ⇒ off).
+    saveHeadphoneComp: (type, strength) => {
+      settings.setHeadphoneType(type);
+      settings.setOverEarCompStrength(strength);
+      const g = getGraph();
+      if (g) applyOverEarComp(g);
+    },
     hrtfUrl: HRTF_URL,
     onDone: after,
   });
@@ -1852,6 +1860,20 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     clearHeadphoneComp: () => {
       settings.clearHeadphoneComp();
       applyOverEarComp(graph); // live: drop the comp filter from the master path
+    },
+    // BASIC over-ear toggle (mirrors the calibration question). "On" ⇒ effective comp;
+    // this is true when the type is over-ear/clip AND a strength is applied.
+    getHeadphoneOverEar: () =>
+      settings.headphoneType() !== 'iem' && settings.effectiveOverEarCompStrength() > 0,
+    setHeadphoneOverEar: (overEar) => {
+      if (overEar) {
+        settings.setHeadphoneType('overear');
+        settings.setOverEarCompStrength(defaultCompStrengthFor('overear'));
+      } else {
+        settings.setHeadphoneType('iem');
+        settings.setOverEarCompStrength(0);
+      }
+      applyOverEarComp(graph); // live: rebuild master → eq → comp → swap → limiter
     },
     // Spoken-voice (TTS). Each setter persists AND re-pushes into the live Speech
     // wrapper so the change applies immediately (and the test-voice sample uses it).
