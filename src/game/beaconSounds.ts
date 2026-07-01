@@ -160,6 +160,13 @@ export class BeaconVoice {
     this.out.connect(dest);
   }
 
+  /** Set the beacon's output level (0..1). User-controllable "beacon volume" — turning
+   *  a too-hot beacon down also tames the reflected field it drives in hard rooms. */
+  setVolume(v: number): void {
+    const g = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+    try { this.out.gain.value = g; } catch { /* detached */ }
+  }
+
   start() {
     if (this.running) return;
     this.running = true;

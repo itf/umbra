@@ -16,67 +16,6 @@ const assertNativeStatus = (operation, status) => {
 //#endregion
 //#region src/worker/audio-node.ts
 const CONTROL_VALUE_COUNT = 23;
-const CROSSFADE_SECONDS = .03;
-var ReflectionConvolverChain = class {
-	input;
-	get output() {
-		return this.#output;
-	}
-	#active = 0;
-	#context;
-	#convolvers = [void 0, void 0];
-	#disposed = false;
-	#gains;
-	#output;
-	constructor(context) {
-		this.#context = context;
-		this.input = context.createGain();
-		this.#output = context.createGain();
-		this.#gains = [context.createGain(), context.createGain()];
-		for (const gain of this.#gains) {
-			gain.gain.value = 0;
-			gain.connect(this.#output);
-		}
-	}
-	dispose() {
-		if (this.#disposed) return;
-		this.#disposed = true;
-		try {
-			this.input.disconnect();
-		} catch {}
-		for (const convolver of this.#convolvers) try {
-			convolver?.disconnect();
-		} catch {}
-		for (const gain of this.#gains) try {
-			gain.disconnect();
-		} catch {}
-		try {
-			this.#output.disconnect();
-		} catch {}
-	}
-	setIr(ir) {
-		if (this.#disposed || ir.samples <= 0) return;
-		const buffer = this.#context.createBuffer(2, ir.samples, this.#context.sampleRate);
-		buffer.getChannelData(0).set(ir.data.subarray(0, ir.samples));
-		buffer.getChannelData(1).set(ir.data.subarray(ir.samples, 2 * ir.samples));
-		const next = this.#active ^ 1;
-		this.#convolvers[next]?.disconnect();
-		const convolver = this.#context.createConvolver();
-		convolver.normalize = false;
-		convolver.buffer = buffer;
-		this.input.connect(convolver);
-		convolver.connect(this.#gains[next]);
-		this.#convolvers[next] = convolver;
-		const now = this.#context.currentTime;
-		const end = now + CROSSFADE_SECONDS;
-		for (const g of this.#gains) g.gain.cancelScheduledValues(now);
-		this.#gains[next].gain.setValueAtTime(this.#gains[next].gain.value, now);
-		this.#gains[next].gain.linearRampToValueAtTime(1, end);
-		this.#gains[this.#active].gain.setValueAtTime(this.#gains[this.#active].gain.value, now);
-		this.#gains[this.#active].gain.linearRampToValueAtTime(0, end);
-		this.#active = next;
-	}
-};
 const MissingAudioWorkletNode = class {
 	constructor() {
 		throw new Error("AudioWorkletNode is not available in this environment");
@@ -126,7 +65,7 @@ var SteamAudioBusNode = class extends AudioWorkletNodeBase {
 		});
 	}
 };
-var ReflectionBusNode = class extends SteamAudioBusNode {
+var PathingBusNode = class extends SteamAudioBusNode {
 	constructor(context, settings = {}, onDispose = () => {}) {
 		super(context, {
 			onDispose,
@@ -134,7 +73,7 @@ var ReflectionBusNode = class extends SteamAudioBusNode {
 		});
 	}
 };
-var PathingBusNode = class extends SteamAudioBusNode {
+var ReflectionBusNode = class extends SteamAudioBusNode {
 	constructor(context, settings = {}, onDispose = () => {}) {
 		super(context, {
 			onDispose,
@@ -164,10 +103,8 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 	#disposed = false;
 	#error;
 	#headTracked;
-	#lastReflectionIr;
 	#onDispose;
 	#pathing;
-	#reflectionChains = /* @__PURE__ */ new Set();
 	#rejectReady;
 	#resolveReady;
 	#state = "initializing";
@@ -226,16 +163,15 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			this.#controlData = new Float32Array(controlBuffer, 4, CONTROL_VALUE_COUNT);
 		}
 	}
+	connectPathing(bus, options = {}) {
+		if (!this.#pathing) throw new Error("This SteamAudioNode was not created with pathing enabled");
+		return this.#connectSend(bus, 3, options.gain ?? 1);
+	}
 	connectReflections(bus, options = {}) {
-		if (this.#headTracked) return this.#connectReflectionConvolver(bus, options.gain ?? 1);
 		return this.#connectSend(bus, 1, options.gain ?? 1);
 	}
 	connectReverb(bus, options = {}) {
 		return this.#connectSend(bus, 2, options.gain ?? 1);
-	}
-	connectPathing(bus, options = {}) {
-		if (!this.#pathing) throw new Error("This SteamAudioNode was not created with pathing enabled");
-		return this.#connectSend(bus, 3, options.gain ?? 1);
 	}
 	dispose() {
 		if (this.#disposed) return;
@@ -245,8 +181,6 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			this.#rejectReady(this.#error);
 		}
 		this.#state = "disposed";
-		for (const chain of this.#reflectionChains) chain.dispose();
-		this.#reflectionChains.clear();
 		disposeWorkletNode(this, () => this.#onDispose(this));
 	}
 	setControl(values) {
@@ -274,11 +208,6 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			values: packet
 		}, [packet.buffer]);
 	}
-	setReflectionIr(ir) {
-		if (this.#disposed || !this.#headTracked) return;
-		this.#lastReflectionIr = ir;
-		for (const chain of this.#reflectionChains) chain.setIr(ir);
-	}
 	setPathing(update) {
 		if (this.#disposed || !this.#pathing) return;
 		const channels = (update.order + 1) * (update.order + 1);
@@ -297,35 +226,24 @@ var SteamAudioNode = class extends AudioWorkletNodeBase {
 			values: packet
 		}, [packet.buffer]);
 	}
-	#connectReflectionConvolver(bus, initialGain) {
-		if (this.#disposed) throw new Error("Cannot connect a disposed SteamAudioNode");
-		if (bus.context !== this.context) throw new Error("Steam Audio send and bus must use the same AudioContext");
-		const chain = new ReflectionConvolverChain(this.context);
-		const gainNode = this.context.createGain();
-		gainNode.gain.value = validateGain(initialGain);
-		this.connect(chain.input, 1, 0);
-		chain.output.connect(gainNode);
-		gainNode.connect(bus);
-		this.#reflectionChains.add(chain);
-		if (this.#lastReflectionIr) chain.setIr(this.#lastReflectionIr);
-		let connected = true;
-		return {
-			disconnect: () => {
-				if (!connected) return;
-				connected = false;
-				this.#reflectionChains.delete(chain);
-				try {
-					this.disconnect(chain.input, 1, 0);
-				} catch {}
-				try {
-					gainNode.disconnect(bus);
-				} catch {}
-				chain.dispose();
-			},
-			setGain: (gain) => {
-				gainNode.gain.value = validateGain(gain);
-			}
-		};
+	setReflectionIr(ir) {
+		if (this.#disposed || !this.#headTracked || ir.samples <= 0) return;
+		this.port.postMessage({
+			channels: ir.channels,
+			data: ir.data.buffer,
+			samples: ir.samples,
+			type: "reflectionIr"
+		}, [ir.data.buffer]);
+	}
+	setReflectionListener(ahead, up) {
+		if (this.#disposed || !this.#headTracked) return;
+		const packet = new Float32Array(6);
+		packet.set(ahead, 0);
+		packet.set(up, 3);
+		this.port.postMessage({
+			type: "reflectionListener",
+			values: packet
+		}, [packet.buffer]);
 	}
 	#connectSend(bus, output, initialGain) {
 		if (this.#disposed) throw new Error("Cannot connect a disposed SteamAudioNode");
@@ -3036,9 +2954,13 @@ async function Module(moduleArg = {}) {
 		Module["_sa_buffer_interleave"] = wasmExports["Pa"];
 		Module["_sa_source_get_reflection_ir_size"] = wasmExports["Qa"];
 		Module["_sa_source_get_reflection_ir"] = wasmExports["Ra"];
-		__emscripten_stack_restore = wasmExports["Sa"];
-		__emscripten_stack_alloc = wasmExports["Ta"];
-		_emscripten_stack_get_current = wasmExports["Ua"];
+		Module["_sa_reflection_convolver_create"] = wasmExports["Sa"];
+		Module["_sa_reflection_convolver_partition"] = wasmExports["Ta"];
+		Module["_sa_reflection_convolver_apply"] = wasmExports["Ua"];
+		Module["_sa_reflection_convolver_release"] = wasmExports["Va"];
+		__emscripten_stack_restore = wasmExports["Wa"];
+		__emscripten_stack_alloc = wasmExports["Xa"];
+		_emscripten_stack_get_current = wasmExports["Ya"];
 		wasmMemory = wasmExports["l"];
 		wasmExports["__indirect_function_table"];
 	}
@@ -3467,7 +3389,7 @@ var ListenerImpl = class {
 		this.position.set(position.x, position.y, position.z);
 		this.orientation.copy(normalizeQuaternion(orientation));
 		const [listenerAhead, listenerUp] = directionsFromQuaternion(this.orientation);
-		this.#world.module._sa_simulator_set_listener(this.#world.simulator, this.position.x, this.position.y, this.position.z, listenerAhead.x, listenerAhead.y, listenerAhead.z, listenerUp.x, listenerUp.y, listenerUp.z, this.#world.reflectionSettings.rays, this.#world.reflectionSettings.bounces, this.#world.reflectionSettings.duration, this.#world.reflectionSettings.order, this.#world.reflectionSettings.irradianceMinDistance);
+		this.#world.module._sa_simulator_set_listener(this.#world.simulator, this.position.x, this.position.y, this.position.z, listenerAhead.x, listenerAhead.y, listenerAhead.z, listenerUp.x, listenerUp.y, listenerUp.z, this.#world.reflectionSettings.rays, this.#world.reflectionSettings.bounces, this.#world.reflectionSettings.duration, this.#world.reflectionSettings.order, this.#world.reflectionSettings.irradianceMinDistance, this.#world.pathingSettings.enabled ? 1 : 0);
 		this.#world.reflectionWorker?.setListener([
 			this.position.x,
 			this.position.y,
@@ -3691,7 +3613,21 @@ var SourceImpl = class {
 	}
 	setReflectionOutputs(outputs, ir) {
 		this.#reflectionOutputs = [...outputs];
-		if (ir) for (const node of this.nodes) node.setReflectionIr(ir);
+		if (ir) {
+			const [listenerAhead, listenerUp] = directionsFromQuaternion(this.#world.listenerImpl.orientation);
+			for (const node of this.nodes) {
+				node.setReflectionListener([
+					listenerAhead.x,
+					listenerAhead.y,
+					listenerAhead.z
+				], [
+					listenerUp.x,
+					listenerUp.y,
+					listenerUp.z
+				]);
+				node.setReflectionIr(ir);
+			}
+		}
 		this.publishControl();
 	}
 	setSettings(settings) {

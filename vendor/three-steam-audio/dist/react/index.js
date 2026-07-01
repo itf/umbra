@@ -1,4 +1,4 @@
-import { a as getPreparedRuntimePromise, n as createWorldFromRuntime, r as defaultModuleFactory } from "../world-Bgcj5GoD.js";
+import { a as getPreparedRuntimePromise, n as createWorldFromRuntime, r as defaultModuleFactory } from "../world-1awLHaG5.js";
 import { Quaternion, Vector3 } from "three";
 import { useFrame } from "@react-three/fiber";
 import { createContext, use, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef } from "react";

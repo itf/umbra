@@ -141,6 +141,13 @@ export interface GameLevel {
   acousticEdges?: EdgeDef[];
   /** Representative scattering coefficient for the modeled beacon's surfaces. */
   acousticScattering?: number;
+  /**
+   * The level's ROOM box (width × depth × height, metres). Used by the optional
+   * pathing backend to place its probe grid over the whole room — the room extent,
+   * NOT the interior walls (a wall-less room still has a room). Absent ⇒ the backend
+   * falls back to the wall AABB.
+   */
+  acousticRoomBounds?: { width: number; depth: number; height: number };
 }
 
 /**
@@ -153,7 +160,13 @@ export interface GameLevel {
  */
 export interface SpatialBackend {
   createSource(): SteamSourceHandle;
-  setGeometry(walls: WallDef[]): void;
+  /**
+   * Rebuild the acoustic scene from `walls`. `roomBounds` (the level's room box) is
+   * used only by the optional pathing backend to place its probe grid over the WHOLE
+   * room — walls are interior dividers, not the room extent, so a wall-less room still
+   * needs probes. Optional/back-compatible: our engine ignores it.
+   */
+  setGeometry(walls: WallDef[], roomBounds?: { width: number; depth: number; height: number }): void;
   setListener(x: number, y: number, z: number, yaw: number): void;
   step(deltaSeconds: number): void;
   /**
@@ -347,6 +360,8 @@ export class Game {
     /** Duck/leak lowpass (high cutoff = normal/bright; low = muffled). */
     lp: BiquadFilterNode;
   }[] = [];
+  /** User BEACON VOLUME (0..1) — applied to every beacon voice's output, live. */
+  private beaconVolume = 1;
   /**
    * Reaction mechanic (Part C). The pure scorer + the set of event ids currently in
    * their active window (to apply modulation/transients on the rising/falling edge)
@@ -420,7 +435,7 @@ export class Game {
     // feeds and `beaconOutput` is the master-bound output.
     // Steam Audio path: the level geometry is pushed into the Steam Audio scene
     // ONCE (shared by all beacon sources). Per-unit sources are created below.
-    if (this.steam) this.steam.setGeometry(level.acousticWalls ?? []);
+    if (this.steam) this.steam.setGeometry(level.acousticWalls ?? [], level.acousticRoomBounds);
     // Build one uniform unit per beacon, each choosing its spatializer by the SAME
     // steam/modeled/interp/plain logic, and start its voice. For a single-beacon
     // level this is byte-identical to the legacy singular wiring.
@@ -498,6 +513,7 @@ export class Game {
       const baseGain = Math.max(0, spec.gain);
       duck.gain.value = baseGain;
       const voice = new BeaconVoice(this.graph.ctx, duck, resolveBeaconPreset(spec.sound), spec.freq);
+      voice.setVolume(this.beaconVolume);
       voice.start();
       const entry: (typeof this.ambience)[number] = { spec, src, voice, custom: null, baseGain, duck, lp };
       this.ambience.push(entry);
@@ -627,6 +643,7 @@ export class Game {
     // The dry voice feeds the spatializer input directly; real 1/r distance
     // attenuation is modeled downstream in the renderer.
     u.voice = new BeaconVoice(this.graph.ctx, u.input, preset, u.spec.freq);
+    u.voice.setVolume(this.beaconVolume);
     u.voice.start();
   }
 
@@ -1011,7 +1028,7 @@ export class Game {
     this.level.acousticEdges = edges;
     // Steam Audio: rebuild its static scene from the live walls (moving-wall levels).
     // commit() rebuilds the BVH; cheap enough at the moving-walls throttle.
-    this.steam?.setGeometry(walls);
+    this.steam?.setGeometry(walls, this.level.acousticRoomBounds);
   }
 
   /**
@@ -1032,7 +1049,7 @@ export class Game {
     // Swap the engine + re-push the current geometry into the new backend, then rebuild
     // the spatial voices against it (preserving ALL game state).
     this.steam = steam;
-    if (this.steam) this.steam.setGeometry(this.level.acousticWalls ?? []);
+    if (this.steam) this.steam.setGeometry(this.level.acousticWalls ?? [], this.level.acousticRoomBounds);
     this.rebuildVoices();
   }
 
@@ -1142,6 +1159,13 @@ export class Game {
     if (!this.steam) return;
     this.steam.setReflectionWetLevel?.(v);
     this.rebuildVoices();
+  }
+
+  /** Set the user BEACON VOLUME (0..1) — live, applies to every current beacon voice
+   *  and is remembered for voices created later (e.g. on a backend rebuild). */
+  setBeaconVolume(v: number) {
+    this.beaconVolume = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 1;
+    for (const a of this.ambience) a.voice?.setVolume(this.beaconVolume);
   }
 
   /** Whether a Steam Audio backend is currently active (for the host's Apply logic). */

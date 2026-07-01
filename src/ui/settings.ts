@@ -92,6 +92,9 @@ export interface SettingsHooks {
   /** Steam REVERB BUS level in [0,1] (bus wet + reverb send); live on Apply. */
   getSteamReverbBus: () => number;
   setSteamReverbBus: (v: number) => void;
+  /** BEACON VOLUME in [0,1] (the bell/tone you home in on); live on Apply. */
+  getBeaconVolume: () => number;
+  setBeaconVolume: (v: number) => void;
 
   /**
    * Apply the Steam Audio settings (engine on/off + reverb/reflection levels) to the
@@ -406,6 +409,15 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     hooks.say,
     (pct) => `Steam reverb bus ${pct} percent. Press Apply Steam settings to hear it now.`,
     (v) => hooks.setSteamReverbBus(v),
+  ));
+  dialog.append(levelRow(
+    'set-beacon-volume',
+    'Beacon volume',
+    'Beacon volume percent',
+    hooks.getBeaconVolume(),
+    hooks.say,
+    (pct) => `Beacon volume ${pct} percent. Press Apply Steam settings to hear it now.`,
+    (v) => hooks.setBeaconVolume(v),
   ));
 
   // --- Apply Steam settings to the running level NOW (live hot-swap) ---

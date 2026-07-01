@@ -37,6 +37,10 @@ export const TTS_PITCH_KEY = 'ps.settings.ttsPitch';
 export const STEAM_REFLECTION_WET_KEY = 'ps.settings.steamReflectionWet';
 export const STEAM_REFLECTION_BUS_KEY = 'ps.settings.steamReflectionBus';
 export const STEAM_REVERB_BUS_KEY = 'ps.settings.steamReverbBus';
+/** BEACON VOLUME (0..1): a multiplier on the dry beacon voice level (the bell/tone/etc.
+ *  that you home in on). Lets the user turn a too-hot beacon down — which also tames the
+ *  reflected field it drives in hard rooms. LIVE-applicable. Default 1 (full). */
+export const BEACON_VOLUME_KEY = 'ps.settings.beaconVolume';
 /** Global room CLUTTER (0..1) added on top of each level's own clutter — tames a
  *  hard, fluttery room (more scattering + absorption). Default 0 (no extra). */
 export const CLUTTER_KEY = 'ps.settings.clutter';
@@ -81,6 +85,8 @@ export const DEFAULT_STEAM_REFLECTION_WET = 1;
 export const DEFAULT_STEAM_REFLECTION_BUS = 1;
 /** Default Steam reverb bus level — full (= today's behavior). */
 export const DEFAULT_STEAM_REVERB_BUS = 1;
+/** Default beacon volume — full (= today's behavior). */
+export const DEFAULT_BEACON_VOLUME = 1;
 
 /** PURE: clamp a 0..1 level; non-finite ⇒ `fallback`. */
 export function clampLevel(v: number, fallback: number): number {
@@ -304,6 +310,16 @@ export class SettingsStore {
   }
   setSteamReverbBus(v: number) {
     this.write(STEAM_REVERB_BUS_KEY, String(clampLevel(v, DEFAULT_STEAM_REVERB_BUS)));
+  }
+
+  /** BEACON VOLUME in [0,1]; full by default. Multiplier on the dry beacon voice. LIVE. */
+  beaconVolume(): number {
+    const raw = this.read(BEACON_VOLUME_KEY);
+    if (raw == null) return DEFAULT_BEACON_VOLUME;
+    return clampLevel(Number(raw), DEFAULT_BEACON_VOLUME);
+  }
+  setBeaconVolume(v: number) {
+    this.write(BEACON_VOLUME_KEY, String(clampLevel(v, DEFAULT_BEACON_VOLUME)));
   }
 
   /**

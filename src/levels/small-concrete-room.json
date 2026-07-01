@@ -9,7 +9,7 @@
   "ceilingMaterial": "concrete",
   "start": { "x": 2, "z": 4.2, "yaw": 0 },
   "beacons": [
-    { "id": "b1", "x": 2, "z": 0.8, "freq": 440, "goalRadius": 0.7, "sound": "tone" }
+    { "id": "b1", "x": 2, "z": 0.8, "freq": 440, "goalRadius": 0.7, "sound": "bell" }
   ],
   "walls": [],
   "floors": [],

@@ -244,10 +244,13 @@ async function buildSteamBackend(
     // the ?engine=steam-sofa URL override. Either enables the fork's custom-SOFA path.
     const wantSofa = settings.steamSofaHrtf()
       || new URLSearchParams(location.search).get('engine') === 'steam-sofa';
-    // PATHING (directional diffraction) — opt-in via the ?engine=steam-path URL override.
-    // Off by default even on the steam path (adds a per-level probe bake + a per-frame
-    // diffraction sim), so plain ?engine=steam is unchanged.
-    const wantPathing = new URLSearchParams(location.search).get('engine') === 'steam-path';
+    // PATHING (directional diffraction) — ON by default whenever Steam is enabled (so the
+    // Settings "High-fidelity audio" checkbox gets it, not just a URL param). It closes the
+    // diffraction gap: without it the steam path has occlusion + a transmission leak but no
+    // edge diffraction. Adds a per-level probe bake (~2-3 ms) + a per-frame diffraction sim.
+    // URL override for A/B: `?engine=steam-path` forces ON, `?engine=steam-nopath` forces OFF.
+    const engineParam = new URLSearchParams(location.search).get('engine');
+    const wantPathing = engineParam === 'steam-nopath' ? false : true;
     const reflectionWetLevel = settings.steamReflectionWet();
     const reflectionBusLevel = settings.steamReflectionBus();
     const reverbBusLevel = settings.steamReverbBus();
@@ -441,6 +444,9 @@ function applyLevel(level: Level, displayName: string, launch: PickerSelection |
   LEVEL.acousticWalls = WALLS;
   LEVEL.acousticEdges = EDGES;
   LEVEL.acousticScattering = SCATTER;
+  // Room box for the pathing backend's probe grid — the room extent, not the interior
+  // walls, so wall-less rooms still get probes. roomSize is [width, HEIGHT, depth].
+  LEVEL.acousticRoomBounds = { width: ROOM[0], height: ROOM[1], depth: ROOM[2] };
   LEVEL_ID = displayName;
   LAST_LAUNCH = launch;
   if (startLevelName) startLevelName.textContent = `Now playing: ${displayName}`;
@@ -930,6 +936,8 @@ startButton.addEventListener('click', async () => {
     // Expose the running game + its engine state for the live Settings "Apply now"
     // hot-swap; null both on teardown so Apply knows no level is running.
     currentGame = game;
+    // Seed the user's beacon volume onto the fresh game (its voices are already built).
+    game.setBeaconVolume(settings.beaconVolume());
     currentEngineIsSteam = steam != null;
     currentSteamIsSofa = steam != null && steamSofaPref();
     currentSteamOrder = steam != null ? settings.steamReflectionOrder() : 0;
@@ -1477,6 +1485,9 @@ function speakControls() {
 async function applySteamNow(graph: AudioGraph) {
   const game = currentGame;
   if (!game) { say('Start a level first to apply Steam Audio settings.'); return; }
+  // Beacon volume applies to BOTH engines (it's the dry beacon voice), so apply it
+  // unconditionally, before the steam-specific early-returns below.
+  game.setBeaconVolume(settings.beaconVolume());
   const wantSteam = steamEnginePref();
   const wantSofa = steamSofaPref();
   const wantOrder = settings.steamReflectionOrder();
@@ -1589,6 +1600,8 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
     setSteamReflectionBus: (v) => settings.setSteamReflectionBus(v),
     getSteamReverbBus: () => settings.steamReverbBus(),
     setSteamReverbBus: (v) => settings.setSteamReverbBus(v),
+    getBeaconVolume: () => settings.beaconVolume(),
+    setBeaconVolume: (v) => settings.setBeaconVolume(v),
     // LIVE "Apply now": make the persisted Steam engine + reverb/reflection choices
     // take effect on the RUNNING level without restarting it. Decides LIGHT vs HEAVY.
     applySteamNow: () => { void applySteamNow(graph); },

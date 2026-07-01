@@ -45,14 +45,21 @@ describe('level → game geometry', () => {
     expect(walls.length).toBe(6);
   });
 
-  it('open level has no perimeter or ceiling — only free walls', () => {
+  it('open level has no perimeter walls or ceiling — but keeps the ground floor + free walls', () => {
     const lvl = emptyLevel();
     lvl.open = true;
     lvl.hasCeiling = false;
     lvl.walls.push({ id: 'w1', ax: 1, az: 1, bx: 5, bz: 1, material: 'brick' });
     const { walls } = loadLevel(lvl);
-    expect(walls.length).toBe(1); // one free wall (double-sided via a flag, still one quad)
-    expect(walls[0].doubleSided).toBe(true); // interior walls reflect from both faces
+    // The ground floor is present even for open levels (you walk on it, it reflects, and
+    // the pathing probe generator raycasts down onto it), PLUS the one free interior wall.
+    expect(walls.length).toBe(2);
+    const free = walls.find((w) => w.doubleSided);
+    expect(free).toBeDefined(); // interior walls reflect from both faces
+    // The floor is a horizontal quad at y=0 (all verts y===0), single-sided.
+    const floor = walls.find((w) => !w.doubleSided);
+    expect(floor).toBeDefined();
+    expect(floor!.verts.every(([, y]) => y === 0)).toBe(true);
   });
 
   it('a dropped ceiling zone adds its plane PLUS 4 step-down side walls', () => {

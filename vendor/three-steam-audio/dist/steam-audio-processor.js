@@ -90,16 +90,27 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     super()
     const processorOptions = options.processorOptions ?? {}
     this.frameSize = processorOptions.frameSize
-    // Head-tracked reflections (opt-in). The directional, head-tracked reflected
-    // field is rendered OUTSIDE this worklet: the reflection-simulation worker
-    // bakes a per-pose binaural STEREO impulse response (see
-    // reflection-simulator-worker.js) and the main thread convolves the dry
-    // beacon through a Web Audio ConvolverNode. So when headTracked is set, this
-    // worklet's reflection output (output[1]) carries only the DRY MONO
-    // reflection-send signal (duplicated to both channels) for that ConvolverNode
-    // to filter — it does NOT itself convolve or decode. When headTracked is off,
-    // output[1] carries the legacy mono-duplicated parametric reflected field.
+    // Head-tracked reflections (opt-in). When set, output[1] carries the fully
+    // rendered, directional reflected field produced INSIDE this worklet: the
+    // reflection worker ships RAW Ambisonic IR taps (reflection-simulator-worker.js),
+    // and per block we run Steam's own overlap-save convolver against them, then
+    // decode Ambisonics->binaural with the LIVE head orientation (see
+    // applyReflections). When headTracked is off, output[1] carries the legacy
+    // mono-duplicated parametric reflected field.
     this.headTracked = processorOptions.headTracked === true
+    // Head-tracked reflections: the worklet runs Steam's OWN partitioned-FFT
+    // overlap-save convolver against the raw Ambisonic IR taps shipped from the
+    // reflection worker, then decodes to binaural with the LIVE head orientation
+    // every block. The convolver keeps its state across sim updates (a new IR is
+    // partitioned and adopted seamlessly — no ConvolverNode swap, no ~10Hz beat).
+    this.reflectionOrder = Math.max(0, Math.min(3, processorOptions.reflectionOrder ?? 1))
+    this.reflectionChannels = (this.reflectionOrder + 1) * (this.reflectionOrder + 1)
+    // Live listener orientation for the reflection decode, pushed at sim rate.
+    // [ahead(3), up(3)], canonical head frame until the first update.
+    this.reflectionListener = new Float32Array([0, 0, -1, 0, 1, 0])
+    this.reflectionConvolver = 0 // created lazily on the first IR (needs its size)
+    this.reflectionIrSamples = 0
+    this.reflectionPartitionPending = false // an IR was staged; partition it next block
     // Pathing / diffraction (opt-in). When enabled this worklet renders a
     // directional Ambisonic pathing field on output[3]: per block it applies the
     // baked path effect (eq3 + SH coefficients pushed from the main thread at sim
@@ -171,6 +182,10 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
         this.control.set(data.values)
       else if (data?.type === 'pathing' && data.values)
         this.pathControl.set(data.values)
+      else if (data?.type === 'reflectionListener' && data.values)
+        this.reflectionListener.set(data.values)
+      else if (data?.type === 'reflectionIr' && data.data)
+        this.stageReflectionIr(data.data, data.channels, data.samples)
       else if (data?.type === 'dispose')
         this.dispose()
     }
@@ -228,6 +243,135 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     }
   }
 
+  // Render the diffracted (pathing) field for one block. inMonoPointer is the
+  // dry mono input. The path effect turns eq3 + SH into an Ambisonic field; the
+  // ambisonics decode effect turns that into binaural using the live listener
+  // ahead/up (head-tracked), so the diffracted arrival direction is preserved.
+  applyPathing(module, inMonoPointer) {
+    const heap = module.HEAPF32
+    const eqOffset = this.pathEq3Pointer >>> 2
+    const shOffset = this.pathShPointer >>> 2
+    const listenerOffset = this.pathListenerPointer >>> 2
+    // pathControl layout: [eq3(3), SH(channels), ahead(3), up(3), normalizeEq, wet]
+    const aheadBase = 3 + this.pathingChannels
+    for (let i = 0; i < 3; i++)
+      heap[eqOffset + i] = this.pathControl[i]
+    for (let i = 0; i < this.pathingChannels; i++)
+      heap[shOffset + i] = this.pathControl[3 + i]
+    // Listener transform for the decode: position is irrelevant for the SH
+    // rotation, ahead/up carry the head orientation. Feed [pos(3), ahead(3), up(3)].
+    heap[listenerOffset + 0] = 0
+    heap[listenerOffset + 1] = 0
+    heap[listenerOffset + 2] = 0
+    for (let i = 0; i < 6; i++)
+      heap[listenerOffset + 3 + i] = this.pathControl[aheadBase + i]
+    const normalizeEq = this.pathControl[aheadBase + 6]
+
+    module._sa_path_effect_apply(
+      this.pathEffect,
+      this.pathEq3Pointer,
+      this.pathShPointer,
+      this.pathingOrder,
+      0, // binaural=0: emit Ambisonics, we decode below
+      0, // hrtf (unused when binaural=0)
+      heap[listenerOffset + 0],
+      heap[listenerOffset + 1],
+      heap[listenerOffset + 2],
+      heap[listenerOffset + 3],
+      heap[listenerOffset + 4],
+      heap[listenerOffset + 5],
+      heap[listenerOffset + 6],
+      heap[listenerOffset + 7],
+      heap[listenerOffset + 8],
+      normalizeEq > 0 ? 1 : 0,
+      inMonoPointer,
+      this.pathAmbisonicPointer,
+      this.frameSize,
+    )
+    module._sa_ambisonics_decode_effect_apply(
+      this.pathDecodeEffect,
+      this.runtime.hrtf,
+      this.pathingOrder,
+      heap[listenerOffset + 3],
+      heap[listenerOffset + 4],
+      heap[listenerOffset + 5],
+      heap[listenerOffset + 6],
+      heap[listenerOffset + 7],
+      heap[listenerOffset + 8],
+      1, // binaural
+      this.pathAmbisonicPointer,
+      this.pathBinauralPointer,
+      this.frameSize,
+    )
+  }
+
+  // Render the head-tracked reflected field for one block. dryMonoPointer holds
+  // the dry input downmix; it is scaled by the reflection wet into the send
+  // scratch. Partition any staged IR (once), convolve to an Ambisonic field with
+  // Steam's overlap-save convolver, then decode to binaural with the LIVE head
+  // orientation. Writes [L block, R block] into reflectionBinauralPointer.
+  //
+  // LEVEL NOTE: the reflection send is fed the RAW dry signal (only the wet mix
+  // gain applied), exactly as stock Steam Audio does — Steam's own spatializer
+  // feeds reflections a raw, NON-distance-attenuated send and relies on the
+  // reflection IR (ray-traced path lengths + per-bounce absorption) to carry the
+  // correct absolute level. We deliberately do NOT scale the send by the source's
+  // 1/r distance attenuation: that would be physically WRONG. Real reflections do
+  // not fall off with the source->listener straight-line distance; each reflection
+  // follows its own source->wall->listener path and falls off with THAT path
+  // length, which Steam's IR already encodes. Imposing the direct path's 1/r on
+  // reflections would make a beacon's reflections incorrectly shrink just because
+  // it is far away in the same room, corrupting the spatial cue. If reflections
+  // are too loud relative to direct, the correct, physics-honest levers are:
+  //   (1) the reflectionWet mix gain here (Steam's own reflectionsMixLevel
+  //       equivalent — a sanctioned mix decision, not a physics claim), and
+  //   (2) content: materials with real low-band absorption / a beacon frequency
+  //       inside the material's absorptive band (Steam's coarse 3-band material
+  //       model reflects sub-~400Hz strongly even off "foam").
+  applyReflections(module, dryMonoPointer, reflectionWet) {
+    const heap = module.HEAPF32
+    if (!this.reflectionConvolver) {
+      heap.fill(0, this.reflectionBinauralPointer >>> 2, (this.reflectionBinauralPointer >>> 2) + 2 * this.frameSize)
+      return
+    }
+    // Scale the dry send by the wet mix gain into the convolver input scratch.
+    const dryOffset = dryMonoPointer >>> 2
+    const sendOffset = this.reflectionSendPointer >>> 2
+    for (let index = 0; index < this.frameSize; index++)
+      heap[sendOffset + index] = heap[dryOffset + index] * reflectionWet
+    if (this.reflectionPartitionPending) {
+      module._sa_reflection_convolver_partition(
+        this.reflectionConvolver,
+        this.reflectionIrPointer,
+        this.reflectionStagedChannels,
+        this.reflectionStagedSamples,
+      )
+      this.reflectionPartitionPending = false
+    }
+    module._sa_reflection_convolver_apply(
+      this.reflectionConvolver,
+      this.reflectionSendPointer,
+      this.reflectionAmbisonicPointer,
+      this.frameSize,
+    )
+    const l = this.reflectionListener
+    module._sa_ambisonics_decode_effect_apply(
+      this.reflectionDecodeEffect,
+      this.runtime.hrtf,
+      this.reflectionOrder,
+      l[0],
+      l[1],
+      l[2],
+      l[3],
+      l[4],
+      l[5],
+      1, // binaural
+      this.reflectionAmbisonicPointer,
+      this.reflectionBinauralPointer,
+      this.frameSize,
+    )
+  }
+
   dispose() {
     if (this.disposed)
       return
@@ -249,6 +393,17 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     module._free(this.reverbPointer)
     module._free(this.reflectionTimesPointer)
     module._free(this.reverbTimesPointer)
+    if (this.headTracked) {
+      if (this.reflectionConvolver)
+        module._sa_reflection_convolver_release(this.reflectionConvolver)
+      if (this.reflectionIrPointer)
+        module._free(this.reflectionIrPointer)
+      if (this.reflectionDecodeEffect)
+        module._sa_ambisonics_decode_effect_release(this.reflectionDecodeEffect)
+      module._free(this.reflectionAmbisonicPointer)
+      module._free(this.reflectionBinauralPointer)
+      module._free(this.reflectionSendPointer)
+    }
     if (this.pathingEnabled && this.pathEffect) {
       module._sa_path_effect_release(this.pathEffect)
       module._sa_ambisonics_decode_effect_release(this.pathDecodeEffect)
@@ -284,6 +439,26 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     this.reverbPointer = allocate(module, this.frameSize * 4)
     this.reflectionTimesPointer = allocate(module, 3 * 4)
     this.reverbTimesPointer = allocate(module, 3 * 4)
+    if (this.headTracked) {
+      // Ambisonics->binaural decode for the head-tracked reflected field, driven
+      // by the LIVE listener orientation each block (same effect the pathing path
+      // uses). The convolver itself is created lazily on the first IR message
+      // (stageReflectionIr) since it needs the IR length.
+      this.reflectionDecodeEffect = createHandle(module, out =>
+        module._sa_ambisonics_decode_effect_create(
+          context,
+          sampleRate,
+          this.frameSize,
+          hrtf,
+          this.reflectionOrder,
+          out,
+        ))
+      // Ambisonic intermediate ((order+1)^2 channels, channel-major) + binaural.
+      this.reflectionAmbisonicPointer = allocate(module, this.reflectionChannels * this.frameSize * 4)
+      this.reflectionBinauralPointer = allocate(module, 2 * this.frameSize * 4)
+      // Scratch for the dry mono reflection send fed to the convolver.
+      this.reflectionSendPointer = allocate(module, this.frameSize * 4)
+    }
     if (this.pathingEnabled) {
       // Path effect: Ambisonic output (spatialize=0, hrtf=NULL) — we decode to
       // binaural separately with the live listener orientation.
@@ -420,6 +595,13 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
     }
     this.applyParametricBuses(module, inputActive)
 
+    // Head-tracked reflection render. monoPointer holds the dry input downmix;
+    // applyReflections scales it by the reflection wet (control[18]), runs Steam's
+    // overlap-save convolver against the raw Ambisonic IR taps, and decodes to
+    // binaural with the LIVE head orientation into reflectionBinauralPointer.
+    if (this.headTracked)
+      this.applyReflections(module, this.monoPointer, this.control[18])
+
     // Pathing / diffraction render. monoPointer currently holds the dry input
     // downmix. Apply the baked path effect (eq3 + SH from the main thread) to
     // produce an Ambisonic field, then decode it to binaural with the LIVE
@@ -447,97 +629,7 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
           + heap[directOffset + this.frameSize + index] * dryMix
     }
 
-    // Reflection send (output[1]):
-    //  * headTracked: emit the DRY MONO reflection-send signal (monoPointer,
-    //    which here holds the dry input downmix) scaled by wet, duplicated to
-    //    both channels. The main-thread ConvolverNode convolves this with the
-    //    per-pose binaural stereo IR baked by the worker, producing the
-    //    directional, head-tracked reflected field. No convolution/decode here.
-    //  * legacy: emit the mono-duplicated parametric reflected field.
-    for (let index = 0; index < this.frameSize; index++) {
-      this.outputLeft[this.outputWrite] = heap[outputOffset + index]
-      this.outputRight[this.outputWrite] = heap[outputOffset + this.frameSize + index]
-      const reverbSample = heap[reverbOffset + index] * this.control[22]
-      const reflectionSample = this.headTracked
-        ? heap[monoOffset + index] * this.control[18]
-        : heap[reflectionOffset + index] * this.control[18]
-      this.reflectionLeft[this.outputWrite] = reflectionSample
-      this.reflectionRight[this.outputWrite] = reflectionSample
-      this.reverbLeft[this.outputWrite] = reverbSample
-      this.reverbRight[this.outputWrite] = reverbSample
-      if (this.pathingEnabled) {
-        const wet = this.pathControl[this.pathControl.length - 1]
-        const pathOffset = this.pathBinauralPointer >>> 2
-        this.pathingLeftRing[this.outputWrite]
-          = heap[pathOffset + index] * wet
-        this.pathingRightRing[this.outputWrite]
-          = heap[pathOffset + this.frameSize + index] * wet
-      }
-      this.outputWrite = (this.outputWrite + 1) % this.outputLeft.length
-      this.outputCount++
-    }
-  }
-
-  // Render the diffracted (pathing) field for one block. inMonoPointer is the
-  // dry mono input. The path effect turns eq3 + SH into an Ambisonic field; the
-  // ambisonics decode effect turns that into binaural using the live listener
-  // ahead/up (head-tracked), so the diffracted arrival direction is preserved.
-  applyPathing(module, inMonoPointer) {
-    const heap = module.HEAPF32
-    const eqOffset = this.pathEq3Pointer >>> 2
-    const shOffset = this.pathShPointer >>> 2
-    const listenerOffset = this.pathListenerPointer >>> 2
-    // pathControl layout: [eq3(3), SH(channels), ahead(3), up(3), normalizeEq, wet]
-    const aheadBase = 3 + this.pathingChannels
-    for (let i = 0; i < 3; i++)
-      heap[eqOffset + i] = this.pathControl[i]
-    for (let i = 0; i < this.pathingChannels; i++)
-      heap[shOffset + i] = this.pathControl[3 + i]
-    // Listener transform for the decode: position is irrelevant for the SH
-    // rotation, ahead/up carry the head orientation. Feed [pos(3), ahead(3), up(3)].
-    heap[listenerOffset + 0] = 0
-    heap[listenerOffset + 1] = 0
-    heap[listenerOffset + 2] = 0
-    for (let i = 0; i < 6; i++)
-      heap[listenerOffset + 3 + i] = this.pathControl[aheadBase + i]
-    const normalizeEq = this.pathControl[aheadBase + 6]
-
-    module._sa_path_effect_apply(
-      this.pathEffect,
-      this.pathEq3Pointer,
-      this.pathShPointer,
-      this.pathingOrder,
-      0, // binaural=0: emit Ambisonics, we decode below
-      0, // hrtf (unused when binaural=0)
-      heap[listenerOffset + 0],
-      heap[listenerOffset + 1],
-      heap[listenerOffset + 2],
-      heap[listenerOffset + 3],
-      heap[listenerOffset + 4],
-      heap[listenerOffset + 5],
-      heap[listenerOffset + 6],
-      heap[listenerOffset + 7],
-      heap[listenerOffset + 8],
-      normalizeEq > 0 ? 1 : 0,
-      inMonoPointer,
-      this.pathAmbisonicPointer,
-      this.frameSize,
-    )
-    module._sa_ambisonics_decode_effect_apply(
-      this.pathDecodeEffect,
-      this.runtime.hrtf,
-      this.pathingOrder,
-      heap[listenerOffset + 3],
-      heap[listenerOffset + 4],
-      heap[listenerOffset + 5],
-      heap[listenerOffset + 6],
-      heap[listenerOffset + 7],
-      heap[listenerOffset + 8],
-      1, // binaural
-      this.pathAmbisonicPointer,
-      this.pathBinauralPointer,
-      this.frameSize,
-    )
+    this.writeOutputBlock(heap, outputOffset, reflectionOffset, reverbOffset)
   }
 
   pullOutput(output, reflectionOutput, reverbOutput, pathingOutput, quantumSize) {
@@ -597,6 +689,79 @@ class SteamAudioProcessor extends AudioWorkletProcessor {
       const after = Atomics.load(this.controlSequence, 0)
       if (before === after)
         return
+    }
+  }
+
+  // Stage a freshly-simulated raw Ambisonic reflection IR (channel-major taps).
+  // Creates the overlap-save convolver on first use (sized to this IR), then
+  // partitions the new taps into it. The actual partition happens on the audio
+  // thread at the top of the next block (processBlock), so the convolver is only
+  // touched from one thread. Sets fftIRUpdated-once semantics via the binding.
+  stageReflectionIr(data, channels, samples) {
+    if (this.disposed || !this.ready || !this.headTracked || samples <= 0)
+      return
+    const { module } = this.runtime
+    // (Re)create the convolver if this is the first IR or the length grew.
+    if (!this.reflectionConvolver || samples > this.reflectionIrSamples) {
+      if (this.reflectionConvolver) {
+        module._sa_reflection_convolver_release(this.reflectionConvolver)
+        this.reflectionConvolver = 0
+        module._free(this.reflectionIrPointer)
+      }
+      this.reflectionConvolver = createHandle(module, out =>
+        module._sa_reflection_convolver_create(
+          this.reflectionOrder,
+          samples,
+          this.frameSize,
+          sampleRate,
+          out,
+        ))
+      this.reflectionIrSamples = samples
+      this.reflectionIrPointer = allocate(module, this.reflectionChannels * samples * 4)
+    }
+    // Copy the taps (clamped to the convolver's channels) into the heap scratch.
+    const useChannels = Math.min(channels, this.reflectionChannels)
+    const heap = module.HEAPF32
+    const base = this.reflectionIrPointer >>> 2
+    const view = new Float32Array(data)
+    for (let ch = 0; ch < useChannels; ch++)
+      heap.set(view.subarray(ch * samples, ch * samples + samples), base + ch * samples)
+    this.reflectionStagedChannels = useChannels
+    this.reflectionStagedSamples = samples
+    this.reflectionPartitionPending = true
+  }
+
+  // Copy this block's rendered buses into the output ring buffers. Direct binaural
+  // is in outputOffset; the reflection send (output[1]) is either the finished
+  // head-tracked binaural field (reflectionBinauralPointer, L block + R block) or
+  // the legacy mono parametric field (reflectionOffset, scaled by wet); reverb is
+  // mono in reverbOffset. Source offsets/gains are resolved ONCE so the tight
+  // per-sample loop stays branch-free.
+  writeOutputBlock(heap, outputOffset, reflectionOffset, reverbOffset) {
+    const reflectLeftOffset = this.headTracked
+      ? this.reflectionBinauralPointer >>> 2
+      : reflectionOffset
+    const reflectRightOffset = this.headTracked
+      ? (this.reflectionBinauralPointer >>> 2) + this.frameSize
+      : reflectionOffset
+    const reflectGain = this.headTracked ? 1 : this.control[18]
+    const reverbGain = this.control[22]
+    const pathWet = this.pathingEnabled ? this.pathControl[this.pathControl.length - 1] : 0
+    const pathOffset = this.pathingEnabled ? this.pathBinauralPointer >>> 2 : 0
+    for (let index = 0; index < this.frameSize; index++) {
+      this.outputLeft[this.outputWrite] = heap[outputOffset + index]
+      this.outputRight[this.outputWrite] = heap[outputOffset + this.frameSize + index]
+      this.reflectionLeft[this.outputWrite] = heap[reflectLeftOffset + index] * reflectGain
+      this.reflectionRight[this.outputWrite] = heap[reflectRightOffset + index] * reflectGain
+      this.reverbLeft[this.outputWrite] = heap[reverbOffset + index] * reverbGain
+      this.reverbRight[this.outputWrite] = heap[reverbOffset + index] * reverbGain
+      if (this.pathingEnabled) {
+        this.pathingLeftRing[this.outputWrite] = heap[pathOffset + index] * pathWet
+        this.pathingRightRing[this.outputWrite]
+          = heap[pathOffset + this.frameSize + index] * pathWet
+      }
+      this.outputWrite = (this.outputWrite + 1) % this.outputLeft.length
+      this.outputCount++
     }
   }
 }

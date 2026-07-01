@@ -172,17 +172,26 @@ function splitFace(face: PerimeterFace, a: number[], patches: WallPatch[]): Wall
   return rects.map(quad);
 }
 
+/** The ground quad (y=0) covering the whole room footprint, in the floor material.
+ *  Present for EVERY level — including `open` ones: you still walk on the ground
+ *  outdoors (asphalt), and the acoustic engine needs it as a reflecting surface AND as
+ *  the surface the pathing probe generator raycasts down onto (no floor ⇒ 0 probes ⇒ no
+ *  diffraction around interior objects, which open-with-buildings levels rely on). */
+function floorQuad(level: Level): WallDef {
+  const { width: sx, depth: sz } = level.room;
+  const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
+  return { verts: [v(0, 0, 0), v(sx, 0, 0), v(sx, 0, sz), v(0, 0, sz)], absorption: abs(level.floorMaterial) };
+}
+
 /** Build the perimeter walls + floor (+ ceiling if present) as polygon WallDefs. */
 function perimeterWalls(level: Level): WallDef[] {
-  const { width: sx, depth: sz } = level.room;
   const a = abs(level.roomMaterial);
-  const v = (x: number, y: number, z: number): [number, number, number] => [x, y, z];
   const patches = level.absorbers ?? [];
   const walls: WallDef[] = [];
   for (const face of perimeterFaces(level)) {
     walls.push(...splitFace(face, a, patches.filter((p) => p.wall === face.wall)));
   }
-  walls.push({ verts: [v(0, 0, 0), v(sx, 0, 0), v(sx, 0, sz), v(0, 0, sz)], absorption: abs(level.floorMaterial) }); // floor
+  walls.push(floorQuad(level));
   if (level.hasCeiling) walls.push(...ceilingQuads(level));
   return walls;
 }
@@ -387,7 +396,10 @@ export function levelHasMovingWalls(level: Level): boolean {
  */
 export function wallsAt(level: Level, t: number): WallDef[] {
   return [
-    ...(level.open ? [] : perimeterWalls(level)),
+    // Open levels skip the perimeter WALLS but STILL get the ground floor — you walk
+    // on it, it reflects, and the pathing probe generator needs it to place probes
+    // (open levels with interior buildings still need diffraction around them).
+    ...(level.open ? [floorQuad(level)] : perimeterWalls(level)),
     ...interiorWallsAt(level, t),
   ];
 }

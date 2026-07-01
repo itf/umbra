@@ -368,6 +368,18 @@ export class SteamAudioBackend {
         spacing: 1.0,
         height: 1.5,
       });
+      // An OPEN/wall-less or degenerate level can produce a batch with ZERO probes
+      // (nothing for the uniform-floor generator to sit probes on). Running the pathing
+      // sim against an empty/committed-but-probeless batch TRAPS the WASM ("table index
+      // out of bounds" in #runPathingSimulation). Dispose it and leave probeBatch null so
+      // pathing simply does nothing on this level (occlusion/reflections still work).
+      if (batch.numProbes === 0) {
+        try { batch.dispose(); } catch { /* best-effort */ }
+        this.probeBatch = null;
+        // eslint-disable-next-line no-console
+        console.info('[papasangre] pathing: 0 probes for this level (open/degenerate) — diffraction disabled.');
+        return;
+      }
       // Bake the probe-pair visibility graph for the current (static) geometry.
       this.world.bakePathing(batch);
       this.probeBatch = batch;

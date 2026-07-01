@@ -233,6 +233,7 @@ interface ConvertedGeometry {
 //#endregion
 //#region src/worker/reflection-simulation.d.ts
 interface ReflectionIr {
+  channels: number;
   data: Float32Array;
   samples: number;
 }
@@ -316,7 +317,7 @@ interface SteamAudioBindings extends EmscriptenModule {
   _sa_simulator_release(sim: number): void;
   _sa_simulator_run_direct(sim: number): number;
   _sa_simulator_run_reflections(sim: number): number;
-  _sa_simulator_set_listener(sim: number, x: number, y: number, z: number, ahead_x: number, ahead_y: number, ahead_z: number, up_x: number, up_y: number, up_z: number, reflection_rays: number, reflection_bounces: number, reflection_duration: number, reflection_order: number, irradiance_min_distance: number): void;
+  _sa_simulator_set_listener(sim: number, x: number, y: number, z: number, ahead_x: number, ahead_y: number, ahead_z: number, up_x: number, up_y: number, up_z: number, reflection_rays: number, reflection_bounces: number, reflection_duration: number, reflection_order: number, irradiance_min_distance: number, pathing_enabled: number): void;
   _sa_source_create(sim: number, simulation_flags: number, out_source: number): number;
   _sa_source_release(source: number, sim: number): void;
   _sa_source_set_inputs(source: number, x: number, y: number, z: number, ahead_x: number, ahead_y: number, ahead_z: number, up_x: number, up_y: number, up_z: number, direct_flags: number, distance_model: number, min_distance: number, distance_max: number, distance_samples: number, distance_curve: number, air_model: number, air_coefficients: number, air_max: number, air_samples: number, air_curves: number, dipole_weight: number, dipole_power: number, occlusion_type: number, occlusion_radius: number, occlusion_samples: number, transmission_rays: number, reflections_enabled: number, reverb_scale: number): void;
@@ -325,6 +326,10 @@ interface SteamAudioBindings extends EmscriptenModule {
   _sa_source_get_reflection_outputs(source: number, out_reverb_times: number): number;
   _sa_source_get_reflection_ir_size(source: number): number;
   _sa_source_get_reflection_ir(source: number, out_floats: number, max_floats: number): number;
+  _sa_reflection_convolver_create(order: number, ir_samples: number, frame_size: number, sample_rate: number, out_handle: number): number;
+  _sa_reflection_convolver_partition(handle: number, taps: number, num_channels: number, num_samples: number): number;
+  _sa_reflection_convolver_apply(handle: number, in_mono: number, out_ambisonic: number, num_samples: number): number;
+  _sa_reflection_convolver_release(handle: number): void;
   _sa_buffer_alloc(num_floats: number): number;
   _sa_buffer_free(buffer: number): void;
   _sa_buffer_deinterleave(interleaved: number, deinterleaved: number, num_channels: number, num_samples: number): void;
@@ -395,6 +400,11 @@ interface NodeControlValues {
   transmissionType: number;
 }
 type SteamAudioNodeState = 'disposed' | 'failed' | 'initializing' | 'ready';
+interface AmbisonicReflectionIr {
+  channels: number;
+  data: Float32Array;
+  samples: number;
+}
 interface NodeOptions {
   frameSize: number;
   headTracked?: boolean;
@@ -405,10 +415,6 @@ interface NodeOptions {
   sofaData?: ArrayBuffer;
   source: Source;
   wasmBinary: ArrayBuffer;
-}
-interface StereoReflectionIr {
-  data: Float32Array;
-  samples: number;
 }
 declare const AudioWorkletNodeBase: {
   new (context: BaseAudioContext, name: string, options?: AudioWorkletNodeOptions): AudioWorkletNode;
@@ -424,11 +430,11 @@ declare class SteamAudioBusNode extends AudioWorkletNodeBase {
   dispose(): void;
   setWet(wet: number): void;
 }
-declare class ReflectionBusNode extends SteamAudioBusNode {
-  constructor(context: AudioContext, settings?: ReflectionBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
-}
 declare class PathingBusNode extends SteamAudioBusNode {
   constructor(context: AudioContext, settings?: PathingBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
+}
+declare class ReflectionBusNode extends SteamAudioBusNode {
+  constructor(context: AudioContext, settings?: ReflectionBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
 }
 declare class ReverbBusNode extends SteamAudioBusNode {
   constructor(context: AudioContext, settings?: ReverbBusSettings, onDispose?: (node: SteamAudioBusNode) => void);
@@ -440,19 +446,20 @@ declare class SteamAudioNode extends AudioWorkletNodeBase {
   get error(): Error | undefined;
   get state(): SteamAudioNodeState;
   constructor(context: AudioContext, options: NodeOptions);
+  connectPathing(bus: PathingBusNode, options?: {
+    gain?: number;
+  }): PathingConnection;
   connectReflections(bus: ReflectionBusNode, options?: {
     gain?: number;
   }): ReflectionConnection;
   connectReverb(bus: ReverbBusNode, options?: {
     gain?: number;
   }): ReverbConnection;
-  connectPathing(bus: PathingBusNode, options?: {
-    gain?: number;
-  }): PathingConnection;
   dispose(): void;
   setControl(values: NodeControlValues): void;
-  setReflectionIr(ir: StereoReflectionIr): void;
   setPathing(update: PathingUpdate): void;
+  setReflectionIr(ir: AmbisonicReflectionIr): void;
+  setReflectionListener(ahead: readonly [number, number, number], up: readonly [number, number, number]): void;
 }
 //#endregion
 //#region src/three/world.d.ts
