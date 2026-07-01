@@ -73,41 +73,54 @@ export function playLoudnessPair(
 ): () => void {
   const TONE = 0.7;
   const GAP = 0.25;
-  const BASE = 0.25; // reference linear gain (comfortable, headroom for boosts)
+  // Reference linear gain — kept LOW (was 0.25) so calibration is never uncomfortably
+  // loud, per user preference; there's still headroom for the +dB band boosts.
+  const BASE = 0.15;
   const t0 = ctx.currentTime + 0.05;
 
-  const tone = (freq: number, gainDb: number, start: number): { osc: OscillatorNode } => {
-    const osc = ctx.createOscillator();
+  // One shared pink-ish noise buffer for both tones (cheaper + consistent timbre).
+  const noiseBuf = makeNoiseBuffer(ctx, TONE + 0.1);
+
+  // Each "tone" is NARROWBAND NOISE centred at `freq` (a bandpass over the noise),
+  // not a pure sine — a warmer, easier-to-judge sound that still isolates the band.
+  const tone = (freq: number, gainDb: number, start: number): { src: AudioBufferSourceNode } => {
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = freq;
+    bp.Q.value = 4; // ~1/4-octave — a clear pitch centre without a whistling tone
     const g = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    const lin = BASE * Math.pow(10, gainDb / 20);
+    // Bandpass noise is quieter than a sine at the same "gain", so lift a little.
+    const lin = BASE * 1.8 * Math.pow(10, gainDb / 20);
     g.gain.setValueAtTime(0, start);
-    g.gain.linearRampToValueAtTime(lin, start + 0.02);
-    g.gain.setValueAtTime(lin, start + TONE - 0.05);
+    g.gain.linearRampToValueAtTime(lin, start + 0.03);
+    g.gain.setValueAtTime(lin, start + TONE - 0.06);
     g.gain.linearRampToValueAtTime(0, start + TONE);
-    osc.connect(g);
+    src.connect(bp);
+    bp.connect(g);
     g.connect(dest);
-    osc.start(start);
-    osc.stop(start + TONE + 0.02);
-    return { osc };
+    src.start(start);
+    src.stop(start + TONE + 0.02);
+    return { src };
   };
 
   const a = tone(refFreq, 0, t0);
   const b = tone(bandFreq, gainDb(bandGainDb), t0 + TONE + GAP);
 
   return () => {
-    try {
-      a.osc.stop();
-    } catch {
-      /* already stopped */
-    }
-    try {
-      b.osc.stop();
-    } catch {
-      /* already stopped */
-    }
+    try { a.src.stop(); } catch { /* already stopped */ }
+    try { b.src.stop(); } catch { /* already stopped */ }
   };
+}
+
+/** A short looping-safe white-ish noise buffer for the calibration probes. */
+function makeNoiseBuffer(ctx: AudioContext, seconds: number): AudioBuffer {
+  const n = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+  const buf = ctx.createBuffer(1, n, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  return buf;
 }
 
 /** Local helper so the closure above reads naturally; just passes the dB through. */

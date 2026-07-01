@@ -101,31 +101,47 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     const x = side === 'left' ? -3 : 3; // listener-relative: −x left, +x right
     probe.setPosition(x, 1.6, 0);
     const ctx = graph.ctx;
-    const osc = ctx.createOscillator();
+    // Band-limited NOISE (not a pure 440 Hz sine) — warmer, easier to place, and kept
+    // at a comfortable level (peak ~0.3, was 0.5). A bandpass gives it a clear pitch
+    // centre without the harsh whistle of a sine.
+    const n = Math.max(1, Math.floor(ctx.sampleRate * 0.75));
+    const nbuf = ctx.createBuffer(1, n, ctx.sampleRate);
+    const nd = nbuf.getChannelData(0);
+    for (let i = 0; i < n; i++) nd[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = nbuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 550;
+    bp.Q.value = 3;
     const g = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 440;
     const t = ctx.currentTime;
     g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.5, t + 0.02);
-    g.gain.setValueAtTime(0.5, t + 0.55);
+    g.gain.linearRampToValueAtTime(0.3, t + 0.03);
+    g.gain.setValueAtTime(0.3, t + 0.55);
     g.gain.linearRampToValueAtTime(0, t + 0.6);
-    osc.connect(g);
+    src.connect(bp);
+    bp.connect(g);
     g.connect(probe.input);
-    osc.start(t);
-    osc.stop(t + 0.65);
+    src.start(t);
+    src.stop(t + 0.65);
   }
 
   function render() {
     clearControls();
     const step = machine.current;
     if (step === 'intro') {
+      // First-run framing: the DEFAULT is good enough for most people, so make skipping
+      // the easy, primary choice and present calibration as an optional extra. Either
+      // way it's always available later from Settings.
+      p.textContent =
+        'The default audio works well for most people — you can just start playing. If you like, you can calibrate: check your headphones, set a comfortable volume, and tune the 3D sound to your ears. You can always calibrate later from Settings.';
       deps.say(
-        'Audio calibration is optional but recommended. It checks your headphones, sets a comfortable volume, and can tune the 3D sound to your ears. Start it now, or skip — you can always run it later from Settings.',
+        'The default audio works well for most people. You can start playing now, or calibrate it to your ears first. You can always calibrate later from Settings.',
       );
-      const start = bigButton('Calibrate now (recommended)', onStart, true);
-      const skip = bigButton('Skip for now', skip_, false);
-      controls.append(start, skip);
+      const skip = bigButton('Use the default — start playing', skip_, true);
+      const start = bigButton('Calibrate first (optional)', onStart, false);
+      controls.append(skip, start);
     } else if (step === 'left') {
       deps.say('Listen. A tone will play on your LEFT. Where did you hear it?');
       playSide('left');
