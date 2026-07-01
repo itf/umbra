@@ -22,6 +22,7 @@ import { InterpolatingHrtfRenderer } from '../engine/hrtf/interpolatingRenderer'
 import { NEUTRAL_PERSONALIZATION, type HrtfPersonalization } from '../engine/hrtf/personalize';
 import { Staircase, type StaircaseTrial } from './hrtfStaircase';
 import { EXERCISES, STAIRCASE_CONFIG, type Exercise, type ExerciseParam } from './hrtfExercises';
+import { mountVisualizer } from './hrtfVisualizer';
 
 /**
  * The measured base head-responses the user can choose to personalize on top of.
@@ -384,10 +385,14 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let fpRaf = 0;
   let fpBuilt = false;
   let fpBuilding = false;
+  /** Sighted "where is the sound" diagram, updated each frame from the loop. */
+  let fpViz: ReturnType<typeof mountVisualizer> | null = null;
   const fpParams: HrtfPersonalization = { ...params };
 
   function teardownFreePlay() {
     disposeFpGraph();
+    fpViz?.dispose();
+    fpViz = null;
   }
 
   /** Fully release just the free-play graph (keeps params). Used on base switch. */
@@ -460,6 +465,21 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       id: 'overhead', label: 'Over the top (up/down)', period: 4000,
       path: (t) => { const tri = t < 0.5 ? t * 2 : 2 - t * 2; return [0, 1.6 + Math.sin(tri * Math.PI) * 1.5, -2 + tri * 4]; },
     },
+    {
+      // The user's calibration idea: a HELIX at 1 m — the source circles you once per
+      // ~5 s while simultaneously riding a sine up and down between −60° and +60°
+      // elevation. Because it sweeps every azimuth AND the full vertical arc at once,
+      // it exercises the entire directional response continuously; if your notch is
+      // right you should feel it spiralling up-and-over then down-and-behind, tracing
+      // the visualizer dot. Two vertical cycles per orbit so up/down is felt on every
+      // side, not just front.
+      id: 'spiral', label: 'Spiral up & down (calibration)', period: 5000,
+      path: (t) => {
+        const az = t * 2 * Math.PI; // one full circle
+        const elevDeg = 60 * Math.sin(t * 2 * Math.PI * 2); // ±60°, two cycles/orbit
+        return spherical1m(az, elevDeg);
+      },
+    },
   ];
   let fpMotionId = 'orbit';
 
@@ -473,6 +493,9 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       const ph = ((performanceNow() - startPerf) % motion.period) / motion.period; // 0..1
       const [x, y, z] = motion.path(ph);
       fpSrc.setPosition(x, y, z);
+      // Feed the diagram the SAME position the audio uses (listener at origin, so the
+      // source-relative offset is just the path point minus the head at y=1.6).
+      fpViz?.set(x, y, z);
       fpRaf = requestAnimationFrame(step);
     };
     fpRaf = requestAnimationFrame(step);
@@ -528,7 +551,19 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     teardownAudio(); // stop any guided-game graph
     h.textContent = 'Adjust your 3D audio by hand';
     p.textContent =
-      'A sound moves around you on a loop. The sliders don’t move it — they change its TONE, which is how your ears tell front from back and up from down. Pick the MOTION that matches the slider you’re tuning (Front↔behind for front/back, Over the top for up/down), then adjust until it feels right. Nothing is saved until you press Save.';
+      'A sound moves around you on a loop, and the diagram shows where it IS. The sliders don’t move it — they change its TONE, which is how your ears tell front from back and up from down. Pick a MOTION (try “Spiral up & down”: the sound circles you at arm’s length while rising and falling between low and high overhead — match what you hear to the dot), then adjust each slider until the sound lands where the diagram says it should. Nothing is saved until you press Save.';
+
+    // Sighted "where is the sound" diagram — the dot traces the SAME path the audio
+    // plays, so you can check whether what you hear matches where it really is.
+    const vizWrap = document.createElement('div');
+    vizWrap.className = 'hrtf-viz-wrap';
+    fpViz?.dispose();
+    fpViz = mountVisualizer(vizWrap);
+    const vizNote = document.createElement('p');
+    vizNote.className = 'hrtf-viz-note';
+    vizNote.textContent =
+      'The dot is where the sound really is. Tune until you HEAR it there.';
+    vizWrap.append(vizNote);
 
     // Base-head picker — CHOOSE which measured ear-response to tune on top of.
     const bases = document.createElement('div');
@@ -615,7 +650,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     });
     const back = bigButton('Back', () => { teardownFreePlay(); showIntro(); });
 
-    controls.append(bases, motions, knobs, save, refine, back);
+    controls.append(vizWrap, bases, motions, knobs, save, refine, back);
     void fpBuild();
     (knobs.querySelector('input') as HTMLElement | null)?.focus();
   }
@@ -647,6 +682,22 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 /** performance.now() with a plain-Date fallback (jsdom/tests). */
 function performanceNow(): number {
   return typeof performance !== 'undefined' && performance.now ? performance.now() : 0;
+}
+
+/**
+ * A point on the 1 m shell at azimuth `az` (radians, 0 = front, +right) and
+ * elevation `elevDeg` (degrees, + up). Engine convention: +x right, +y up, −z front,
+ * listener at head height 1.6 m. Used by the spiral calibration motion so the probe
+ * traces the exact 1 m helix the visualizer draws.
+ */
+function spherical1m(az: number, elevDeg: number): [number, number, number] {
+  const el = (elevDeg * Math.PI) / 180;
+  const r = 1; // 1 m — near enough to feel personal, far enough to externalize
+  const cosEl = Math.cos(el);
+  const x = Math.sin(az) * cosEl * r;
+  const z = -Math.cos(az) * cosEl * r; // −z = front
+  const y = 1.6 + Math.sin(el) * r;
+  return [x, y, z];
 }
 
 /**
