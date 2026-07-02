@@ -793,6 +793,23 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let locTarget: Direction | null = null;
   const locStaircases = new Map<ExerciseParam, Staircase>();
   const ATTEMPTS_PER_CANDIDATE = 2;
+  /** Per-trial control area (picker + replay + progress), cleared between trials so the
+   *  visualizer persists but Begin/Back don't linger. */
+  let locTrialArea: HTMLElement | null = null;
+  let locProgressEl: HTMLElement | null = null;
+  /** Progress bookkeeping so the test never feels endless: how many pointings the user
+   *  has done, a rough estimate of the total, and their recent error (for "getting
+   *  better"). The estimate = attempts-per-candidate × 2 candidates × exercises, which is
+   *  the worst case; staircases usually converge sooner, so we phrase it as "about". */
+  let locAnswered = 0;
+  /** Rough round estimate for the CURRENT stage, set when it starts, for "Round N of
+   *  about M". Exercises share staircases by PARAM (only a few distinct params), and each
+   *  converges in ~3 rounds — so estimate ≈ distinctParams × 3, NOT one-per-exercise
+   *  (which over-counted badly and made the test feel endless). */
+  const LOC_DISTINCT_PARAMS = new Set(EXERCISES.map((e) => e.param)).size;
+  const ROUNDS_PER_PARAM = 3;
+  let locEstTotal = LOC_DISTINCT_PARAMS * ROUNDS_PER_PARAM;
+  const locErrHistory: number[] = [];
 
   function teardownLoc() {
     clearTimers();
@@ -802,6 +819,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locViz?.dispose();
     locPicker?.dispose();
     locSrc = null; locGain = null; locRenderer = null; locViz = null; locPicker = null;
+    locTrialArea = null; locProgressEl = null;
     locBuiltForUrl = null;
   }
 
@@ -841,12 +859,20 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   }
 
   /** Play the current candidate's probe at a fresh random direction, hide the true
-   *  dot, and wait for the user to click where they heard it. */
+   *  dot, and show the picker + replay + progress for the user's answer. */
   async function locPlayAndAsk() {
     if (disposed) return;
     // Pick target direction seeded by attempt index for reproducibility across runs.
     const seed = locExIdx * 101 + locAttempts.length * 7 + 1;
     locTarget = makeTestDirections(1, seed)[0];
+    await locSoundTarget();
+    if (disposed) return;
+    locShowAnswerControls();
+  }
+
+  /** Play the CURRENT locTarget once (used by both the initial ask and Replay). */
+  async function locSoundTarget() {
+    if (!locTarget) return;
     const [tx, ty, tz] = dirToPosition(locTarget, 1, 1.6);
     locViz?.showSource(false);
     locViz?.setGuess(null);
@@ -857,15 +883,51 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     // moving sweep for a "where is it" judgement).
     locSrc?.setPosition(tx, ty, tz);
     if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(LOCALIZE_LEVEL, t + 0.03); }
-    p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
-    deps.say('Where did it come from? Set the direction and height, then confirm.');
     const stop = setTimeout(() => {
       if (locGain) { const t = ctx.currentTime; locGain.gain.setTargetAtTime(0.0001, t, 0.05); }
     }, 1500);
     seqTimers.push(stop);
-    // Fresh picker for this answer (disposed + rebuilt each trial so state resets).
+  }
+
+  /** Build the answer UI for this round: progress line, the compass+height picker, and
+   *  a Replay button. The trial area is cleared first so Begin/old controls don't stay. */
+  function locShowAnswerControls() {
+    if (!locTrialArea) return;
+    locTrialArea.innerHTML = '';
+    p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
+    deps.say('Where did it come from? Set the direction and height, then confirm.');
+
+    // Progress: "Round N of about M" + a "getting better" hint once there's history.
+    locProgressEl = document.createElement('p');
+    locProgressEl.className = 'hrtf-loc-progress';
+    locProgressEl.textContent = locProgressText();
+    locTrialArea.append(locProgressEl);
+
     locPicker?.dispose();
-    locPicker = mountDirectionPicker(controls, { onCommit: onPickerCommit, say: deps.say });
+    locPicker = mountDirectionPicker(locTrialArea, { onCommit: onPickerCommit, say: deps.say });
+
+    const replay = bigButton('▶ Play the sound again', () => { void locSoundTarget(); });
+    replay.classList.add('secondary');
+    locTrialArea.append(replay);
+  }
+
+  /** "Round N of about M" plus, once there's history, whether accuracy is improving.
+   *  If we run past the estimate (staircases occasionally need extra rounds), switch to
+   *  "almost done" rather than a wrong "N of M". */
+  function locProgressText(): string {
+    const round = locAnswered + 1;
+    let s = round > locEstTotal
+      ? `Round ${round} — almost done.`
+      : `Round ${round} of about ${locEstTotal}.`;
+    if (locErrHistory.length >= 4) {
+      const half = Math.floor(locErrHistory.length / 2);
+      const early = avg(locErrHistory.slice(0, half));
+      const recent = avg(locErrHistory.slice(half));
+      const deg = (r: number) => Math.round((r * 180) / Math.PI);
+      if (recent < early - 0.08) s += ` You're getting more accurate (about ${deg(recent)}° off now).`;
+      else s += ` Recent aim: about ${deg(recent)}° off.`;
+    }
+    return s;
   }
 
   /** Route a committed pick to whichever stage is active (localization vs PCA). */
@@ -883,6 +945,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locViz.showSource(true); // reveal the truth so the user sees how close they were
     const err = angularError(locTarget, guess);
     locAttempts.push({ which: locWhich, error: err });
+    locAnswered++;
+    locErrHistory.push(err);
     const degOff = Math.round((err * 180) / Math.PI);
     deps.say(degOff < 25 ? 'Close.' : degOff < 60 ? 'Not bad.' : 'Off.');
     p.textContent = `You were about ${degOff}° off. Next…`;
@@ -942,14 +1006,24 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     teardownFreePlay();
     h.textContent = 'Point to the sound';
     p.textContent =
-      'A sound will play somewhere around you. Say where it came from using TWO controls: the COMPASS (which way around you — front, right, behind, left) and the HEIGHT slider (below, ear level, or overhead). Then press “This is where it came from”. We keep whichever tuning helps you locate best. A couple of minutes.';
+      'A sound will play somewhere around you. Say where it came from using TWO controls: the COMPASS (which way around you — front, right, behind, left) and the HEIGHT slider (below, ear level, or overhead). Then press “This is where it came from”. We keep whichever tuning helps you locate best. About a dozen quick rounds.';
     const vizWrap = document.createElement('div');
     vizWrap.className = 'hrtf-viz-wrap';
     locViz = mountVisualizer(vizWrap); // display only; input is the picker below
-    controls.append(vizWrap);
-    const begin = bigButton('Begin', () => { startNoise(); pickTarget = 'loc'; locExIdx = 0; locStaircases.clear(); void locAdvanceExercise(); }, true);
+    // A trial area that gets cleared each round (so the Begin button — and later the
+    // picker — don't pile up), while the visualizer above persists.
+    locTrialArea = document.createElement('div');
+    locTrialArea.className = 'hrtf-loc-trial';
+    controls.append(vizWrap, locTrialArea);
+    const begin = bigButton('Begin', () => {
+      startNoise(); pickTarget = 'loc';
+      locExIdx = 0; locStaircases.clear();
+      locAnswered = 0; locErrHistory.length = 0;
+      locEstTotal = LOC_DISTINCT_PARAMS * ROUNDS_PER_PARAM;
+      void locAdvanceExercise();
+    }, true);
     const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
-    controls.append(begin, back);
+    locTrialArea.append(begin, back);
     begin.focus();
   }
 
@@ -980,14 +1054,22 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     }
     pcaK = pcaModelLoaded.k;
     p.textContent =
-      'Same as before — a sound plays around you and you point to where you heard it. Now we morph your 3D audio along the ways real human ears differ, keeping whatever helps you locate sounds best. A couple of minutes.';
+      'Same as before — a sound plays around you and you point to where you heard it. Now we morph your 3D audio along the ways real human ears differ, keeping whatever helps you locate sounds best. About a dozen quick rounds.';
     const vizWrap = document.createElement('div');
     vizWrap.className = 'hrtf-viz-wrap';
     locViz = mountVisualizer(vizWrap); // display only; input is the picker
-    controls.append(vizWrap);
-    const begin = bigButton('Begin', () => { startNoise(); pickTarget = 'pca'; pcaIdx = 0; pcaStaircases.clear(); void pcaAdvance(); }, true);
+    locTrialArea = document.createElement('div');
+    locTrialArea.className = 'hrtf-loc-trial';
+    controls.append(vizWrap, locTrialArea);
+    const begin = bigButton('Begin', () => {
+      startNoise(); pickTarget = 'pca';
+      pcaIdx = 0; pcaStaircases.clear();
+      locAnswered = 0; locErrHistory.length = 0;
+      locEstTotal = pcaK * ROUNDS_PER_PARAM; // one staircase per principal component
+      void pcaAdvance();
+    }, true);
     const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
-    controls.append(begin, back);
+    locTrialArea.append(begin, back);
     begin.focus();
   }
 
@@ -1037,6 +1119,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locViz.showSource(true);
     const err = angularError(locTarget, guess);
     locAttempts.push({ which: locWhich, error: err });
+    locAnswered++;
+    locErrHistory.push(err);
     const degOff = Math.round((err * 180) / Math.PI);
     p.textContent = `You were about ${degOff}° off. Next…`;
     const id = setTimeout(() => pcaNextAttempt(), 1000);
@@ -1087,6 +1171,11 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** Arithmetic mean of a non-empty array (0 for empty). */
+function avg(xs: number[]): number {
+  return xs.length ? xs.reduce((p, c) => p + c, 0) / xs.length : 0;
+}
 
 /** performance.now() with a plain-Date fallback (jsdom/tests). */
 function performanceNow(): number {

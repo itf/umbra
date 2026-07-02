@@ -338,6 +338,8 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .dir-height { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .dir-height-slider { writing-mode: vertical-lr; direction: rtl; height: 160px; width: 28px; }
 .dir-readout { font-size: 0.95rem; opacity: 0.85; margin: 0; text-align: center; }
+.hrtf-loc-trial { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.hrtf-loc-progress { font-size: 0.9rem; opacity: 0.75; margin: 0; text-align: center; }
 
 #calibration-screen, #tutorial-screen { max-width: 560px; }
 .tut-body { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 8px 0; }
