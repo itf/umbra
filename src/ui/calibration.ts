@@ -17,7 +17,7 @@ import { CalibrationMachine, type Side } from './calibrationMachine';
 import type { OnboardingStore } from './onboardingStore';
 import { mountLoudnessEq } from './loudnessEqUi';
 import type { EqBand } from './loudnessEq';
-import { mountHrtfTuning, baseHrtfById } from './hrtfTuning';
+import { mountHrtfTuning, baseHrtfById, type LocResumeBlob } from './hrtfTuning';
 import { mountHeadphoneCompLocalizeAb } from './headphoneCalibration';
 import type { HrtfPersonalization } from '../engine/hrtf/personalize';
 import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
@@ -75,6 +75,11 @@ export interface CalibrationDeps {
    */
   loadHeadphoneType?: () => HeadphoneType | null;
   saveOverEarCompStrength?: (strength: number) => void;
+  /** RESUME hooks for the interleaved calibration loop — the host owns storage + the
+   *  schema-signature guard (loadResume returns null on a mismatched/absent snapshot). */
+  saveResume?: (blob: LocResumeBlob) => void;
+  loadResume?: () => LocResumeBlob | null;
+  clearResume?: () => void;
 }
 
 export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
@@ -386,6 +391,9 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
       initial,
       navigate: (step) => deps.navigate(step),
       onDone: afterTuning,
+      saveResume: deps.saveResume,
+      loadResume: deps.loadResume,
+      clearResume: deps.clearResume,
     });
   }
 

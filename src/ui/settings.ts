@@ -146,6 +146,27 @@ export interface SettingsHooks {
   loadHrtfProfile?: (code: string) => boolean;
 
   /**
+   * PROFILES MANAGER (save/restore named tuning snapshots). Each hook is optional; the
+   * whole block is hidden when `listProfiles` is absent. A profile = base head + all warp
+   * params (incl. biases) + pcaWeights + comp strength. See hrtfProfiles.
+   */
+  listProfiles?: () => { id: string; name: string; reserved?: boolean; compatible: boolean }[];
+  /** The currently-active profile id (whose tuning matches live settings), or null. */
+  activeProfileId?: () => string | null;
+  /** Snapshot the current live tuning as a NEW named profile. */
+  saveProfile?: (name: string) => void;
+  /** Apply a saved profile's tuning LIVE (base + params + comp). Returns false if unknown/
+   *  incompatible (schema-signature mismatch). */
+  applyProfile?: (id: string) => boolean;
+  renameProfile?: (id: string, name: string) => boolean;
+  deleteProfile?: (id: string) => boolean;
+  /** A shareable URL for a profile (tuning encoded in the hash; nothing sensitive). */
+  shareProfileUrl?: (id: string) => string | null;
+  /** Import a pasted CODE or shared URL → { name } preview on success, or null. Applies +
+   *  saves it. Refuses (returns { error }) on a schema-signature mismatch. */
+  importProfile?: (codeOrUrl: string) => { name: string } | { error: string } | null;
+
+  /**
    * OVER-EAR headphone compensation (advanced, opt-in). `runHeadphoneCalibration`
    * launches the standalone "Calibrate headphones" flow (ask type → A/B strength),
    * persisting + applying the result LIVE. `headphoneCompStatus` returns a short human
@@ -631,6 +652,136 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
     if (exportHrtfBtn) group.append(exportHrtfBtn);
     if (shareHrtfBtn) group.append(shareHrtfBtn);
     if (loadRow) group.append(loadRow);
+
+    // --- PROFILES MANAGER: save/apply/rename/delete named tuning snapshots + share URL. ---
+    if (hooks.listProfiles) {
+      const profWrap = document.createElement('div');
+      profWrap.className = 'settings-hrtf-profiles';
+      const profTitle = document.createElement('h4');
+      profTitle.textContent = 'Saved profiles';
+      const profList = document.createElement('ul');
+      profList.className = 'settings-profile-list';
+
+      const refreshProfiles = () => {
+        profList.innerHTML = '';
+        const activeId = hooks.activeProfileId?.() ?? null;
+        const items = hooks.listProfiles!();
+        if (items.length === 0) {
+          const empty = document.createElement('li');
+          empty.className = 'settings-profile-empty';
+          empty.textContent = 'No saved profiles yet. Save your current tuning below.';
+          profList.append(empty);
+          return;
+        }
+        for (const it of items) {
+          const li = document.createElement('li');
+          li.className = 'settings-profile-item';
+          const label = document.createElement('span');
+          label.className = 'settings-profile-name';
+          const active = it.id === activeId ? ' — active' : '';
+          const bad = it.compatible ? '' : ' (incompatible with this build)';
+          label.textContent = `${it.name}${active}${bad}`;
+          li.append(label);
+
+          const apply = document.createElement('button');
+          apply.type = 'button';
+          apply.textContent = 'Apply';
+          apply.disabled = !it.compatible;
+          apply.addEventListener('click', () => {
+            const ok = hooks.applyProfile?.(it.id);
+            hooks.alert(ok ? `Applied “${it.name}”.` : 'That profile can’t be applied on this build.');
+            if (ok) refreshProfiles();
+          });
+          li.append(apply);
+
+          if (hooks.shareProfileUrl) {
+            const share = document.createElement('button');
+            share.type = 'button';
+            share.textContent = 'Share link';
+            share.addEventListener('click', async () => {
+              const url = hooks.shareProfileUrl!(it.id);
+              if (!url) { hooks.alert('Could not build a share link for that profile.'); return; }
+              try { await navigator.clipboard?.writeText(url); hooks.alert('Share link copied to clipboard.'); }
+              catch { hooks.alert('Share link: ' + url); }
+            });
+            li.append(share);
+          }
+
+          if (hooks.renameProfile) {
+            const ren = document.createElement('button');
+            ren.type = 'button';
+            ren.textContent = 'Rename';
+            ren.addEventListener('click', () => {
+              const name = (typeof prompt !== 'undefined' ? prompt('New name for this profile:', it.name) : null);
+              if (name && hooks.renameProfile?.(it.id, name)) refreshProfiles();
+            });
+            li.append(ren);
+          }
+
+          if (hooks.deleteProfile && !it.reserved) {
+            const del = document.createElement('button');
+            del.type = 'button';
+            del.className = 'settings-profile-delete';
+            del.textContent = 'Delete';
+            del.addEventListener('click', () => {
+              // Consequence-obvious confirm — name exactly what's lost.
+              hooks.say(`Delete the profile “${it.name}”? This permanently removes that saved tuning.`);
+              const ok = typeof confirm !== 'undefined'
+                ? confirm(`Delete “${it.name}”? This permanently removes that saved tuning and cannot be undone.`)
+                : true;
+              if (ok && hooks.deleteProfile?.(it.id)) { hooks.say(`Deleted “${it.name}”.`); refreshProfiles(); }
+            });
+            li.append(del);
+          }
+          profList.append(li);
+        }
+      };
+
+      // Save-current-as-profile.
+      const saveRow = document.createElement('div');
+      saveRow.className = 'settings-hrtf-load';
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.textContent = 'Save current tuning as a profile…';
+      saveBtn.addEventListener('click', () => {
+        const name = (typeof prompt !== 'undefined' ? prompt('Name this profile:', 'My tuning') : 'My tuning');
+        if (!name) return;
+        hooks.saveProfile?.(name);
+        hooks.say(`Saved “${name}”.`);
+        refreshProfiles();
+      });
+      saveRow.append(saveBtn);
+
+      // Import a pasted code OR shared URL.
+      let importRow: HTMLElement | null = null;
+      if (hooks.importProfile) {
+        importRow = document.createElement('div');
+        importRow.className = 'settings-hrtf-load';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.placeholder = 'Paste a profile code or share link';
+        input.className = 'settings-hrtf-load-input';
+        const impBtn = document.createElement('button');
+        impBtn.type = 'button';
+        impBtn.textContent = 'Import';
+        impBtn.addEventListener('click', () => {
+          const v = input.value.trim();
+          if (!v) return;
+          const res = hooks.importProfile!(v);
+          if (!res) { hooks.alert('That profile code or link was not valid.'); return; }
+          if ('error' in res) { hooks.alert(res.error); return; }
+          input.value = '';
+          hooks.alert(`Imported and applied “${res.name}”.`);
+          refreshHrtf(); refreshProfiles();
+        });
+        importRow.append(input, impBtn);
+      }
+
+      refreshProfiles();
+      profWrap.append(profTitle, profList, saveRow);
+      if (importRow) profWrap.append(importRow);
+      group.append(profWrap);
+    }
 
     // --- Headphone compensation: a BASIC over-ear toggle (mirrors the calibration
     //     onboarding question) plus an ADVANCED by-ear fine-tune. ---

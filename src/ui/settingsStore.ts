@@ -237,6 +237,16 @@ export class SettingsStore {
     }
   }
 
+  /** PUBLIC raw string access for feature layers that own their own keys + versioning
+   *  (e.g. hrtfProfiles / resume) — so there's ONE storage/fallback path, not a second one.
+   *  Same localStorage-with-in-memory-fallback semantics as the private read/write. */
+  readRaw(key: string): string | null { return this.read(key); }
+  writeRaw(key: string, value: string) { this.write(key, value); }
+  removeRaw(key: string) {
+    this.mem.delete(key);
+    try { this.store?.removeItem(key); } catch { /* memory already cleared */ }
+  }
+
   /** Stored master volume in [0,1]; the default (full) when unset/corrupt. */
   masterVolume(): number {
     const raw = this.read(MASTER_VOLUME_KEY);

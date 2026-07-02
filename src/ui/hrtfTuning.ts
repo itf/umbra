@@ -106,6 +106,28 @@ export interface HrtfTuningDeps {
    * the internal showIntro()/render*() transitions.
    */
   navigate?: (step: 'tune' | 'localize' | 'knobs' | 'guided' | 'pca') => void;
+  /**
+   * RESUME hooks (optional). The interleaved calibration loop auto-saves its serializable
+   * session after each answer via `saveResume`, offers to continue via `loadResume` on
+   * re-entry, and `clearResume` on completion / start-over. The host owns storage + the
+   * schema signature guard (see hrtfProfiles). When omitted, calibration never persists
+   * mid-progress (old behavior).
+   */
+  saveResume?: (blob: LocResumeBlob) => void;
+  loadResume?: () => LocResumeBlob | null;
+  clearResume?: () => void;
+}
+
+/** The serializable in-progress calibration snapshot the resume hooks round-trip. `session`
+ *  is the opaque LocSession (plain JSON); `params`/`base` are the tuning committed so far so
+ *  resume restores the live renderer too. `answered`/`estTotal` drive the "N of ~M" prompt. */
+export interface LocResumeBlob {
+  mode: 'full' | 'pca';
+  session: unknown;      // LocSession (kept opaque at the boundary; validated on load)
+  params: HrtfPersonalization;
+  base: string;
+  answered: number;
+  estTotal: number;
 }
 
 /** Build a candidate set of personalization params: base overlaid with one override.
@@ -575,11 +597,18 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     fpRenderer?.setPersonalization({ ...fpParams });
   }
 
+  /** One orbit ("Circle around me") takes this long; the spiral reuses this angular
+   *  speed so it rotates at exactly the same rate. */
+  const ORBIT_PERIOD_MS = 6000;
+  /** Spiral: rotations per HALF height-cycle (one up OR one down). A full up-and-down
+   *  is 2× this many turns (~3.58) — a slow, calm helix rather than a fast bob. */
+  const SPIRAL_ROT_PER_HALF_CYCLE = 1.79;
+
   /** The motions the user can CHOOSE between while tuning by hand. `there`/`back`
    *  makes a pass ping-pong so it loops smoothly (out then back) instead of jumping. */
   const FP_MOTIONS: ReadonlyArray<{ id: string; label: string; period: number; path: (t: number) => readonly [number, number, number] }> = [
     {
-      id: 'orbit', label: 'Circle around me', period: 6000,
+      id: 'orbit', label: 'Circle around me', period: ORBIT_PERIOD_MS,
       path: (t) => { const a = t * 2 * Math.PI; return [Math.sin(a) * 2, 1.6, -Math.cos(a) * 2]; },
     },
     {
@@ -595,17 +624,18 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       path: (t) => { const tri = t < 0.5 ? t * 2 : 2 - t * 2; return [0, 1.6 + Math.sin(tri * Math.PI) * 1.5, -2 + tri * 4]; },
     },
     {
-      // The user's calibration idea: a HELIX at 1 m — the source circles you once per
-      // ~5 s while simultaneously riding a sine up and down between −60° and +60°
-      // elevation. Because it sweeps every azimuth AND the full vertical arc at once,
-      // it exercises the entire directional response continuously; if your notch is
-      // right you should feel it spiralling up-and-over then down-and-behind, tracing
-      // the visualizer dot. Two vertical cycles per orbit so up/down is felt on every
-      // side, not just front.
-      id: 'spiral', label: 'Spiral up & down (calibration)', period: 5000,
+      // A clean HELIX at 1 m: the source rotates around you at the SAME angular speed as
+      // "Circle around me" (one turn per 6 s) while SLOWLY riding a sine up and down
+      // between −60° and +60°. The vertical is deliberately slow relative to the spin —
+      // one full up-and-down over SPIRAL_ROT_PER_HALF_CYCLE (1.79) rotations, so a
+      // complete height cycle takes double that (~3.58) turns. This traces a calm spiral
+      // (up-and-over, then down-and-behind) instead of the old chaotic 2-cycles-per-orbit
+      // bob; slow height change lets the ear track front/back and up/down separately.
+      id: 'spiral', label: 'Spiral up & down (calibration)',
+      period: ORBIT_PERIOD_MS * 2 * SPIRAL_ROT_PER_HALF_CYCLE,
       path: (t) => {
-        const az = t * 2 * Math.PI; // one full circle
-        const elevDeg = 60 * Math.sin(t * 2 * Math.PI * 2); // ±60°, two cycles/orbit
+        const az = t * 2 * Math.PI * (2 * SPIRAL_ROT_PER_HALF_CYCLE); // 3.58 turns per loop
+        const elevDeg = 60 * Math.sin(t * 2 * Math.PI); // ±60°, exactly one height cycle/loop
         return spherical1m(az, elevDeg);
       },
     },
@@ -1044,6 +1074,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     } else {
       locTarget = makeTargetedDirection('balanced', 9000 + locSession.answered);
     }
+    persistResume();             // snapshot the advanced session so we can resume after a reload
     ensurePickerMounted();       // build the compass/arc ONCE, reuse across probes
     locResetForNextProbe();      // reset aim + progress in place — no teardown/navigation
     await locSoundTarget();
@@ -1356,11 +1387,30 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 
   /** Start (or restart) the interleaved loop. Builds the pool + the first pass order. */
   async function locStart(mode: 'full' | 'pca') {
+    deps.clearResume?.(); // starting over erases any prior in-progress snapshot
     locSession = freshLocSession();
     locSession.mode = mode;
     locSession.factors = buildFactorPool(mode);
     locSession.order = makePassOrder(0, locSession.factors.length);
     locSession.cursor = 0;
+    await locDriveRound();
+  }
+
+  /** RESUME a saved in-progress session (validated by the caller/host). Restores the tuning
+   *  committed so far + the pool/cursor/pass, then continues from the next probe. Falls back
+   *  to a fresh start if the blob shape doesn't match the current factor pool. */
+  async function locResume(blob: LocResumeBlob): Promise<void> {
+    const s = blob.session as LocSession | undefined;
+    const fresh = buildFactorPool(blob.mode);
+    if (!s || !Array.isArray(s.factors) || s.factors.length !== fresh.length) {
+      return locStart(blob.mode); // shape changed → safest to restart
+    }
+    // Restore committed tuning + base head so the live renderer matches progress.
+    Object.assign(params, blob.params);
+    if (blob.base) { currentBase = baseHrtfById(blob.base); deps.saveBaseHrtf?.(currentBase.id); }
+    locSession = s;
+    locSession.mode = blob.mode;
+    locAnswered = blob.answered;
     await locDriveRound();
   }
 
@@ -1448,6 +1498,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       commitFactor(fs);
     }
     locSession.done = true;
+    deps.clearResume?.(); // in-progress snapshot is spent
     teardownLoc();
     deps.save(params);
     if (locSession.mode === 'pca') {
@@ -1458,6 +1509,20 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       deps.alert('Calibration complete.');
     }
     deps.onDone();
+  }
+
+  /** Persist the current in-progress session so calibration can be RESUMED after a reload /
+   *  navigating away. Called once per probe (session already advanced). Best-effort. */
+  function persistResume() {
+    if (!deps.saveResume) return;
+    deps.saveResume({
+      mode: locSession.mode,
+      session: locSession,
+      params: { ...params },
+      base: currentBase.id,
+      answered: locSession.answered,
+      estTotal: locEstTotal,
+    });
   }
 
   /** The value of a basin's lowest-mean-error bucket (for cap fallback). */
@@ -1496,20 +1561,35 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locTrialArea = document.createElement('div');
     locTrialArea.className = 'hrtf-loc-trial';
     controls.append(vizWrap, locTrialArea, showRow); // checkbox at the END
-    const begin = bigButton('Begin', () => {
+    // Ensure the PCA model is loaded before starting/resuming (its weights are pool factors).
+    const armAndRun = async (run: () => Promise<void>) => {
       startNoise();
       locAnswered = 0; locErrHistory.length = 0;
-      // Load the PCA model up front (best-effort) so its weights join the factor pool and
-      // are tuned INTERLEAVED with the base head + params — then start the round-robin.
-      void (async () => {
-        if (!pcaModelLoaded) { try { const { loadPcaModel } = await import('../engine/hrtf/hrtfPca'); pcaModelLoaded = await loadPcaModel(); } catch { /* no PCA */ } }
-        locEstTotal = estimateLocTotal('full');
-        await locStart('full');
-      })();
-    }, true);
+      if (!pcaModelLoaded) { try { const { loadPcaModel } = await import('../engine/hrtf/hrtfPca'); pcaModelLoaded = await loadPcaModel(); } catch { /* no PCA */ } }
+      locEstTotal = estimateLocTotal('full');
+      await run();
+    };
+    const begin = bigButton('Begin', () => { void armAndRun(() => locStart('full')); }, true);
     const back = bigButton('Back', () => { teardownLoc(); backToIntro(); });
-    locTrialArea.append(begin, back);
-    begin.focus();
+
+    // Offer RESUME when a valid in-progress 'full' session was saved (host already
+    // signature-guarded it — a mismatch returns null). Consequence-obvious start-over.
+    const saved = deps.loadResume?.();
+    if (saved && saved.mode === 'full' && saved.answered > 0) {
+      const roundN = saved.answered + 1;
+      const est = saved.estTotal || estimateLocTotal('full');
+      p.textContent = `You have a calibration in progress — round ${roundN} of up to about ${est}. Resume where you left off, or start over (which erases that progress).`;
+      const resume = bigButton(`Resume (round ${roundN} of ~${est})`, () => { void armAndRun(() => locResume(saved)); }, true);
+      const over = bigButton('Start over (erase progress)', () => {
+        deps.say('Starting over — your in-progress calibration will be erased.');
+        void armAndRun(() => locStart('full'));
+      });
+      locTrialArea.append(resume, over, back);
+      resume.focus();
+    } else {
+      locTrialArea.append(begin, back);
+      begin.focus();
+    }
   }
 
   /** Upper-bound round estimate for progress text. Each factor ≈ its buckets × minPerBucket
