@@ -1,137 +1,154 @@
 /**
- * Coarse→fine staircase for one personalization parameter.
+ * Per-parameter search for the perceptual HRTF game. Presents A/B probe pairs; each
+ * answer ('a' = A better, 'b' = B better) narrows one scalar of `HrtfPersonalization`.
  *
- * The perceptual game (hrtfTuning.ts) presents MOVING probe sounds rendered with
- * two candidate settings — "A" and "B" — and asks which felt more like the target
- * motion (more outside the head / more clearly in front / more like moving up).
- * Each answer nudges one scalar of `HrtfPersonalization`.
+ * SEARCH STRATEGY (two-phase, per the desired behaviour):
+ *  • BOUNDED param (finite min/max) → BINARY SEARCH the range. Each trial plays two
+ *    probes straddling the midpoint (A = lower third, B = upper third of the live
+ *    bracket); the winner's side is kept and the bracket halves. Guaranteed log₂
+ *    convergence in a fixed, predictable number of steps.
+ *  • UNBOUNDED (no usable range) → EXPONENTIALLY grow the step from `start`, probing
+ *    current-vs-stepped, until the answer FLIPS (the point where B stops/starts
+ *    winning) — that flip brackets the optimum — then binary-search that bracket.
  *
- * We use a bracketing staircase with a step that starts LARGE and halves whenever
- * the listener reverses direction (a classic transformed up/down / "optometrist"
- * search). Large first steps make the difference obvious before the brain adapts
- * (~3–5 min budget); the halving converges to a stable value in a handful of
- * choices without slider-fiddling.
- *
- * Pure & deterministic — no audio, no DOM, no randomness. Unit-tested in
- * tests/hrtfStaircase.test.ts.
+ * Same public API as before (current / done / nextTrial / answer / bothBad) so callers
+ * (guided A/B + localization + PCA) are unchanged. Pure & deterministic. Unit-tested.
  */
 
 export interface StaircaseOpts {
-  /** Starting (center) value — usually the neutral default. */
+  /** Starting (center) value. */
   start: number;
-  /** Initial step magnitude (deliberately large so A vs B is obvious). */
+  /** Initial step magnitude (used only by the unbounded exponential-bracket phase). */
   step: number;
-  /** Smallest step; once the step would drop below this we're converged. */
+  /** Convergence: stop once the bracket width ≤ minStep. */
   minStep: number;
-  /** Hard clamp on the value. */
+  /** Range. When both are finite the search binary-searches [min,max] directly. */
   min: number;
   max: number;
-  /** How many reversals before we call it converged (default 3). */
+  /** Kept for API compatibility (ignored by the binary search). */
   reversals?: number;
 }
 
 /** One A/B comparison the game should present. */
 export interface StaircaseTrial {
-  /** Candidate value for option A. */
   a: number;
-  /** Candidate value for option B. */
   b: number;
 }
 
 export class Staircase {
-  private value: number;
-  private step: number;
+  private lo: number;
+  private hi: number;
   private readonly minStep: number;
   private readonly min: number;
   private readonly max: number;
-  private readonly targetReversals: number;
-  private reversals = 0;
-  /** Consecutive "both bad" answers, so an unanswerable param terminates gracefully. */
+  /** Best estimate (bracket midpoint). */
+  private value: number;
+  /** 'binary' once we have a finite bracket; 'bracket' while exponentially expanding. */
+  private phase: 'binary' | 'bracket';
+  // --- unbounded exponential-bracket phase state ---
+  private step: number;
+  private bracketDir = 1;
+  private lastChoseB: boolean | null = null;
+  private bracketFrom = 0;
+  /** "both bad" give-up counter. */
   private noProgress = 0;
-  /** +1 if the last accepted move raised the value, −1 if lowered, 0 at start. */
-  private lastDir = 0;
+  private givenUp = false;
 
   constructor(opts: StaircaseOpts) {
-    this.value = clamp(opts.start, opts.min, opts.max);
-    this.step = opts.step;
-    this.minStep = opts.minStep;
     this.min = opts.min;
     this.max = opts.max;
-    this.targetReversals = opts.reversals ?? 3;
+    this.minStep = opts.minStep;
+    this.step = opts.step;
+    const bounded = Number.isFinite(opts.min) && Number.isFinite(opts.max) && opts.max > opts.min;
+    if (bounded) {
+      this.phase = 'binary';
+      this.lo = opts.min;
+      this.hi = opts.max;
+      this.value = (this.lo + this.hi) / 2;
+    } else {
+      this.phase = 'bracket';
+      this.lo = this.hi = clamp(opts.start, opts.min, opts.max);
+      this.value = this.lo;
+      this.bracketFrom = this.value;
+    }
   }
 
-  /** Current best estimate. */
   get current(): number {
     return this.value;
   }
 
   get done(): boolean {
-    return this.reversals >= this.targetReversals || this.step < this.minStep;
+    return this.givenUp || (this.phase === 'binary' && this.hi - this.lo <= this.minStep);
   }
 
   /**
-   * The next A/B pair to audition: A is the current value, B is one step away.
-   * We alternate which way B probes so the search explores both directions —
-   * but always bracket around the current best.
+   * Next A/B pair. Binary phase: two probes straddling the bracket midpoint (lower third
+   * vs upper third). Bracket phase: current value vs a value one exponential step away.
    */
   nextTrial(): StaircaseTrial {
-    // Probe in the direction we last moved (momentum), or up on the first trial.
-    const dir = this.lastDir === 0 ? 1 : this.lastDir;
-    const b = clamp(this.value + dir * this.step, this.min, this.max);
+    if (this.phase === 'binary') {
+      const third = (this.hi - this.lo) / 3;
+      return { a: this.lo + third, b: this.hi - third };
+    }
+    // Exponential bracketing (unbounded): probe current vs stepped.
+    const b = clamp(this.value + this.bracketDir * this.step, this.min, this.max);
     return { a: this.value, b };
   }
 
-  /**
-   * Record which option won. `chose` is 'a' (keep current) or 'b' (move toward B).
-   * A reversal (moving opposite to the previous accepted move) halves the step.
-   */
+  /** Record which option won ('a' or 'b') for the given trial. */
   answer(chose: 'a' | 'b', trial: StaircaseTrial): void {
     if (this.done) return;
-    this.noProgress = 0; // a real preference clears the "both bad" give-up counter
-    if (chose === 'b') {
-      const dir = Math.sign(trial.b - trial.a) || 1;
-      if (this.lastDir !== 0 && dir !== this.lastDir) {
-        this.reversals++;
-        this.step = Math.max(this.minStep / 2, this.step / 2);
-      }
+    this.noProgress = 0;
+
+    if (this.phase === 'binary') {
+      // Winner's side keeps its half of the bracket; drop the far side at the midpoint.
+      const mid = (trial.a + trial.b) / 2;
+      if (chose === 'b') this.lo = mid; else this.hi = mid; // b is the upper probe
+      this.value = (this.lo + this.hi) / 2;
+      return;
+    }
+
+    // Bracket phase: watch for a FLIP in the answer, which brackets the optimum.
+    const choseB = chose === 'b';
+    if (this.lastChoseB !== null && choseB !== this.lastChoseB) {
+      // Flip → the optimum is between the last value and the current probe. Switch to
+      // binary search over that bracket.
+      this.lo = Math.min(this.bracketFrom, trial.b);
+      this.hi = Math.max(this.bracketFrom, trial.b);
+      this.phase = 'binary';
+      this.value = (this.lo + this.hi) / 2;
+      return;
+    }
+    this.lastChoseB = choseB;
+    if (choseB) {
+      // Keep going that way, growing the step.
+      this.bracketFrom = this.value;
       this.value = trial.b;
-      this.lastDir = dir;
+      this.step *= 2;
     } else {
-      // Rejecting B means the current value is better than that direction.
-      const probedDir = Math.sign(trial.b - trial.a) || 1;
-      if (this.lastDir === 0) {
-        // First trial: we probed up by default and it lost, so search downward
-        // next — without counting a reversal (we never actually moved yet).
-        this.lastDir = -probedDir;
-      } else {
-        // Sticking with A after having moved is a reversal: the step overshot,
-        // so shrink it, count it, and probe the other way next.
-        this.reversals++;
-        this.step = Math.max(this.minStep / 2, this.step / 2);
-        this.lastDir = -this.lastDir;
-      }
+      // A (current) won on the first probe — reverse direction and try the other side.
+      this.bracketDir = -this.bracketDir;
     }
   }
 
   /**
-   * "Neither was good" / "both bad" — the listener couldn't tell or disliked both
-   * candidates. Rather than pick a direction, JUMP the search further out (both
-   * candidates were near the current value, so the answer is likely farther away)
-   * and DON'T shrink the step. If we've bounced around a lot with no luck, take the
-   * jump the opposite way we last went. Counts lightly toward termination so the
-   * game can't loop forever on an unanswerable parameter.
+   * "Neither / can't tell" — widen the bracket (we're likely near the middle of an
+   * uninformative region) and, after a few in a row, give up gracefully so the game
+   * can't loop forever on an unanswerable parameter.
    */
   bothBad(): void {
     if (this.done) return;
-    const dir = this.lastDir === 0 ? 1 : this.lastDir;
-    // Grow the step a bit and leap, exploring farther territory.
-    this.step = Math.min(this.step * 1.5, (this.max - this.min));
-    const next = clamp(this.value + dir * this.step, this.min, this.max);
-    // If we're pinned at a rail, flip direction so we actually move.
-    if (next === this.value) { this.lastDir = -dir; this.value = clamp(this.value - dir * this.step, this.min, this.max); }
-    else { this.lastDir = Math.sign(next - this.value) || dir; this.value = next; }
+    if (this.phase === 'binary') {
+      // Expand the bracket back out a bit (both nearby probes were bad → answer is farther).
+      const w = this.hi - this.lo;
+      this.lo = clamp(this.lo - w / 2, this.min, this.max);
+      this.hi = clamp(this.hi + w / 2, this.min, this.max);
+      this.value = (this.lo + this.hi) / 2;
+    } else {
+      this.step *= 2;
+    }
     this.noProgress++;
-    if (this.noProgress >= 3) { this.reversals = this.targetReversals; } // give up gracefully
+    if (this.noProgress >= 3) this.givenUp = true;
   }
 }
 

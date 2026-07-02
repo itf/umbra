@@ -21,6 +21,7 @@ import { mountHrtfTuning } from './hrtfTuning';
 import type { HrtfPersonalization } from '../engine/hrtf/personalize';
 import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
 import { assetUrl } from '../engine/baseUrl';
+import type { CalStep } from './router';
 
 const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
 
@@ -35,6 +36,12 @@ export interface CalibrationDeps {
   applySwap: (graph: AudioGraph, want: boolean) => void;
   /** Called when calibration finishes (done or skipped). */
   onDone: () => void;
+  /**
+   * Move to a calibration step via the ROUTER (each step has its own URL, so refresh
+   * restores it and Back walks the flow). Every internal transition calls this instead
+   * of rendering the next step directly; the router then calls back into `goToStep`.
+   */
+  navigate: (step: CalStep) => void;
   /**
    * Persist the per-user loudness-EQ correction curve produced by the equal-loudness
    * step. When omitted, the loudness step is skipped entirely (e.g. older callers).
@@ -136,22 +143,31 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     src.stop(t + 0.65);
   }
 
-  function render() {
+  /** The intro screen (/calibrate): skip, or start the check. */
+  function renderIntro() {
+    clearControls();
+    // First-run framing: the DEFAULT is good enough for most people, so make skipping
+    // the easy, primary choice and present calibration as an optional extra. Either
+    // way it's always available later from Settings.
+    p.textContent =
+      'The default audio works well for most people — you can just start playing. If you like, you can calibrate: check your headphones, set a comfortable volume, and tune the 3D sound to your ears. You can always calibrate later from Settings.';
+    deps.say(
+      'The default audio works well for most people. You can start playing now, or calibrate it to your ears first. You can always calibrate later from Settings.',
+    );
+    const skip = bigButton('Use the default — start playing', skip_, true);
+    const start = bigButton('Calibrate first (optional)', onStart, false);
+    controls.append(skip, start);
+    focusFirst();
+  }
+
+  /** The L/R + volume check (/calibrate/orientation), driven by the machine's step.
+   *  These micro-steps (left → right → volume) share one URL — the individual answers
+   *  can't survive a reload anyway (they must actually be heard), so a cold load replays
+   *  the check from the start. */
+  function renderOrientation() {
     clearControls();
     const step = machine.current;
-    if (step === 'intro') {
-      // First-run framing: the DEFAULT is good enough for most people, so make skipping
-      // the easy, primary choice and present calibration as an optional extra. Either
-      // way it's always available later from Settings.
-      p.textContent =
-        'The default audio works well for most people — you can just start playing. If you like, you can calibrate: check your headphones, set a comfortable volume, and tune the 3D sound to your ears. You can always calibrate later from Settings.';
-      deps.say(
-        'The default audio works well for most people. You can start playing now, or calibrate it to your ears first. You can always calibrate later from Settings.',
-      );
-      const skip = bigButton('Use the default — start playing', skip_, true);
-      const start = bigButton('Calibrate first (optional)', onStart, false);
-      controls.append(skip, start);
-    } else if (step === 'left') {
+    if (step === 'left') {
       deps.say('Listen. A tone will play on your LEFT. Where did you hear it?');
       playSide('left');
       const left = bigButton('I heard it on the LEFT (correct)', () => answer('left'), true);
@@ -175,7 +191,10 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
       const replay = bigButton('Play the tone again', playVolumeTone);
       controls.append(cont, replay);
     } else {
-      finish();
+      // Machine says done (or, on a cold load, still 'intro') — (re)start the check.
+      machine.reset();
+      machine.begin();
+      renderOrientation();
       return;
     }
     focusFirst();
@@ -238,28 +257,43 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     controls.append(toggle);
   }
 
-  async function onStart() {
+  /** Ensure a live audio graph + renderer, starting them on this (gesture) call if needed.
+   *  Returns true on success. Browsers only allow audio to start from a user gesture, so
+   *  every cold-loaded step routes through a button that calls this. */
+  async function ensureAudio(): Promise<boolean> {
+    if (graph) return true;
     deps.say('Loading sound…');
     try {
       graph = await startAudio();
       renderer = await HrtfRenderer.create(graph.ctx, HRTF_URL);
       applySwap(graph);
-      machine.begin();
-      render();
+      return true;
     } catch (err) {
       deps.alert('Could not start audio: ' + (err as Error).message);
+      return false;
     }
+  }
+
+  async function onStart() {
+    if (!(await ensureAudio())) return;
+    machine.reset();
+    machine.begin();
+    deps.navigate('orientation');
   }
 
   function answer(heard: Side) {
     machine.answer(heard);
-    render();
+    renderOrientation();
   }
 
   function onVolumeOk() {
     stopVolumeTone();
     machine.confirmVolume();
-    render();
+    // Orientation check done → persist the swap and move to the headphone-type question
+    // (or straight past it when that saver isn't wired).
+    deps.store.setSwap(machine.swapped);
+    cleanupProbe();
+    deps.navigate(deps.saveHeadphoneComp ? 'headphones' : 'tune');
   }
 
   // Tear down the L/R probe source so it doesn't linger on the shared master graph
@@ -275,21 +309,6 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
     deps.store.setCalibrationDone();
     deps.say('Calibration skipped.');
     deps.onDone();
-  }
-
-  function finish() {
-    stopVolumeTone();
-    cleanupProbe();
-    deps.store.setSwap(machine.swapped);
-    // BASIC headphone-type question first (over-ear vs in-ear) — a real prompt with a
-    // sensible default that auto-applies a gentle compensation for over-ear users. Then
-    // the two OPTIONAL tuning steps. When the comp saver isn't wired, skip straight to
-    // the tuning chooser.
-    if (deps.saveHeadphoneComp) {
-      askHeadphoneType();
-      return;
-    }
-    afterHeadphoneType();
   }
 
   /**
@@ -318,88 +337,140 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
 
   /** Continue past the headphone-type question into the optional tuning steps. */
   function afterHeadphoneType() {
-    if ((deps.saveLoudnessEq || deps.saveHrtfPersonalization) && graph) {
-      chooseTuning();
+    if (deps.saveLoudnessEq || deps.saveHrtfPersonalization) {
+      deps.navigate('tune');
       return;
     }
     done();
   }
 
-  /** Post-headphone-check menu: pick loudness, HRTF personalization, or finish. */
-  function chooseTuning() {
-    clearControls();
-    p.textContent =
-      'Headphone check done. Two optional tune-ups are available — do either, both, or neither. We recommend 3D-audio (where sounds are) first.';
-    deps.say(
-      'Headphone check done. Two optional steps: 3D-audio personalization, and loudness calibration. We recommend 3D audio first. Choose one, or finish.',
-    );
-    // 3D-audio personalization FIRST + primary — locating sound is the point of the
-    // game, so tune WHERE sounds are before HOW LOUD they are.
-    if (deps.saveHrtfPersonalization) {
-      controls.append(bigButton('Personalize 3D audio (where sounds are)', runHrtfTuning, true));
-    }
-    if (deps.saveLoudnessEq) {
-      controls.append(bigButton('Loudness / hearing calibration', runLoudnessStep, !deps.saveHrtfPersonalization));
-    }
-    controls.append(bigButton('Finish — skip both', done));
-    focusFirst();
-  }
-
-  /** Run the equal-loudness step, then return to the chooser (not straight to HRTF),
-   *  so the user stays in control of what runs next. */
-  function runLoudnessStep() {
-    if (!deps.saveLoudnessEq || !graph) return chooseTuning();
-    deps.say('Loudness calibration.');
-    mountLoudnessEq(root, {
-      ctx: graph.ctx,
-      dest: graph.master,
-      say: deps.say,
-      alert: deps.alert,
-      saveCurve: deps.saveLoudnessEq,
-      onDone: backToChooserOrDone,
-    });
-  }
-
-  /** After a step finishes: if the other step exists, return to the chooser;
-   *  otherwise finalize. Keeps a single-step config from looping the menu. */
-  function backToChooserOrDone() {
-    if (deps.saveLoudnessEq && deps.saveHrtfPersonalization) {
-      chooseTuning();
-    } else {
-      done();
-    }
+  // --- Sub-mounts (HRTF tuning component + loudness EQ). Each owns its own audio graph
+  // and returns a dispose/stop we must call before mounting another or leaving. ---
+  let tuningDispose: (() => void) | null = null;
+  let loudnessDispose: (() => void) | null = null;
+  function disposeSubMounts() {
+    tuningDispose?.(); tuningDispose = null;
+    loudnessDispose?.(); loudnessDispose = null;
   }
 
   /**
-   * OPTIONAL parametric HRTF personalization — reachable from the chooser without
-   * touching loudness. Only wired when the host provided a saver + a live graph;
-   * on finish it returns to the chooser (so the user can still do loudness) or
-   * finalizes when it's the only tuning step.
+   * The 3D-audio tuning component (/calibrate/tune[/…]). `initial` selects which tool to
+   * open (the chooser at 'tune', or a specific tool). Its tool switches + Back go through
+   * the router via `navigate`, so each tool has its own URL. On Skip/finish it moves on to
+   * loudness (if available) or completes.
    */
-  function runHrtfTuning() {
-    if (deps.saveHrtfPersonalization && graph) {
-      mountHrtfTuning(root, {
-        ctx: graph.ctx,
-        dest: graph.master,
-        hrtfUrl: deps.hrtfUrl ?? HRTF_URL,
-        say: deps.say,
-        alert: deps.alert,
-        save: deps.saveHrtfPersonalization,
-        start: deps.loadHrtfPersonalization?.(),
-        baseHrtfId: deps.loadHrtfBase?.(),
-        saveBaseHrtf: deps.saveHrtfBase,
-        onDone: backToChooserOrDone,
-      });
-      return;
-    }
-    done();
+  function mountTuning(initial: 'intro' | 'localize' | 'knobs' | 'guided' | 'pca') {
+    disposeSubMounts();
+    root.innerHTML = ''; // the tuning component builds its own h/p/controls into root
+    tuningDispose = mountHrtfTuning(root, {
+      ctx: graph!.ctx,
+      dest: graph!.master,
+      hrtfUrl: deps.hrtfUrl ?? HRTF_URL,
+      say: deps.say,
+      alert: deps.alert,
+      save: (p) => deps.saveHrtfPersonalization?.(p),
+      start: deps.loadHrtfPersonalization?.(),
+      baseHrtfId: deps.loadHrtfBase?.(),
+      saveBaseHrtf: deps.saveHrtfBase,
+      initial,
+      navigate: (step) => deps.navigate(step),
+      onDone: afterTuning,
+    });
+  }
+
+  /** After the 3D-audio component finishes/skips: go to loudness if offered, else done. */
+  function afterTuning() {
+    if (deps.saveLoudnessEq) deps.navigate('loudness');
+    else done();
+  }
+
+  /** The equal-loudness step (/calibrate/loudness). On finish, calibration completes. */
+  function mountLoudness() {
+    disposeSubMounts();
+    root.innerHTML = '';
+    loudnessDispose = mountLoudnessEq(root, {
+      ctx: graph!.ctx,
+      dest: graph!.master,
+      say: deps.say,
+      alert: deps.alert,
+      saveCurve: deps.saveLoudnessEq!,
+      onDone: done,
+    });
   }
 
   function done() {
+    disposeSubMounts();
+    cleanupProbe();
     deps.store.setCalibrationDone();
     deps.alert('Calibration complete.');
     deps.onDone();
   }
 
-  render();
+  // Restore the base calibration shell (h/p/controls) into root — the sub-mounts replace
+  // root's contents, so a calibration-owned step must rebuild it before rendering.
+  function restoreShell() {
+    disposeSubMounts();
+    if (!root.contains(controls)) {
+      root.innerHTML = '';
+      root.append(h, p, controls);
+    }
+  }
+
+  /** A cold-loaded step that needs audio: browsers require a user gesture to start it, so
+   *  render a single "Play / continue" button that arms audio then re-renders the step. */
+  function renderColdArm(step: CalStep) {
+    restoreShell();
+    clearControls();
+    h.textContent = 'Calibration';
+    p.textContent = 'Press play to continue your calibration — this restarts the sound for this step.';
+    deps.say('Press play to continue your calibration.');
+    const play = bigButton('Play / continue', async () => {
+      if (await ensureAudio()) goToStep(step);
+    }, true);
+    controls.append(play);
+    focusFirst();
+  }
+
+  /**
+   * Central router-driven renderer: show the given step. Called by the host's router on
+   * navigation, reload (deep-link), and Back/Forward. Steps that need audio show the
+   * cold-arm gesture button when the graph isn't live yet (e.g. after a refresh).
+   */
+  const NEEDS_AUDIO: Record<CalStep, boolean> = {
+    intro: false, orientation: true, headphones: false, tune: true,
+    localize: true, knobs: true, guided: true, pca: true, loudness: true,
+  };
+  function goToStep(step: CalStep) {
+    h.textContent = 'Calibration';
+    if (NEEDS_AUDIO[step] && !graph) { renderColdArm(step); return; }
+    switch (step) {
+      case 'intro': restoreShell(); renderIntro(); break;
+      case 'orientation':
+        restoreShell();
+        // Cold entry (machine still at intro/done) restarts the check from the top.
+        if (machine.current === 'intro' || machine.current === 'done') { machine.reset(); machine.begin(); }
+        renderOrientation();
+        break;
+      case 'headphones': restoreShell(); askHeadphoneType(); break;
+      case 'tune': mountTuning('intro'); break;
+      case 'localize': mountTuning('localize'); break;
+      case 'knobs': mountTuning('knobs'); break;
+      case 'guided': mountTuning('guided'); break;
+      case 'pca': mountTuning('pca'); break;
+      case 'loudness':
+        if (deps.saveLoudnessEq) mountLoudness();
+        else done();
+        break;
+    }
+  }
+
+  /** Tear everything down (audio graph, sub-mounts, probe) — called when the host routes
+   *  away from calibration, so no worklets/rAF loops leak. */
+  function dispose() {
+    stopVolumeTone();
+    disposeSubMounts();
+    cleanupProbe();
+  }
+
+  return { goToStep, dispose };
 }

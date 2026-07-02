@@ -24,11 +24,13 @@ import { NEUTRAL_PERSONALIZATION, type HrtfPersonalization } from '../engine/hrt
 import { Staircase, type StaircaseTrial } from './hrtfStaircase';
 import { EXERCISES, STAIRCASE_CONFIG, type Exercise, type ExerciseParam } from './hrtfExercises';
 import { mountVisualizer } from './hrtfVisualizer';
-import { mountDirectionPicker, type DirectionPicker } from './hrtfDirectionPicker';
+import { mountDirectionPicker, mountAnswerDiagram, type DirectionPicker } from './hrtfDirectionPicker';
 import {
   makeTestDirections,
   dirToPosition,
+  dirToVec,
   angularError,
+  decomposeError,
   decideWinner,
   type Direction,
   type Attempt,
@@ -67,6 +69,18 @@ export interface HrtfTuningDeps {
   /** Persist the chosen base HRTF id when the user switches heads. */
   saveBaseHrtf?: (id: string) => void;
   onDone: () => void;
+  /**
+   * Which tuning tool to open on mount. Omitted (or 'intro') shows the chooser menu.
+   * Lets a URL route deep-link straight into one tool (e.g. /calibrate/tune/localize).
+   */
+  initial?: 'intro' | 'localize' | 'knobs' | 'guided' | 'pca';
+  /**
+   * When present, tool selection + Back go through the ROUTER instead of swapping the
+   * DOM directly — so each tool has its own URL and the browser Back button works.
+   * 'tune' means "back to the chooser". Absent ⇒ standalone use (Settings): fall back to
+   * the internal showIntro()/render*() transitions.
+   */
+  navigate?: (step: 'tune' | 'localize' | 'knobs' | 'guided' | 'pca') => void;
 }
 
 /** Build a candidate set of personalization params: base overlaid with one override.
@@ -135,13 +149,12 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 
   // Sequence state.
   let exIdx = 0;
+  /** Per-trial: play the sweep time-REVERSED (front→back becomes back→front, etc.) so the
+   *  same exercise doesn't always present the identical motion. Toggled each trial. */
+  let sweepReversed = false;
   const staircases = new Map<ExerciseParam, Staircase>();
   let curTrial: StaircaseTrial | null = null;
   /** For 'ab', we play A then B and remember which the user is auditioning. */
-
-  function currentExercise(): Exercise {
-    return EXERCISES[exIdx];
-  }
 
   function staircaseFor(ex: Exercise): Staircase {
     let sc = staircases.get(ex.param);
@@ -239,7 +252,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       const step = () => {
         if (disposed) return resolve();
         const elapsed = performanceNow() - startPerf;
-        const t = Math.min(1, elapsed / durMs); // ONE pass, no loop
+        const raw = Math.min(1, elapsed / durMs); // ONE pass, no loop
+        const t = sweepReversed ? 1 - raw : raw; // vary the motion direction per trial
         const [x, y, z] = ex.trajectory(t);
         srcA?.setPosition(x, y, z);
         srcB?.setPosition(x, y, z);
@@ -263,19 +277,43 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     });
   }
 
+  /** Start (or restart) the guided test: fresh staircases, round-robin from exercise 0. */
+  function startGuided() {
+    exIdx = -1;            // renderExercise looks AFTER exIdx → first trial = exercise 0
+    staircases.clear();
+    void renderExercise();
+  }
+
   async function renderExercise() {
-    if (exIdx >= EXERCISES.length) return finish();
-    const ex = currentExercise();
+    // ROUND-ROBIN across exercises so the QUESTION visibly changes each trial instead of
+    // hammering one exercise until its staircase converges (which read as "the same
+    // question forever"). Find the next not-yet-converged exercise starting AFTER the
+    // current one; wrap around. Finish only when every staircase is done.
+    const total = EXERCISES.length;
+    let next = -1;
+    let nextTrial: StaircaseTrial | null = null;
+    for (let step = 1; step <= total; step++) {
+      const i = (exIdx + step) % total;
+      const cand = EXERCISES[i];
+      const csc = staircaseFor(cand);
+      if (csc.done) { params[cand.param] = csc.current; continue; }
+      const t = csc.nextTrial();
+      // A rail-pinned staircase returns a===b (a degenerate, unanswerable trial that
+      // would replay the SAME sound forever). Treat it as converged + skip.
+      if (t.a === t.b) { params[cand.param] = csc.current; continue; }
+      next = i; nextTrial = t; break;
+    }
+    if (next < 0 || !nextTrial) return finish(); // all converged / exhausted
+    exIdx = next;
+    const ex = EXERCISES[exIdx];
     const sc = staircaseFor(ex);
 
-    // If this parameter has converged, commit its value and advance.
-    if (sc.done) {
-      params[ex.param] = sc.current;
-      exIdx++;
-      return renderExercise();
-    }
-
-    curTrial = sc.nextTrial();
+    curTrial = nextTrial;
+    // Vary the motion each trial (front→back one time, back→front the next, …) so the
+    // same exercise doesn't feel like the identical question repeated. Only for A/B
+    // (preference) exercises — a 'guess' prompt is direction-specific ("did it end up in
+    // front?") so reversing it would make the correct answer wrong.
+    sweepReversed = ex.kind === 'ab' ? !sweepReversed : false;
     const a = withParam(params, ex.param, curTrial.a);
     const b = withParam(params, ex.param, curTrial.b);
 
@@ -625,6 +663,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 
   function renderFreePlay() {
     controls.innerHTML = '';
+    root.classList.remove('hrtf-compact');
     clearTimers();
     teardownAudio(); // stop any guided-game graph
     h.textContent = 'Adjust your 3D audio by hand';
@@ -707,7 +746,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     // immediately audible on the "Over the top" motion.
     if (fpParams.notchDepth === 0) fpParams.notchDepth = 14;
     knobs.append(
-      slider('Front vs behind (brightness) — start here', 'frontBackTilt', -18, 18, 1),
+      slider('Front vs behind — start here', 'frontBackTilt', -18, 18, 1),
       slider('Left / right spread (out-of-head)', 'itdScale', 0.5, 2.0, 0.02),
       slider('UP / DOWN — pinna notch frequency', 'notchHz', 4000, 11000, 100),
       slider('Up / down notch strength', 'notchDepth', 0, 24, 1),
@@ -758,13 +797,17 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     const nextLabel = document.createElement('span');
     nextLabel.className = 'hrtf-group-label';
     nextLabel.textContent = 'Next — test / refine:';
-    const toLocalize = bigButton('Point to where sounds come from (recommended)', () => { carry(); renderLocalization(); });
-    const toGuided = bigButton('Guided “which felt better” test', () => { carry(); renderExercise(); });
-    const toPca = bigButton('Refine to real ears (advanced)', () => { carry(); void renderPca(); });
+    // carry() persists the hand-tuned values into `params`; the routed target renders in
+    // the SAME mount so those values survive the URL change.
+    const toTool = (step: 'localize' | 'guided' | 'pca', direct: () => void) =>
+      deps.navigate ? (carry(), deps.navigate(step)) : (carry(), direct());
+    const toLocalize = bigButton('Point to where sounds come from (recommended)', () => toTool('localize', renderLocalization));
+    const toGuided = bigButton('Guided “which felt better” test', () => toTool('guided', startGuided));
+    const toPca = bigButton('Refine to real ears (advanced)', () => toTool('pca', () => void renderPca()));
     const nextRow = document.createElement('div');
     nextRow.className = 'hrtf-motions';
     nextRow.append(nextLabel, toLocalize, toGuided, toPca);
-    const back = bigButton('Back', () => { teardownFreePlay(); showIntro(); });
+    const back = bigButton('Back', () => { teardownFreePlay(); backToIntro(); });
 
     controls.append(vizWrap, bases, motions, knobs, pcaToggle, save, nextRow, back);
     void fpBuild();
@@ -786,6 +829,17 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let locPicker: DirectionPicker | null = null;
   /** Base URL the localization graph was built for (rebuild on a base switch). */
   let locBuiltForUrl: string | null = null;
+  /** The wiggle's OWN rAF handle (separate from the guided-game sweep's rafHandle so they
+   *  can't cancel each other) + a generation id so a superseded async play aborts. */
+  let wiggleRaf = 0;
+  let locPlayGen = 0;
+  /** Whether to REVEAL the answer after each pointing (3D model + 2D compass/arc diagram).
+   *  Default OFF for calibration — a clean perceptual measurement isn't biased by the user
+   *  learning the visual mapping; a "Show answers" checkbox flips it on. (A future game
+   *  mode forces it on.) */
+  let locShowAnswers = false;
+  /** The answer diagram for the current reveal, cleared before the next round. */
+  let locAnswerDiag: { dispose: () => void } | null = null;
   let locExIdx = 0;
   let locTrial: StaircaseTrial | null = null;
   let locAttempts: Attempt[] = [];
@@ -793,6 +847,11 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let locTarget: Direction | null = null;
   const locStaircases = new Map<ExerciseParam, Staircase>();
   const ATTEMPTS_PER_CANDIDATE = 2;
+  /** Localization runs a BASE-HEAD A/B first (SADIE vs CIPIC — the base is the biggest
+   *  variable, bigger than the fine params), keeps whichever the user localizes better,
+   *  then tunes parameters on the winner. 'base' phase → 'params' phase. */
+  let locPhase: 'base' | 'params' = 'base';
+  const ATTEMPTS_PER_BASE = 3;
   /** Per-trial control area (picker + replay + progress), cleared between trials so the
    *  visualizer persists but Begin/Back don't linger. */
   let locTrialArea: HTMLElement | null = null;
@@ -813,6 +872,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
 
   function teardownLoc() {
     clearTimers();
+    cancelAnimationFrame(wiggleRaf); wiggleRaf = 0; locPlayGen++;
     if (locSrc) { try { noise.disconnect(locSrc.input); } catch { /* noop */ } }
     try { locSrc?.disconnect(); } catch { /* noop */ }
     try { locGain?.disconnect(); } catch { /* noop */ }
@@ -862,53 +922,122 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
    *  dot, and show the picker + replay + progress for the user's answer. */
   async function locPlayAndAsk() {
     if (disposed) return;
-    // Pick target direction seeded by attempt index for reproducibility across runs.
-    const seed = locExIdx * 101 + locAttempts.length * 7 + 1;
+    // Seed the target direction. In the BASE phase both bases MUST be judged on the SAME
+    // directions to be a fair comparison (previously each base drew different random
+    // targets → the "winner" was just whoever got easier directions). So seed by the
+    // per-base attempt COUNT, so SADIE's k-th probe and CIPIC's k-th probe match.
+    const seed = locPhase === 'base'
+      ? 9000 + locAttempts.filter((a) => a.which === locWhich).length
+      : locExIdx * 101 + locAttempts.length * 7 + 1;
     locTarget = makeTestDirections(1, seed)[0];
+    ensurePickerMounted();       // build the compass/arc ONCE, reuse across probes
+    locResetForNextProbe();      // reset aim + progress in place — no teardown/navigation
     await locSoundTarget();
-    if (disposed) return;
-    locShowAnswerControls();
   }
 
   /** Play the CURRENT locTarget once (used by both the initial ask and Replay). */
+  const WIGGLE_DEG = 2;   // radius of the tiny orbit, in spherical degrees
+  const WIGGLE_HZ = 1.5;  // ~1.5 revolutions per second
+  const LOC_BURST_MS = 1800;
+
   async function locSoundTarget() {
     if (!locTarget) return;
-    const [tx, ty, tz] = dirToPosition(locTarget, 1, 1.6);
+    // Cancel ANY in-flight playback first. Without this, a fast Replay / next-trial while
+    // the beeps were still awaiting could start a SECOND wiggle loop racing the first on
+    // the shared rAF handle — around possibly-different targets — so the heard position
+    // jumped (the intermittent ~90°-off bug). A per-play generation id makes a stale
+    // async continuation abort, and the wiggle has its OWN handle now.
+    stopWiggle();
+    const gen = ++locPlayGen;
+    const target = locTarget; // snapshot so a later locTarget change can't hijack this play
     locViz?.showSource(false);
     locViz?.setGuess(null);
-    p.textContent = 'Listen…';
     await playBeeps(ctx, dest, locWhich === 'a' ? 1 : 2);
-    if (disposed) return;
-    // Play a ~1.5 s static burst at the target (a fixed point localizes cleaner than a
-    // moving sweep for a "where is it" judgement).
-    locSrc?.setPosition(tx, ty, tz);
+    if (disposed || gen !== locPlayGen) return; // superseded by a newer play → abort
+    // Play a ~1.8 s burst that WIGGLES in a tiny (~2°) circle around the target — small
+    // motion breaks front/back confusion and aids externalization, while the perceived
+    // location stays the circle's centre (what you point at).
     if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(LOCALIZE_LEVEL, t + 0.03); }
+    startWiggle(target);
     const stop = setTimeout(() => {
+      if (gen !== locPlayGen) return;
+      stopWiggle();
       if (locGain) { const t = ctx.currentTime; locGain.gain.setTargetAtTime(0.0001, t, 0.05); }
-    }, 1500);
+    }, LOC_BURST_MS);
     seqTimers.push(stop);
   }
 
-  /** Build the answer UI for this round: progress line, the compass+height picker, and
-   *  a Replay button. The trial area is cleared first so Begin/old controls don't stay. */
-  function locShowAnswerControls() {
-    if (!locTrialArea) return;
-    locTrialArea.innerHTML = '';
-    p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
-    deps.say('Where did it come from? Set the direction and height, then confirm.');
+  /** Stop the wiggle loop (its own handle, separate from the guided-game sweep's). */
+  function stopWiggle() { cancelAnimationFrame(wiggleRaf); wiggleRaf = 0; }
 
-    // Progress: "Round N of about M" + a "getting better" hint once there's history.
+  /** Orbit the probe in a tiny circle (radius WIGGLE_DEG) around direction `centre`,
+   *  in the plane tangent to the sphere there, driven by rAF for the burst's duration. */
+  function startWiggle(centre: Direction) {
+    cancelAnimationFrame(wiggleRaf);
+    const rad = (WIGGLE_DEG * Math.PI) / 180;
+    // Centre unit vector + two orthonormal tangent vectors (right, up on the sphere).
+    const c = dirToVec(centre);
+    // "up" tangent: world-up projected off c; fall back near the poles.
+    let upx = 0, upy = 1, upz = 0;
+    const dotUp = c[0] * upx + c[1] * upy + c[2] * upz;
+    upx -= dotUp * c[0]; upy -= dotUp * c[1]; upz -= dotUp * c[2];
+    let ulen = Math.hypot(upx, upy, upz);
+    if (ulen < 1e-3) { upx = 1; upy = 0; upz = 0; ulen = 1; } // c ≈ straight up/down
+    upx /= ulen; upy /= ulen; upz /= ulen;
+    // "right" tangent = c × up.
+    const rx = c[1] * upz - c[2] * upy;
+    const ry = c[2] * upx - c[0] * upz;
+    const rz = c[0] * upy - c[1] * upx;
+    const start = performanceNow();
+    const step = () => {
+      if (disposed || !locSrc) return;
+      const th = ((performanceNow() - start) / 1000) * WIGGLE_HZ * 2 * Math.PI;
+      const ca = Math.cos(rad), sa = Math.sin(rad);
+      const ox = Math.cos(th), oy = Math.sin(th);
+      // point on the small circle = cos(rad)*c + sin(rad)*(cosθ*right + sinθ*up)
+      const vx = ca * c[0] + sa * (ox * rx + oy * upx);
+      const vy = ca * c[1] + sa * (ox * ry + oy * upy);
+      const vz = ca * c[2] + sa * (ox * rz + oy * upz);
+      locSrc.setPosition(vx, 1.6 + vy, vz); // 1 m shell, head at y=1.6
+      wiggleRaf = requestAnimationFrame(step);
+    };
+    wiggleRaf = requestAnimationFrame(step);
+  }
+
+  /** Build the pointing UI (progress + replay + compass/arc picker) ONCE, then reuse it
+   *  every probe. Rebuilding it each round tore the whole screen down and back up — which
+   *  read as "leaving to an answer page" between probes. Now it stays mounted; each new
+   *  probe just resets the aim + progress (locResetForNextProbe). No answer page ever in
+   *  no-reveal mode; the reveal (when the checkbox is on) is a transient overlay. */
+  function ensurePickerMounted() {
+    if (locPicker || !locTrialArea) return;
+    locTrialArea.innerHTML = '';
     locProgressEl = document.createElement('p');
     locProgressEl.className = 'hrtf-loc-progress';
-    locProgressEl.textContent = locProgressText();
     locTrialArea.append(locProgressEl);
 
-    locPicker?.dispose();
-    locPicker = mountDirectionPicker(locTrialArea, { onCommit: onPickerCommit, say: deps.say });
-
+    // "Play again" sits on the SAME row as the confirm button (via extraAction).
     const replay = bigButton('▶ Play the sound again', () => { void locSoundTarget(); });
-    replay.classList.add('secondary');
-    locTrialArea.append(replay);
+    replay.classList.add('secondary', 'hrtf-loc-replay');
+
+    locPicker = mountDirectionPicker(locTrialArea, {
+      onCommit: onPickerCommit,
+      // Live: mirror the current aim as a dot + head→source ray in the 3D model.
+      onChange: (d) => { const [gx, gy, gz] = dirToPosition(d, 1, 1.6); locViz?.setGuess({ x: gx, y: gy, z: gz }); },
+      onInHead: onPickerInHead,
+      extraAction: replay,
+      say: deps.say,
+    });
+  }
+
+  /** Reset the mounted picker + progress for a fresh probe — in place, no teardown. */
+  function locResetForNextProbe() {
+    locAnswerDiag?.dispose(); locAnswerDiag = null; // drop any prior reveal overlay
+    locViz?.showSource(false);                       // hide the truth while pointing
+    locPicker?.reset();                              // aim back to front / ear level
+    if (locProgressEl) locProgressEl.textContent = locProgressText();
+    p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
+    deps.say('Where did it come from? Set the direction and height, then confirm.');
   }
 
   /** "Round N of about M" plus, once there's history, whether accuracy is improving.
@@ -933,30 +1062,134 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   /** Route a committed pick to whichever stage is active (localization vs PCA). */
   let pickTarget: 'loc' | 'pca' = 'loc';
   function onPickerCommit(guess: Direction) {
-    locPicker?.dispose(); locPicker = null; // one answer per trial
+    // Keep the picker mounted (persistent across probes); the next probe resets it.
     if (pickTarget === 'pca') pcaOnPick(guess); else locOnPick(guess);
+  }
+
+  /** "It was inside my head" — an EXTERNALIZATION failure. We score it as a worst-case
+   *  localization (a large fixed error) so the search moves AWAY from this candidate: an
+   *  in-head sound is the worst possible outcome, not a neutral skip. Routed like a
+   *  normal answer so the staircase/PCA advances. π/2 (90°) ≈ "no usable direction". */
+  const INHEAD_ERROR = Math.PI / 2;
+  function onPickerInHead() {
+    if (!locTarget) return;
+    locAttempts.push({ which: locWhich, error: INHEAD_ERROR });
+    locAnswered++;
+    locErrHistory.push(INHEAD_ERROR);
+    deps.say('Inside your head — we’ll steer away from that setting.');
+    p.textContent = 'Inside your head — noted. Next…';
+    const id = setTimeout(() => (pickTarget === 'pca' ? pcaNextAttempt() : locNextAttempt()), 1000);
+    seqTimers.push(id);
   }
 
   /** The user committed a direction (compass + height): score it, advance the trial. */
   function locOnPick(guess: Direction) {
-    if (!locTarget || !locViz) return;
-    const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
-    locViz.setGuess({ x: gx, y: gy, z: gz });
-    locViz.showSource(true); // reveal the truth so the user sees how close they were
+    if (!locTarget) return;
     const err = angularError(locTarget, guess);
+    logAnswer('loc', guess, err);
     locAttempts.push({ which: locWhich, error: err });
     locAnswered++;
     locErrHistory.push(err);
+    const delay = locRevealResult(guess, err);
+    const id = setTimeout(() => locNextAttempt(), delay);
+    seqTimers.push(id);
+  }
+
+  /** DEBUG: console-log one answer so calibration behaviour can be analysed offline —
+   *  true vs guessed direction, the SIGNED per-axis errors (which axis is failing?), the
+   *  candidate under test + its param value, and the current full warp. */
+  function logAnswer(stage: 'loc' | 'pca', guess: Direction, err: number) {
+    if (!locTarget) return;
+    const deg = (r: number) => Math.round((r * 180) / Math.PI);
+    const comp = decomposeError(locTarget, guess);
+    const ex = EXERCISES[locExIdx];
+    const phase = stage === 'pca' ? 'pca' : locPhase; // 'base' | 'params' | 'pca'
+    const paramInfo = stage === 'pca'
+      ? { pc: pcaIdx, weights: params.pcaWeights }
+      : phase === 'base'
+        ? { testingBase: locWhich === 'a' ? BASE_A.id : BASE_B.id }
+        : { param: ex?.param, value: ex ? params[ex.param] : undefined };
+    console.log(`[hrtf-cal] ${phase} #${locAnswered + 1} cand=${locWhich}`, {
+      targetDeg: { az: deg(locTarget.az), el: deg(locTarget.el) },
+      guessDeg: { az: deg(guess.az), el: deg(guess.el) },
+      totalErrDeg: deg(err),
+      signedErrDeg: { lateral: deg(comp.lateral), frontBack: deg(comp.frontBack), updown: deg(comp.updown), lateralWeight: +comp.lateralWeight.toFixed(2) },
+      ...paramInfo,
+      base: currentBase.id,
+    });
+  }
+
+  /** Show the outcome of a pointing. When `locShowAnswers` is on, REVEAL the truth in the
+   *  3D model AND the two 2D views (compass + arc), and pause longer so it can be studied.
+   *  When off (default calibration), just announce "≈X° off" and advance quickly with no
+   *  reveal — keeps the perceptual measurement unbiased. Returns the delay before advancing. */
+  function locRevealResult(guess: Direction, err: number): number {
     const degOff = Math.round((err * 180) / Math.PI);
     deps.say(degOff < 25 ? 'Close.' : degOff < 60 ? 'Not bad.' : 'Off.');
-    p.textContent = `You were about ${degOff}° off. Next…`;
-    const id = setTimeout(() => locNextAttempt(), 1100);
-    seqTimers.push(id);
+    if (!locShowAnswers) {
+      p.textContent = `You were about ${degOff}° off. Next…`;
+      return 800;
+    }
+    // Full reveal: 3D model source at the TRUE target + guess ring, plus the 2D diagram.
+    if (locTarget && locViz) {
+      const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
+      locViz.setGuess({ x: gx, y: gy, z: gz });
+      const [stx, sty, stz] = dirToPosition(locTarget, 1, 1.6);
+      locViz.set(stx, sty, stz);
+      locViz.showSource(true);
+    }
+    p.textContent = `You were about ${degOff}° off. (Yellow = where it was, blue = where you pointed.)`;
+    locAnswerDiag?.dispose();
+    if (locTarget && locTrialArea) locAnswerDiag = mountAnswerDiagram(locTrialArea, locTarget, guess);
+    return 2600;
+  }
+
+  /** Which base each A/B candidate maps to in the BASE phase. */
+  const BASE_A = baseHrtfById('sadie_h3');
+  const BASE_B = baseHrtfById('cipic_124');
+
+  /** Start (or restart) the base-head A/B: SADIE (a) vs CIPIC (b), a few probes each. */
+  async function locStartBasePhase() {
+    locPhase = 'base';
+    locAttempts = [];
+    locWhich = 'a';
+    currentBase = BASE_A;
+    await locEnsureRenderer({ ...params }); // rebuild on the current base
+    await locPlayAndAsk();
+  }
+
+  /** After a base-phase answer: alternate SADIE/CIPIC until each has enough probes, then
+   *  keep the base with the smaller mean error and move on to parameter tuning. */
+  async function locBaseNextAttempt() {
+    if (disposed) return;
+    const na = locAttempts.filter((a) => a.which === 'a').length;
+    const nb = locAttempts.filter((a) => a.which === 'b').length;
+    if (na >= ATTEMPTS_PER_BASE && nb >= ATTEMPTS_PER_BASE) {
+      const mean = (w: 'a' | 'b') => {
+        const es = locAttempts.filter((x) => x.which === w).map((x) => x.error);
+        return es.reduce((p, c) => p + c, 0) / (es.length || 1);
+      };
+      const winner = mean('b') < mean('a') ? BASE_B : BASE_A; // ties → SADIE (a)
+      currentBase = winner;
+      deps.saveBaseHrtf?.(winner.id);
+      console.log(`[hrtf-cal] BASE chosen: ${winner.id} (sadie meanErr ${Math.round(mean('a') * 180 / Math.PI)}°, cipic ${Math.round(mean('b') * 180 / Math.PI)}°)`);
+      deps.say(`Using ${winner.label}.`);
+      // Enter the parameter phase on the chosen base.
+      locPhase = 'params';
+      locExIdx = 0; locStaircases.clear();
+      return locAdvanceExercise();
+    }
+    // Alternate to the base with fewer probes.
+    locWhich = na <= nb ? 'a' : 'b';
+    currentBase = locWhich === 'a' ? BASE_A : BASE_B;
+    await locEnsureRenderer({ ...params }); // neutral-ish params; rebuild on this base
+    await locPlayAndAsk();
   }
 
   /** Decide the next probe: alternate A/B until each has enough attempts, then judge. */
   async function locNextAttempt() {
     if (disposed) return;
+    if (locPhase === 'base') return locBaseNextAttempt();
     const ex = EXERCISES[locExIdx];
     const sc = locStaircaseFor(ex);
     const verdict = decideWinner(locAttempts, ATTEMPTS_PER_CANDIDATE);
@@ -1004,27 +1237,46 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     clearTimers();
     teardownAudio();
     teardownFreePlay();
+    root.classList.add('hrtf-compact'); // tighter typography/spacing so it fits without scroll
     h.textContent = 'Point to the sound';
     p.textContent =
-      'A sound will play somewhere around you. Say where it came from using TWO controls: the COMPASS (which way around you — front, right, behind, left) and the HEIGHT slider (below, ear level, or overhead). Then press “This is where it came from”. We keep whichever tuning helps you locate best. About a dozen quick rounds.';
+      'A sound will play somewhere around you. Say where it came from using TWO controls: the COMPASS (which way around you — front, right, behind, left) and the HEIGHT arc (below, ear level, or overhead). Then press “This is where it came from”. If it seemed to come from INSIDE your head with no direction, press that button instead — that tells us the tuning isn’t working yet. We keep whichever tuning helps you locate best. About a dozen quick rounds.';
     const vizWrap = document.createElement('div');
     vizWrap.className = 'hrtf-viz-wrap';
     locViz = mountVisualizer(vizWrap); // display only; input is the picker below
     // A trial area that gets cleared each round (so the Begin button — and later the
     // picker — don't pile up), while the visualizer above persists.
+    // "Show answers" checkbox — OFF by default. Lives OUTSIDE locTrialArea (which is
+    // wiped every round) so it PERSISTS and stays toggleable mid-test. When off,
+    // calibration just says how far off you were and advances (unbiased measurement);
+    // when on, it reveals the true direction in the 3D model + the two 2D views.
+    const showRow = makeShowAnswersRow();
     locTrialArea = document.createElement('div');
     locTrialArea.className = 'hrtf-loc-trial';
-    controls.append(vizWrap, locTrialArea);
+    controls.append(vizWrap, locTrialArea, showRow); // checkbox at the END
     const begin = bigButton('Begin', () => {
       startNoise(); pickTarget = 'loc';
       locExIdx = 0; locStaircases.clear();
       locAnswered = 0; locErrHistory.length = 0;
-      locEstTotal = LOC_DISTINCT_PARAMS * ROUNDS_PER_PARAM;
-      void locAdvanceExercise();
+      // Base A/B (2 bases × ATTEMPTS_PER_BASE) THEN the parameter rounds.
+      locEstTotal = 2 * ATTEMPTS_PER_BASE + LOC_DISTINCT_PARAMS * ROUNDS_PER_PARAM;
+      void locStartBasePhase();
     }, true);
-    const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
+    const back = bigButton('Back', () => { teardownLoc(); backToIntro(); });
     locTrialArea.append(begin, back);
     begin.focus();
+  }
+
+  /** A persistent "Show me the answer" checkbox bound to locShowAnswers (default off). */
+  function makeShowAnswersRow(): HTMLElement {
+    const showRow = document.createElement('label');
+    showRow.className = 'hrtf-loc-showans';
+    const showCb = document.createElement('input');
+    showCb.type = 'checkbox';
+    showCb.checked = locShowAnswers;
+    showCb.addEventListener('change', () => { locShowAnswers = showCb.checked; });
+    showRow.append(showCb, document.createTextNode(' Show me the answer after each (for practice)'));
+    return showRow;
   }
 
   // ------------------------------------------------------------------------
@@ -1043,13 +1295,14 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     controls.innerHTML = '';
     clearTimers();
     teardownAudio(); teardownFreePlay(); teardownLoc();
+    root.classList.add('hrtf-compact'); // same compact layout as localization
     h.textContent = 'Refine to real ears';
     p.textContent = 'Loading the real-ear model…';
     const { loadPcaModel } = await import('../engine/hrtf/hrtfPca');
     pcaModelLoaded = await loadPcaModel();
     if (!pcaModelLoaded) {
       p.textContent = 'The real-ear refinement model is unavailable in this build.';
-      controls.append(bigButton('Back', () => showIntro()));
+      controls.append(bigButton('Back', () => backToIntro()));
       return;
     }
     pcaK = pcaModelLoaded.k;
@@ -1058,17 +1311,18 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     const vizWrap = document.createElement('div');
     vizWrap.className = 'hrtf-viz-wrap';
     locViz = mountVisualizer(vizWrap); // display only; input is the picker
+    const showRow = makeShowAnswersRow(); // persistent, outside the per-round trial area
     locTrialArea = document.createElement('div');
     locTrialArea.className = 'hrtf-loc-trial';
-    controls.append(vizWrap, locTrialArea);
+    controls.append(vizWrap, locTrialArea, showRow); // checkbox at the END
     const begin = bigButton('Begin', () => {
-      startNoise(); pickTarget = 'pca';
+      startNoise(); pickTarget = 'pca'; locPhase = 'params'; // PCA has no base A/B
       pcaIdx = 0; pcaStaircases.clear();
       locAnswered = 0; locErrHistory.length = 0;
       locEstTotal = pcaK * ROUNDS_PER_PARAM; // one staircase per principal component
       void pcaAdvance();
     }, true);
-    const back = bigButton('Back', () => { teardownLoc(); showIntro(); });
+    const back = bigButton('Back', () => { teardownLoc(); backToIntro(); });
     locTrialArea.append(begin, back);
     begin.focus();
   }
@@ -1113,17 +1367,14 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   /** Pointing handler for the PCA stage — scores like localization, but the winner
    *  advances the PCA weight staircase (not a parametric one). */
   function pcaOnPick(guess: Direction) {
-    if (!locTarget || !locViz) return;
-    const [gx, gy, gz] = dirToPosition(guess, 1, 1.6);
-    locViz.setGuess({ x: gx, y: gy, z: gz });
-    locViz.showSource(true);
+    if (!locTarget) return;
     const err = angularError(locTarget, guess);
+    logAnswer('pca', guess, err);
     locAttempts.push({ which: locWhich, error: err });
     locAnswered++;
     locErrHistory.push(err);
-    const degOff = Math.round((err * 180) / Math.PI);
-    p.textContent = `You were about ${degOff}° off. Next…`;
-    const id = setTimeout(() => pcaNextAttempt(), 1000);
+    const delay = locRevealResult(guess, err); // same reveal/no-reveal gating as localization
+    const id = setTimeout(() => pcaNextAttempt(), delay);
     seqTimers.push(id);
   }
 
@@ -1146,15 +1397,26 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     await locPlayAndAsk();
   }
 
+  /** Return to the chooser: via the router (its own URL) when routed, else in-page. */
+  function backToIntro() {
+    if (deps.navigate) deps.navigate('tune');
+    else showIntro();
+  }
+
   function showIntro() {
     controls.innerHTML = '';
+    root.classList.remove('hrtf-compact');
     h.textContent = 'Personalize your 3D audio';
     p.textContent =
       'Tune 3D audio to your ears. Best first: POINT TO THE SOUND — we play a sound around you, you point where you heard it, and we keep the tuning that makes you most accurate. Or adjust by hand with the KNOBS, or take the GUIDED “which felt better” test. When you’ve tuned the basics, REFINE TO REAL EARS morphs along how human ears actually vary. Nothing saves until you choose to.';
-    const localizeBtn = bigButton('Point to the sound (recommended)', () => { startNoise(); renderLocalization(); }, true);
-    const knobsBtn = bigButton('Adjust by hand (knobs)', () => { startNoise(); renderFreePlay(); });
-    const guided = bigButton('Guided “which felt better” test', () => { startNoise(); renderExercise(); });
-    const pcaBtn = bigButton('Refine to real ears (advanced)', () => { startNoise(); void renderPca(); });
+    // When routed, tool selection goes through the router (its own URL); otherwise swap
+    // the DOM directly. Either way the tool's own render calls startNoise().
+    const open = (step: 'localize' | 'knobs' | 'guided' | 'pca', direct: () => void) =>
+      deps.navigate ? deps.navigate(step) : (startNoise(), direct());
+    const localizeBtn = bigButton('Point to the sound (recommended)', () => open('localize', renderLocalization), true);
+    const knobsBtn = bigButton('Adjust by hand (knobs)', () => open('knobs', renderFreePlay));
+    const guided = bigButton('Guided “which felt better” test', () => open('guided', startGuided));
+    const pcaBtn = bigButton('Refine to real ears (advanced)', () => open('pca', () => void renderPca()));
     const skipBtn = bigButton('Skip', skip);
     controls.append(localizeBtn, knobsBtn, guided, pcaBtn, skipBtn);
     (controls.querySelector('button') as HTMLElement).focus();
@@ -1164,7 +1426,16 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   const baseDispose = dispose;
   const disposeAll = () => { teardownFreePlay(); teardownLoc(); if (fpApplyTimer) clearTimeout(fpApplyTimer); baseDispose(); };
 
-  showIntro();
+  // Open the tool the route asked for (deep-link), else the chooser. Each render fn tears
+  // down the others' audio graphs first, and startNoise() is idempotent, so entering a tool
+  // directly is safe. On a routed cold-load, main.ts re-arms audio before mounting.
+  switch (deps.initial) {
+    case 'localize': startNoise(); renderLocalization(); break;
+    case 'knobs': startNoise(); renderFreePlay(); break;
+    case 'guided': startNoise(); startGuided(); break;
+    case 'pca': startNoise(); void renderPca(); break;
+    default: showIntro(); break;
+  }
   return disposeAll;
 }
 

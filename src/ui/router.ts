@@ -20,19 +20,56 @@
  * Non-routing query params (engine, hrtf, debug, companion…) are PRESERVED across
  * navigation — only the PATH encodes the screen now.
  *
- * Onboarding screens (calibration, tutorial) are deliberately NOT routes — they're
- * transient gates in front of a level's Begin screen, so they never get their own
- * history entry (mirrors the gateOnboarding design in main.ts).
+ * Calibration IS routed: each step gets its own URL (/calibrate, /calibrate/orientation,
+ * …/headphones, …/tune[/localize|knobs|guided|pca], …/loudness) so a refresh restores the
+ * step and the browser Back button walks the flow. The step is carried in `calStep`. The
+ * live audio graph and per-step in-memory answers can't survive a reload (audio needs a user
+ * gesture), so a cold load lands on the step and re-arms audio there — see mountCalibration.
+ * The tutorial stays an unrouted transient gate for now.
  */
 
-/** The routable screens. `level` carries an id (builtin id, or 'current'). */
-export type ScreenName = 'landing' | 'picker' | 'level' | 'progress' | 'clicks' | 'credits' | 'train';
+/** The routable screens. `level` carries an id; `calStep` a calibration sub-step. */
+export type ScreenName =
+  | 'landing' | 'picker' | 'level' | 'progress'
+  | 'clicks' | 'credits' | 'train'
+  | 'calibrate';
+
+/** The calibration sub-steps that each get their own URL. */
+export type CalStep =
+  | 'intro'        // /calibrate
+  | 'orientation'  // /calibrate/orientation  (the L/R + volume check)
+  | 'headphones'   // /calibrate/headphones
+  | 'tune'         // /calibrate/tune         (3D-audio tuning chooser menu)
+  | 'localize'     // /calibrate/tune/localize
+  | 'knobs'        // /calibrate/tune/knobs
+  | 'guided'       // /calibrate/tune/guided
+  | 'pca'          // /calibrate/tune/pca
+  | 'loudness';    // /calibrate/loudness
 
 export interface ScreenState {
   screen: ScreenName;
   /** Present iff screen === 'level': the level id to (re)load. */
   level?: string;
+  /** Present iff screen === 'calibrate': which calibration step to show. */
+  calStep?: CalStep;
 }
+
+/** Sub-path fragment for each calibration step ('' = the /calibrate root). */
+const CAL_SUBPATH: Record<CalStep, string> = {
+  intro: '',
+  orientation: 'orientation',
+  headphones: 'headphones',
+  tune: 'tune',
+  localize: 'tune/localize',
+  knobs: 'tune/knobs',
+  guided: 'tune/guided',
+  pca: 'tune/pca',
+  loudness: 'loudness',
+};
+/** Inverse of CAL_SUBPATH: sub-path fragment → step. */
+const CAL_STEP_BY_SUBPATH: Record<string, CalStep> = Object.fromEntries(
+  (Object.entries(CAL_SUBPATH) as [CalStep, string][]).map(([step, sub]) => [sub, step]),
+) as Record<string, CalStep>;
 
 /**
  * The app's base path (Vite's `import.meta.env.BASE_URL`), normalized to always end
@@ -90,6 +127,9 @@ export function screenToUrl(state: ScreenState, currentSearch = ''): string {
     path = `${base}credits`;
   } else if (state.screen === 'train') {
     path = `${base}train`;
+  } else if (state.screen === 'calibrate') {
+    const sub = CAL_SUBPATH[state.calStep ?? 'intro'];
+    path = sub ? `${base}calibrate/${sub}` : `${base}calibrate`;
   } else if (state.screen === 'picker') {
     path = `${base}play`;
   } else {
@@ -113,6 +153,12 @@ export function urlToScreen(pathname: string, _search = ''): ScreenState {
   if (path === 'clicks') return { screen: 'clicks' };
   if (path === 'credits') return { screen: 'credits' };
   if (path === 'train') return { screen: 'train' };
+  if (path === 'calibrate') return { screen: 'calibrate', calStep: 'intro' };
+  if (path.startsWith('calibrate/')) {
+    const step = CAL_STEP_BY_SUBPATH[path.slice('calibrate/'.length)];
+    // Unknown sub-path (typo) → the calibration intro rather than throwing.
+    return { screen: 'calibrate', calStep: step ?? 'intro' };
+  }
   if (path.startsWith('level/')) {
     const id = decodeURIComponent(path.slice('level/'.length));
     if (id) return { screen: 'level', level: id };
@@ -123,7 +169,11 @@ export function urlToScreen(pathname: string, _search = ''): ScreenState {
 
 /** Whether two screen states denote the same place (so we don't push dupes). */
 export function sameScreen(a: ScreenState, b: ScreenState): boolean {
-  return a.screen === b.screen && (a.level ?? null) === (b.level ?? null);
+  return (
+    a.screen === b.screen &&
+    (a.level ?? null) === (b.level ?? null) &&
+    (a.calStep ?? null) === (b.calStep ?? null)
+  );
 }
 
 export interface RouterOptions {
@@ -175,14 +225,15 @@ export class Router {
   go(state: ScreenState, opts: { replace?: boolean } = {}): void {
     const url = screenToUrl(state, this.loc.search);
     const cur = this.current();
+    const entry = { screen: state.screen, level: state.level, calStep: state.calStep };
     if (opts.replace) {
-      this.hist.replaceState({ screen: state.screen, level: state.level }, '', url);
+      this.hist.replaceState(entry, '', url);
     } else if (!sameScreen(cur, state)) {
-      this.hist.pushState({ screen: state.screen, level: state.level }, '', url);
+      this.hist.pushState(entry, '', url);
       this.depth++;
     } else {
       // Same place — keep the URL but don't stack a duplicate entry.
-      this.hist.replaceState({ screen: state.screen, level: state.level }, '', url);
+      this.hist.replaceState(entry, '', url);
     }
     this.render(state, false);
   }

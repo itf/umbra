@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   angularError,
+  decomposeError,
   makeTestDirections,
   decideWinner,
   screenToDirection,
@@ -34,6 +35,56 @@ describe('makeTestDirections', () => {
     for (const d of makeTestDirections(50, 7)) {
       expect(Math.abs(d.el)).toBeLessThanOrEqual((60 * Math.PI) / 180 + 1e-9);
     }
+  });
+  it('spreads across BOTH sides for the small, structured seeds the UI uses', () => {
+    // Regression: a plain LCG made every small seed (1, 8, 15, …) land on the LEFT.
+    // The seed-mix must give a mix of left AND right azimuths.
+    let left = 0, right = 0;
+    for (let exIdx = 0; exIdx < 3; exIdx++) {
+      for (let att = 0; att < 4; att++) {
+        const seed = exIdx * 101 + att * 7 + 1; // the exact formula the UI uses
+        const az = makeTestDirections(1, seed)[0].az; // 0 front, + right
+        if (az > 0.15) right++; else if (az < -0.15) left++;
+      }
+    }
+    expect(left).toBeGreaterThan(0);
+    expect(right).toBeGreaterThan(0);
+  });
+});
+
+describe('decomposeError', () => {
+  const D = (azDeg: number, elDeg: number) => ({ az: (azDeg * Math.PI) / 180, el: (elDeg * Math.PI) / 180 });
+
+  it('is all-zero for a perfect guess', () => {
+    const e = decomposeError(D(30, 10), D(30, 10));
+    expect(e.lateral).toBeCloseTo(0, 6);
+    expect(e.frontBack).toBeCloseTo(0, 6);
+    expect(e.updown).toBeCloseTo(0, 6);
+    expect(e.total).toBeCloseTo(0, 6);
+  });
+
+  it('guessing too far RIGHT gives positive lateral', () => {
+    const e = decomposeError(D(0, 0), D(30, 0)); // truth front, guess to the right
+    expect(e.lateral).toBeGreaterThan(0);
+  });
+
+  it('guessing too HIGH gives positive updown', () => {
+    const e = decomposeError(D(0, 0), D(0, 30));
+    expect(e.updown).toBeCloseTo((30 * Math.PI) / 180, 5);
+  });
+
+  it('a front/back flip shows up as a large frontBack component', () => {
+    const front = D(0, 0);       // −z
+    const back = D(180, 0);      // +z
+    const e = decomposeError(front, back);
+    expect(Math.abs(e.frontBack)).toBeGreaterThan(1.0); // big fore/aft miss
+  });
+
+  it('down-weights lateral error when the truth is overhead (degenerate azimuth)', () => {
+    const horizon = decomposeError(D(0, 0), D(20, 0));
+    const overhead = decomposeError(D(0, 85), D(20, 85));
+    expect(overhead.lateralWeight).toBeLessThan(horizon.lateralWeight);
+    expect(overhead.lateralWeight).toBeLessThan(0.2); // near zero overhead
   });
 });
 

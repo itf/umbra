@@ -335,11 +335,29 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .dir-picker-columns { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; justify-content: center; }
 .dir-compass { touch-action: none; cursor: crosshair; background: rgba(255,255,255,0.03); border-radius: 50%; }
 .dir-compass:focus { outline: 2px solid var(--accent); }
-.dir-height { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.dir-height-slider { writing-mode: vertical-lr; direction: rtl; height: 160px; width: 28px; }
+.dir-height, .dir-compasscol { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.dir-subtitle { font-size: 0.85rem; opacity: 0.7; }
+.dir-arc { touch-action: none; cursor: pointer; background: rgba(255,255,255,0.03); border-radius: 10px; }
+.dir-arc:focus { outline: 2px solid var(--accent); }
+.dir-inhead { opacity: 0.85; font-size: 0.9rem; }
+.hrtf-loc-showans { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; opacity: 0.85; }
+.hrtf-loc-replay { align-self: center; }
+.dir-answer { justify-content: center; gap: 16px; margin-top: 8px; }
 .dir-readout { font-size: 0.95rem; opacity: 0.85; margin: 0; text-align: center; }
+.dir-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .hrtf-loc-trial { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .hrtf-loc-progress { font-size: 0.9rem; opacity: 0.75; margin: 0; text-align: center; }
+
+/* COMPACT layout for the "point to the sound" test so the answer controls fit without
+   scrolling — tighter heading + gaps + viz. Instruction text is left at its normal size
+   (it was fine); compass/arc keep their size. */
+.hrtf-compact h1 { font-size: 1.25rem; margin: 4px 0; }
+.hrtf-compact .cal-controls { gap: 6px; margin-top: 6px; }
+.hrtf-compact .hrtf-viz-wrap { margin: 0 0 4px; gap: 2px; }
+.hrtf-compact .hrtf-viz { width: 200px; }
+.hrtf-compact .hrtf-loc-trial { gap: 6px; }
+.hrtf-compact .dir-picker { gap: 4px; margin: 2px 0; }
+.hrtf-compact .cal-controls button { padding: 10px 16px; }
 
 #calibration-screen, #tutorial-screen { max-width: 560px; }
 .tut-body { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 8px 0; }

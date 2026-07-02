@@ -27,7 +27,7 @@ import { repeatSelection, nextSelection, harderSelection } from './game/nextRun'
 import { loadLevel as loadSavedLevel, listLevels } from './level/storage';
 import type { Level } from './level/schema';
 import { renderLevelPicker, type PickerSelection } from './ui/levelPicker';
-import { Router, type ScreenState } from './ui/router';
+import { Router, type ScreenState, type CalStep } from './ui/router';
 import { renderProgressScreen } from './ui/progress';
 import { renderLandingScreen } from './ui/landing';
 import { LandingDemo } from './ui/landingDemo';
@@ -561,7 +561,10 @@ function showStartScreen() {
  */
 function gateOnboarding(then: () => void) {
   if (!onboarding.calibrationDone()) {
-    runCalibration(() => gateOnboarding(then));
+    // Calibration is routed now: remember where to continue, then navigate into it. The
+    // router's `calibrate` branch mounts the flow; its onDone runs `afterOnboarding`.
+    afterOnboarding = () => gateOnboarding(then);
+    navigate({ screen: 'calibrate', calStep: 'intro' });
   } else if (!onboarding.tutorialDone()) {
     runTutorial(() => gateOnboarding(then));
   } else {
@@ -569,31 +572,51 @@ function gateOnboarding(then: () => void) {
   }
 }
 
-/** Mount + show the calibration screen; `after` runs when it finishes/skips. */
-function runCalibration(after: () => void) {
+// --- Calibration is a routed flow. `cal` is the live mounted component (created on first
+// entry, disposed when we route away); `afterOnboarding` is where onDone continues. ---
+let cal: { goToStep: (s: CalStep) => void; dispose: () => void } | null = null;
+let afterOnboarding: (() => void) | null = null;
+
+/** Dispose the calibration component (frees its audio graph) — called when routing away. */
+function disposeCalibration() {
+  cal?.dispose();
+  cal = null;
+}
+
+/** Show a calibration step. Mounts the component on first entry, then drives it to `step`. */
+function showCalibrate(step: CalStep) {
   hideOnboardingScreens();
   calibrationScreen.hidden = false;
-  mountCalibration(calibrationScreen, {
-    store: onboarding,
-    say,
-    alert,
-    applySwap: applyChannelSwap,
-    saveLoudnessEq: (curve) => settings.setLoudnessEq(curve),
-    saveHrtfPersonalization: (p) => settings.setHrtfPersonalization(p),
-    loadHrtfPersonalization: () => settings.hrtfPersonalization(),
-    loadHrtfBase: () => settings.hrtfBase(),
-    saveHrtfBase: (id) => settings.setHrtfBase(id),
-    // BASIC over-ear vs in-ear question: persist the type + default strength and apply
-    // the master-bus comp LIVE (over-ear ⇒ gentle default; in-ear ⇒ off).
-    saveHeadphoneComp: (type, strength) => {
-      settings.setHeadphoneType(type);
-      settings.setOverEarCompStrength(strength);
-      const g = getGraph();
-      if (g) applyOverEarComp(g);
-    },
-    hrtfUrl: HRTF_URL,
-    onDone: after,
-  });
+  if (!cal) {
+    cal = mountCalibration(calibrationScreen, {
+      store: onboarding,
+      say,
+      alert,
+      applySwap: applyChannelSwap,
+      saveLoudnessEq: (curve) => settings.setLoudnessEq(curve),
+      saveHrtfPersonalization: (p) => settings.setHrtfPersonalization(p),
+      loadHrtfPersonalization: () => settings.hrtfPersonalization(),
+      loadHrtfBase: () => settings.hrtfBase(),
+      saveHrtfBase: (id) => settings.setHrtfBase(id),
+      // BASIC over-ear vs in-ear question: persist the type + default strength and apply
+      // the master-bus comp LIVE (over-ear ⇒ gentle default; in-ear ⇒ off).
+      saveHeadphoneComp: (type, strength) => {
+        settings.setHeadphoneType(type);
+        settings.setOverEarCompStrength(strength);
+        const g = getGraph();
+        if (g) applyOverEarComp(g);
+      },
+      hrtfUrl: HRTF_URL,
+      navigate: (s) => navigate({ screen: 'calibrate', calStep: s }),
+      onDone: () => {
+        const cont = afterOnboarding ?? (() => navigate({ screen: 'picker' }));
+        afterOnboarding = null;
+        disposeCalibration();
+        cont();
+      },
+    });
+  }
+  cal.goToStep(step);
 }
 
 /** Mount + show the tutorial screen; `after` runs when it finishes/skips. */
@@ -780,7 +803,8 @@ backButton?.addEventListener('click', () => navigate({ screen: 'picker' }));
 
 // Replay onboarding from the picker (always available, ignores the "done" flags).
 document.getElementById('redo-calibration')?.addEventListener('click', () => {
-  runCalibration(() => navigate({ screen: 'picker' }));
+  afterOnboarding = () => navigate({ screen: 'picker' });
+  navigate({ screen: 'calibrate', calStep: 'intro' });
 });
 document.getElementById('redo-tutorial')?.addEventListener('click', () => {
   runTutorial(() => navigate({ screen: 'picker' }));
@@ -814,7 +838,12 @@ function loadLevelById(id: string): boolean {
 // route), so gateOnboarding is untouched. ---
 const router = new Router({
   render: (state: ScreenState) => {
-    if (state.screen === 'landing') {
+    // Leaving calibration for any other screen must dispose it so its audio graph/worklets
+    // don't leak (hideOnboardingScreens only hides the DOM).
+    if (state.screen !== 'calibrate' && cal) disposeCalibration();
+    if (state.screen === 'calibrate') {
+      showCalibrate(state.calStep ?? 'intro');
+    } else if (state.screen === 'landing') {
       showLanding();
     } else if (state.screen === 'picker') {
       showPicker();

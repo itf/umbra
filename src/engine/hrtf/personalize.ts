@@ -157,6 +157,31 @@ function applyNotch(ir: Float32Array, base: number, taps: number, fc: number, q:
 }
 
 /**
+ * Reinforce the FRONT/BACK spectral cue on one ear's IR. `s ∈ [-1, +1]`: + pushes the
+ * percept toward FRONT, − toward BACK; magnitude = strength. Applies the research-backed
+ * recipe (Blauert directional bands + measured HRTF front/back differences):
+ *   • ~1 kHz peaking: BOOST for back (s<0), CUT for front (s>0). The strongest, most
+ *     individual-robust cue (rear HRTFs are measurably louder ~1 kHz).
+ *   • ~4 kHz peaking: opposite sign (front band).
+ *   • first pinna NOTCH whose CENTRE slides ~7 kHz (front) → ~10 kHz (back) — it's the
+ *     notch FREQUENCY, not depth, that carries direction, so we place the dip at the
+ *     hemisphere-appropriate frequency.
+ * `applyNotch` here is a general RBJ peakingEQ (any-sign gain), reused for all three.
+ */
+function applyFrontBackCue(ir: Float32Array, base: number, taps: number, s: number, sampleRate: number): void {
+  if (s === 0) return;
+  const mag = Math.min(1, Math.abs(s));
+  // 1 kHz: +6 dB at full BACK, −5 dB at full FRONT (sign: back boosts, so gain = −s·k).
+  applyNotch(ir, base, taps, 1000, 1.2, -s * (s < 0 ? 6 : 5), sampleRate);
+  // 4 kHz: front band — +4 dB at full FRONT, −3 dB at full BACK (gain = +s·k).
+  applyNotch(ir, base, taps, 4000, 1.4, s * (s > 0 ? 4 : 3), sampleRate);
+  // Pinna notch slides with hemisphere: ~7 kHz (front) ↔ ~10 kHz (back). Depth scales
+  // with strength so neutral (s→0) leaves the natural notch alone.
+  const notchHz = s < 0 ? 7000 + 3000 * mag : 7000; // front ~7k; back rises toward 10k
+  applyNotch(ir, base, taps, notchHz, 4, -8 * mag, sampleRate);
+}
+
+/**
  * Produce a personalized copy of a baked min-phase HRTF set. The input is left
  * untouched; the returned set has its ITD scaled, its per-direction magnitude
  * filters tilted (elevation/front-back brightness), and — the real elevation cue —
@@ -178,20 +203,29 @@ export function personalizeMinPhase(
     itdL[m] = set.itdL[m] * p.itdScale;
     itdR[m] = set.itdR[m] * p.itdScale;
 
-    if (p.elevTilt !== 0 || p.frontBackTilt !== 0) {
-      const y = dirs[m * 3 + 1]; // elevation component (+up)
-      const z = dirs[m * 3 + 2]; // −z = front, +z = back
-      // Front/back: weight the whole FRONT hemisphere positive and the whole BACK
-      // hemisphere negative (a soft sign of −z), not the raw cosine — so a source at
-      // the SIDES of a horizontal orbit still gets most of the tilt. This is what
-      // makes the slider clearly audible as the sound circles, instead of only
-      // biting at dead-front / dead-back. tanh gives a smooth ±1 plateau.
-      const fbWeight = Math.tanh(-z * 3); // ≈ −1 back … +1 front, steep near median
-      // Elevation stays cosine-like (the up cue really is concentrated overhead).
-      const db = p.elevTilt * y + p.frontBackTilt * fbWeight;
-      const base = m * stride;
-      applyBrightnessTilt(irs, base, taps, db); // left ear
-      applyBrightnessTilt(irs, base + taps, taps, db); // right ear
+    const y = dirs[m * 3 + 1]; // elevation component (+up)
+    const z = dirs[m * 3 + 2]; // −z = front, +z = back
+    const base = m * stride;
+
+    // ELEVATION brightness (broadband) — kept as-is; the real up/down cue is the notch below.
+    if (p.elevTilt !== 0) {
+      const db = p.elevTilt * y;
+      applyBrightnessTilt(irs, base, taps, db);
+      applyBrightnessTilt(irs, base + taps, taps, db);
+    }
+
+    // FRONT/BACK — a SPECTRAL cue, not a brightness shelf (a broadband tilt can't flip a
+    // front/back confusion: the auditory system reads the notch PATTERN + specific boosted
+    // bands, and normalises gross tilt away). Per Blauert's directional bands + measured
+    // HRTF differences (see research): the ~1 kHz band is LOUDER for REAR sources (the most
+    // robust, individual-invariant cue), ~4 kHz favours FRONT, and the first pinna notch
+    // slides from ~7 kHz (front) up to ~10 kHz (back). We REINFORCE the correct cue for
+    // each source's true hemisphere, scaled by frontBackTilt (0..18 → 0..1 strength).
+    // Ref: Blauert, Spatial Hearing (MIT Press, 1997); Iida et al. (rear ~1 kHz boost).
+    if (p.frontBackTilt !== 0) {
+      const s = (p.frontBackTilt / 18) * Math.tanh(-z * 3); // + = front hemisphere, − = back
+      applyFrontBackCue(irs, base, taps, s, sampleRate);
+      applyFrontBackCue(irs, base + taps, taps, s, sampleRate);
     }
 
     // PINNA NOTCH — the real elevation cue. Depth scales with elevation (deep when

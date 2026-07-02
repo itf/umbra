@@ -45,6 +45,18 @@ describe('screenToUrl', () => {
   it('url-encodes a level id with special characters', () => {
     expect(screenToUrl({ screen: 'level', level: 'a b/c' })).toBe('/level/a%20b%2Fc');
   });
+  it('maps calibration steps to /calibrate[/…] paths', () => {
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'intro' })).toBe('/calibrate');
+    expect(screenToUrl({ screen: 'calibrate' })).toBe('/calibrate'); // defaults to intro
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'orientation' })).toBe('/calibrate/orientation');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'headphones' })).toBe('/calibrate/headphones');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'tune' })).toBe('/calibrate/tune');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'localize' })).toBe('/calibrate/tune/localize');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'knobs' })).toBe('/calibrate/tune/knobs');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'guided' })).toBe('/calibrate/tune/guided');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'pca' })).toBe('/calibrate/tune/pca');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'loudness' })).toBe('/calibrate/loudness');
+  });
 });
 
 describe('urlToScreen', () => {
@@ -72,6 +84,20 @@ describe('urlToScreen', () => {
     expect(urlToScreen('/credits')).toEqual({ screen: 'credits' });
     expect(urlToScreen('/train')).toEqual({ screen: 'train' });
   });
+  it('/calibrate and its sub-steps map to the calibrate screen', () => {
+    expect(urlToScreen('/calibrate')).toEqual({ screen: 'calibrate', calStep: 'intro' });
+    expect(urlToScreen('/calibrate/orientation')).toEqual({ screen: 'calibrate', calStep: 'orientation' });
+    expect(urlToScreen('/calibrate/headphones')).toEqual({ screen: 'calibrate', calStep: 'headphones' });
+    expect(urlToScreen('/calibrate/tune')).toEqual({ screen: 'calibrate', calStep: 'tune' });
+    expect(urlToScreen('/calibrate/tune/localize')).toEqual({ screen: 'calibrate', calStep: 'localize' });
+    expect(urlToScreen('/calibrate/tune/knobs')).toEqual({ screen: 'calibrate', calStep: 'knobs' });
+    expect(urlToScreen('/calibrate/tune/guided')).toEqual({ screen: 'calibrate', calStep: 'guided' });
+    expect(urlToScreen('/calibrate/tune/pca')).toEqual({ screen: 'calibrate', calStep: 'pca' });
+    expect(urlToScreen('/calibrate/loudness')).toEqual({ screen: 'calibrate', calStep: 'loudness' });
+  });
+  it('an unknown calibrate sub-step falls back to the intro (not landing)', () => {
+    expect(urlToScreen('/calibrate/bogus')).toEqual({ screen: 'calibrate', calStep: 'intro' });
+  });
   it('unknown paths fall back to landing, not throw', () => {
     expect(urlToScreen('/nope/nope')).toEqual({ screen: 'landing' });
     expect(urlToScreen('/random')).toEqual({ screen: 'landing' });
@@ -86,6 +112,15 @@ describe('urlToScreen', () => {
       { screen: 'clicks' },
       { screen: 'credits' },
       { screen: 'train' },
+      { screen: 'calibrate', calStep: 'intro' },
+      { screen: 'calibrate', calStep: 'orientation' },
+      { screen: 'calibrate', calStep: 'headphones' },
+      { screen: 'calibrate', calStep: 'tune' },
+      { screen: 'calibrate', calStep: 'localize' },
+      { screen: 'calibrate', calStep: 'knobs' },
+      { screen: 'calibrate', calStep: 'guided' },
+      { screen: 'calibrate', calStep: 'pca' },
+      { screen: 'calibrate', calStep: 'loudness' },
     ];
     for (const s of states) expect(urlToScreen(screenToUrl(s))).toEqual(s);
   });
@@ -97,6 +132,16 @@ describe('sameScreen', () => {
     expect(sameScreen({ screen: 'level', level: 'a' }, { screen: 'level', level: 'b' })).toBe(false);
     expect(sameScreen({ screen: 'picker' }, { screen: 'progress' })).toBe(false);
     expect(sameScreen({ screen: 'landing' }, { screen: 'picker' })).toBe(false);
+  });
+  it('distinguishes calibration steps by calStep', () => {
+    expect(sameScreen(
+      { screen: 'calibrate', calStep: 'intro' },
+      { screen: 'calibrate', calStep: 'intro' },
+    )).toBe(true);
+    expect(sameScreen(
+      { screen: 'calibrate', calStep: 'intro' },
+      { screen: 'calibrate', calStep: 'headphones' },
+    )).toBe(false);
   });
 });
 

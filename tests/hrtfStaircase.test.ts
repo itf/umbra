@@ -1,7 +1,7 @@
 /**
- * Pure tests for the coarse→fine staircase driving the perceptual HRTF game.
- * Deterministic: given a fixed "oracle" listener (a target value the simulated
- * user prefers), the staircase must converge near it and terminate.
+ * Pure tests for the bracket-then-binary parameter search driving the perceptual HRTF
+ * game. Deterministic: given a fixed "oracle" listener (a target value the simulated
+ * user prefers), the search must converge near it and terminate.
  */
 import { describe, it, expect } from 'vitest';
 import { Staircase } from '../src/ui/hrtfStaircase';
@@ -24,66 +24,70 @@ function makeStaircase(opts: {
   return new Staircase(opts);
 }
 
-describe('Staircase', () => {
+describe('Staircase (binary search over a bounded range)', () => {
   const base = { start: 1, step: 0.4, minStep: 0.05, min: 0.6, max: 1.6 };
 
-  it('converges toward a target above the start', () => {
+  it('converges near a target above the midpoint', () => {
     const { value } = runToConvergence(1.35, base);
-    expect(value).toBeGreaterThan(1.15);
-    expect(value).toBeLessThanOrEqual(1.6);
+    expect(Math.abs(value - 1.35)).toBeLessThan(0.1);
   });
 
-  it('converges toward a target below the start', () => {
+  it('converges near a target below the midpoint', () => {
     const { value } = runToConvergence(0.75, base);
-    expect(value).toBeLessThan(0.95);
-    expect(value).toBeGreaterThanOrEqual(0.6);
+    expect(Math.abs(value - 0.75)).toBeLessThan(0.1);
   });
 
-  it('terminates in a small number of choices (fast before brain adapts)', () => {
+  it('converges in a small, predictable number of choices (log2 of the range)', () => {
     const { iterations } = runToConvergence(1.3, base);
-    expect(iterations).toBeLessThan(20);
+    // range 1.0, minStep 0.05 → ~log2(20) ≈ 5 halvings, plus guard slack.
+    expect(iterations).toBeLessThan(12);
   });
 
-  it('respects the hard clamp', () => {
-    const { value } = runToConvergence(99, base); // impossible target → pin to max
+  it('respects the hard clamp for an out-of-range target', () => {
+    const { value } = runToConvergence(99, base); // impossible target → pin near max
     expect(value).toBeLessThanOrEqual(base.max);
     expect(value).toBeGreaterThanOrEqual(base.min);
+    expect(value).toBeGreaterThan(1.4); // pushed toward the top
   });
 
-  it('nextTrial always brackets the current best', () => {
+  it('nextTrial presents two DISTINCT probes straddling the current best', () => {
     const sc = makeStaircase(base);
     const t = sc.nextTrial();
-    expect(t.a).toBe(sc.current);
-    expect(t.b).not.toBe(t.a);
+    expect(t.a).not.toBe(t.b);
+    expect(Math.min(t.a, t.b)).toBeLessThan(sc.current);
+    expect(Math.max(t.a, t.b)).toBeGreaterThan(sc.current);
   });
 
   it('answer() is a no-op once done', () => {
-    const sc = makeStaircase({ ...base, reversals: 1 });
-    // force a reversal to finish quickly
-    let t = sc.nextTrial();
-    sc.answer('b', t); // move up
-    t = sc.nextTrial();
-    sc.answer('a', t); // stick → reversal → done
+    const sc = makeStaircase({ ...base, minStep: 10 }); // huge minStep → done immediately
+    expect(sc.done).toBe(true);
     const before = sc.current;
-    sc.answer('b', { a: before, b: before + 1 });
+    sc.answer('b', sc.nextTrial());
     expect(sc.current).toBe(before);
   });
 });
 
 describe('Staircase.bothBad', () => {
   const base = { start: 1, step: 0.4, minStep: 0.05, min: 0.6, max: 1.6 };
-  it('moves the value and never gets stuck', () => {
+  it('widens the search and stays in range', () => {
     const sc = new Staircase(base);
-    const before = sc.current;
     sc.bothBad();
-    // it should explore — value changes (unless already at a rail, then still valid)
     expect(sc.current).toBeGreaterThanOrEqual(base.min);
     expect(sc.current).toBeLessThanOrEqual(base.max);
-    expect(sc.current).not.toBe(before);
   });
   it('terminates after repeated "both bad" (no infinite loop)', () => {
     const sc = new Staircase(base);
     for (let i = 0; i < 5 && !sc.done; i++) sc.bothBad();
     expect(sc.done).toBe(true);
+  });
+});
+
+describe('Staircase (unbounded → exponential bracket then binary)', () => {
+  // No finite range → exponential grow until the preference flips, then binary.
+  const opts = { start: 0, step: 1, minStep: 0.1, min: -Infinity, max: Infinity };
+  it('brackets and converges on a target reached only by growing the step', () => {
+    const { value, iterations } = runToConvergence(6.3, opts);
+    expect(Math.abs(value - 6.3)).toBeLessThan(0.5);
+    expect(iterations).toBeLessThan(30);
   });
 });

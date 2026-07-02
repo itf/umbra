@@ -89,13 +89,28 @@ describe('personalizeMinPhase', () => {
     );
   });
 
-  it('frontBackTilt makes front brighter than back for the same positive tilt', () => {
-    const set = fakeSet();
-    const taps = set.taps;
-    const out = personalizeMinPhase(set, mk({ frontBackTilt: 6 }));
-    const frontE = energy(out.irs, 0, taps); // m=0, z=-1 → +tilt (bright)
-    const backE = energy(out.irs, 2 * 2 * taps, taps); // m=2, z=+1 → −tilt (dark)
-    expect(frontE).toBeGreaterThan(backE);
+  it('frontBackTilt applies a SPECTRAL front/back cue: boosts ~1 kHz for BACK, cuts it for FRONT', () => {
+    // Front/back is now a direction-specific spectral cue (Blauert 1 kHz band etc.), not a
+    // brightness tilt. Use a long impulse so 1 kHz is resolvable, one front + one back dir.
+    const taps = 256, count = 2;
+    const dirs = new Float32Array([0, 0, -1, /*front*/ 0, 0, 1 /*back*/]);
+    const irs = new Float32Array(count * 2 * taps);
+    irs[0] = 1; irs[taps] = 1;               // front L/R = unit impulse
+    irs[2 * taps] = 1; irs[3 * taps] = 1;    // back  L/R = unit impulse
+    const set: MinPhaseHrtf = {
+      sampleRate: 48000, taps, count, dirs, irs,
+      itdL: new Float32Array(count), itdR: new Float32Array(count),
+    };
+    const out = personalizeMinPhase(set, mk({ frontBackTilt: 18 }));
+    const magAt = (base: number, f: number) => {
+      let re = 0, im = 0; const w = (2 * Math.PI * f) / 48000;
+      for (let n = 0; n < taps; n++) { re += out.irs[base + n] * Math.cos(w * n); im -= out.irs[base + n] * Math.sin(w * n); }
+      return Math.hypot(re, im);
+    };
+    const front1k = magAt(0, 1000);          // front dir, left ear
+    const back1k = magAt(2 * taps, 1000);    // back dir, left ear
+    // Back must have MORE 1 kHz energy than front after the cue (the robust rear cue).
+    expect(back1k).toBeGreaterThan(front1k);
   });
 });
 

@@ -34,6 +34,48 @@ export function dirToPosition(d: Direction, r = 1, headY = 1.6): Vec3 {
   return [x * r, headY + y * r, z * r];
 }
 
+/**
+ * DECOMPOSED localization error — the three PERCEPTUAL components, each mapping to a
+ * different HRTF parameter, so a trial informs the RIGHT knob instead of blaming one
+ * scalar total (see the calibration design):
+ *   • lateral   — signed left/right miss (interaural axis). + = guessed too far RIGHT.
+ *                 Drives ITD / head-width. Weighted by how lateral the TRUTH is (near
+ *                 the median plane there's little L/R info; overhead is degenerate).
+ *   • frontBack — signed fore/aft miss. + = guessed too far FRONT of the truth. A sign
+ *                 flip here is the classic front/back confusion → drives frontBackTilt.
+ *   • updown    — signed elevation miss (radians). + = guessed too HIGH. Drives the
+ *                 pinna notch / PCA. This one is well-conditioned even overhead.
+ * Angles in radians. `lateralWeight` (0..1) lets a caller down-weight lateral error for
+ * near-overhead/median targets where azimuth is ill-defined.
+ */
+export interface ErrorComponents {
+  lateral: number;
+  frontBack: number;
+  updown: number;
+  lateralWeight: number;
+  /** The scalar great-circle angle too, for progress display / stop conditions. */
+  total: number;
+}
+
+export function decomposeError(truth: Direction, guess: Direction): ErrorComponents {
+  // Up/down: straightforward elevation difference (+ = guessed higher).
+  const updown = guess.el - truth.el;
+  // Lateral: the interaural (x) coordinate is sin(az)cos(el); its difference is the
+  // left/right miss. + when the guess sits further right than the truth.
+  const vt = dirToVec(truth), vg = dirToVec(guess);
+  const lateral = Math.asin(clamp(vg[0], -1, 1)) - Math.asin(clamp(vt[0], -1, 1));
+  // Front/back: −z is front. + when the guess is further front (more negative z).
+  const frontBack = Math.asin(clamp(-vg[2], -1, 1)) - Math.asin(clamp(-vt[2], -1, 1));
+  // Lateral information vanishes as the truth approaches straight up/down (cos el → 0):
+  // there, azimuth is degenerate, so weight lateral error by cos(el) of the truth.
+  const lateralWeight = Math.max(0, Math.cos(truth.el));
+  return { lateral, frontBack, updown, lateralWeight, total: angularError(truth, guess) };
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+
 /** Great-circle angle (radians) between two directions — the localization error. */
 export function angularError(a: Direction, b: Direction): number {
   const va = dirToVec(a);
@@ -42,16 +84,28 @@ export function angularError(a: Direction, b: Direction): number {
   return Math.acos(Math.max(-1, Math.min(1, dot)));
 }
 
+/** Scramble a seed so SMALL, CLOSELY-SPACED seeds (1, 8, 15, …) don't correlate — a
+ *  plain LCG's first output for such seeds clusters (they all landed on the LEFT side,
+ *  the reported "every probe is on the left" bug). This is a MurmurHash3 finalizer. */
+function mix32(x: number): number {
+  let h = x >>> 0;
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b) >>> 0;
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35) >>> 0;
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
 /**
  * Deterministic pseudo-random test directions (seeded — scripts can't use Math.random
- * reproducibly and tests need stability). A small LCG spread over azimuth (full
- * circle) and elevation (−60°..+60°, matching the spiral exercise range). Front/back
- * and up/down are BOTH represented so the trial exercises the confusable axes.
+ * reproducibly and tests need stability). Azimuth spans the FULL circle and elevation
+ * −60°..+60° (matching the spiral range), so front/back and up/down are both exercised.
+ * The seed is HASHED first (see mix32) so consecutive small seeds give well-spread
+ * directions instead of clustering on one side.
  */
 export function makeTestDirections(count: number, seed = 1): Direction[] {
-  let s = (seed >>> 0) || 1;
+  let s = mix32((seed >>> 0) || 1) || 1;
   const rnd = () => {
-    // Numerical Recipes LCG.
+    // Numerical Recipes LCG on the mixed seed.
     s = (Math.imul(1664525, s) + 1013904223) >>> 0;
     return s / 0x100000000;
   };

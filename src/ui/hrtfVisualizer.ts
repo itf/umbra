@@ -54,9 +54,10 @@ export function project(
   const cx = cfg.w / 2;
   const cy = cfg.h / 2;
   const px = cfg.scale; // px per metre horizontally
-  // Oblique camera pitched down from behind: front sources (−z) sit LOWER (toward the
-  // viewer), back sources sit HIGHER. 0.45 = the vertical squash of that tilt.
-  const dvY = -z * px * 0.45;
+  // Oblique top-down camera: FRONT (−z) is drawn UP/away (smaller sy), BACK (+z) is
+  // drawn DOWN/toward the viewer — the natural map-like orientation (front = forwards).
+  // 0.45 = the vertical squash of the tilt.
+  const dvY = z * px * 0.45;
   const relY = y - cfg.headY; // height above ear level, metres
   const sx = cx + x * px;
   // Screen y grows DOWN: height moves the dot UP (subtract), depth tilt moves it as dvY.
@@ -137,35 +138,34 @@ export function mountVisualizer(
     ctx.ellipse(cx, cy, cfg.scale, cfg.scale * 0.45, 0, 0, Math.PI * 2);
     ctx.stroke();
 
-    // "FRONT" marker (−z), drawn toward the viewer/bottom.
+    // FRONT (−z) is UP/away; BACK (+z) is toward the viewer/bottom.
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.font = '11px system-ui, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('front', cx, cy + cfg.scale * 0.45 + 14);
-    ctx.fillText('back', cx, cy - cfg.scale * 0.45 - 6);
+    ctx.fillText('front', cx, cy - cfg.scale * 0.45 - 6);
+    ctx.fillText('back', cx, cy + cfg.scale * 0.45 + 14);
 
     // Head at centre (listener).
     ctx.fillStyle = 'rgba(255,255,255,0.85)';
     ctx.beginPath();
     ctx.arc(cx, cy, 12, 0, Math.PI * 2);
     ctx.fill();
-    // little nose pointing front so orientation is unambiguous.
+    // little nose pointing UP (front) so orientation is unambiguous.
     ctx.beginPath();
-    ctx.moveTo(cx, cy + 12);
-    ctx.lineTo(cx - 4, cy + 6);
-    ctx.lineTo(cx + 4, cy + 6);
+    ctx.moveTo(cx, cy - 12);
+    ctx.lineTo(cx - 4, cy - 6);
+    ctx.lineTo(cx + 4, cy - 6);
     ctx.closePath();
     ctx.fill();
 
-    // The user's GUESS marker (localization mode) — a hollow ring, drawn under the
-    // true source so a correct guess shows the dot sitting inside the ring.
+    // The user's GUESS marker (localization mode) — a hollow ring with a RAY from the
+    // head, so it clearly reads as "you're pointing THIS way" (not just a floating dot).
     if (guess) {
       const g = project(guess.x, guess.y, guess.z, cfg);
       ctx.strokeStyle = 'rgba(120,200,255,0.9)';
       ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(g.sx, g.sy, g.r + 3, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(g.sx, g.sy); ctx.stroke(); // head → guess ray
+      ctx.beginPath(); ctx.arc(g.sx, g.sy, g.r + 3, 0, Math.PI * 2); ctx.stroke();
       ctx.lineWidth = 1;
     }
 
@@ -173,7 +173,13 @@ export function mountVisualizer(
 
     const p = project(cur.x, cur.y, cur.z, cfg);
 
-    // Vertical stalk from ground shadow to the dot (reads height at a glance).
+    // RAY from the head to the source — makes it unmistakable the sound comes FROM that
+    // direction (a bare dot didn't convey "the noise is over there"). Plus a vertical
+    // stalk to the ground shadow for height.
+    ctx.strokeStyle = 'rgba(255,209,102,0.7)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(p.sx, p.sy); ctx.stroke();
+    ctx.lineWidth = 1;
     ctx.strokeStyle = 'rgba(255,209,102,0.35)';
     ctx.beginPath();
     ctx.moveTo(p.gx, p.gy);
