@@ -110,6 +110,12 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   controls.className = 'cal-controls';
   root.append(h, p, controls);
 
+  // Comfortable playback levels for the calibration tools — never full volume, per user
+  // pref. PROBE_LEVEL is the guided A/B probe (was full-scale 1.0); LOCALIZE_LEVEL is the
+  // "point to the sound" / "refine to real ears" probe (already half volume).
+  const PROBE_LEVEL = 0.55;
+  const LOCALIZE_LEVEL = 0.5;
+
   // ---- audio: one shared moving pink-noise probe, split into two warped renderers.
   const noise = makePinkNoise(ctx); // looping BufferSource
   let noiseStarted = false;
@@ -204,11 +210,12 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     gainB.gain.value = which === 'b' ? 1 : 0;
   }
 
-  /** Open/close the audible gate with a short ramp so passes fade in/out cleanly. */
+  /** Open/close the audible gate with a short ramp so passes fade in/out cleanly.
+   *  Open level is PROBE_LEVEL (~55%), never full — per the comfortable-volume pref. */
   function setGate(on: boolean) {
     if (!gate) return;
     const t = ctx.currentTime;
-    gate.gain.setTargetAtTime(on ? 1 : 0, t, 0.02);
+    gate.gain.setTargetAtTime(on ? PROBE_LEVEL : 0, t, 0.02);
   }
 
   function clearTimers() {
@@ -817,7 +824,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locRenderer.setListener({ x: 0, y: 1.6, z: 0, yaw: 0 });
     locSrc = locRenderer.createSource();
     locGain = ctx.createGain();
-    locGain.gain.value = 0.5; // half volume — comfortable, per user pref
+    locGain.gain.value = LOCALIZE_LEVEL; // half volume — comfortable, per user pref
     noise.connect(locSrc.input);
     locSrc.output.connect(locGain);
     locGain.connect(dest);
@@ -849,7 +856,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     // Play a ~1.5 s static burst at the target (a fixed point localizes cleaner than a
     // moving sweep for a "where is it" judgement).
     locSrc?.setPosition(tx, ty, tz);
-    if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(0.5, t + 0.03); }
+    if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(LOCALIZE_LEVEL, t + 0.03); }
     p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
     deps.say('Where did it come from? Set the direction and height, then confirm.');
     const stop = setTimeout(() => {
