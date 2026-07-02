@@ -95,6 +95,20 @@ function mix32(x: number): number {
   return h >>> 0;
 }
 
+/** A DETERMINISTIC shuffle of [0..n) seeded via mix32 — a Fisher–Yates driven by a
+ *  mix32-seeded LCG, so the round-robin pass order is varied per pass yet reproducible
+ *  (tests + resume rely on this). Returns a fresh index array. */
+export function seededShuffle(n: number, seed: number): number[] {
+  const out = Array.from({ length: n }, (_, i) => i);
+  let s = mix32((seed >>> 0) || 1) || 1;
+  const rnd = () => { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 0x100000000; };
+  for (let i = n - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    const t = out[i]; out[i] = out[j]; out[j] = t;
+  }
+  return out;
+}
+
 /**
  * Deterministic pseudo-random test directions (seeded — scripts can't use Math.random
  * reproducibly and tests need stability). Azimuth spans the FULL circle and elevation
@@ -116,6 +130,74 @@ export function makeTestDirections(count: number, seed = 1): Direction[] {
     out.push({ az, el });
   }
   return out;
+}
+
+/**
+ * Which region of the sphere a probe direction should be drawn from, so the trial is
+ * DIAGNOSTIC for the parameter under test (a param only manifests in certain directions):
+ *   • 'frontback' — front/back-ambiguous zone: near the median plane / cone of confusion
+ *                   (azimuth near 0 or ±180, modest |el|). Where front/back confusion lives.
+ *   • 'elevation' — off the horizontal (|el| ~20–60°, away from the degenerate poles), where
+ *                   elevation / pinna-notch cues live.
+ *   • 'lateral'   — lateral, near-horizontal (|az| toward ±90) where interaural (ITD/ILD)
+ *                   cues dominate.
+ *   • 'balanced'  — an even spread across all zones (for the base-head screen: heads must be
+ *                   judged over the whole sphere, incl. front/back-ambiguous AND elevated).
+ */
+export type SampleKind = 'frontback' | 'elevation' | 'lateral' | 'balanced';
+
+/**
+ * A seeded, DIAGNOSTIC probe direction for the given sample kind. Uses the same mix32 seed
+ * scrambling as makeTestDirections so consecutive small seeds give well-spread directions
+ * and tests stay reproducible. Pure. See SampleKind for what each region targets.
+ */
+export function makeTargetedDirection(kind: SampleKind, seed = 1): Direction {
+  let s = mix32((seed >>> 0) || 1) || 1;
+  const rnd = () => { s = (Math.imul(1664525, s) + 1013904223) >>> 0; return s / 0x100000000; };
+  const DEG = Math.PI / 180;
+  switch (kind) {
+    case 'frontback': {
+      // Near the median plane: pick the front OR back pole, jitter azimuth only slightly
+      // (±25°) so |lateral| stays low (the cone of confusion), with a modest elevation.
+      const back = rnd() < 0.5;
+      const azJit = (rnd() * 50 - 25) * DEG;            // ±25° around 0 (front) or π (back)
+      const az = (back ? Math.PI : 0) + azJit;
+      const el = (rnd() * 50 - 25) * DEG;               // −25..+25°
+      return { az: wrapPi(az), el };
+    }
+    case 'elevation': {
+      // Meaningful elevation (|el| 20–60°), any azimuth. Avoid the exact poles (±90°).
+      const up = rnd() < 0.5 ? 1 : -1;
+      const el = up * (20 + rnd() * 40) * DEG;          // ±(20..60)°
+      const az = rnd() * 2 * Math.PI - Math.PI;
+      return { az, el };
+    }
+    case 'lateral': {
+      // Lateral, near horizontal: azimuth near ±90° (±25°), small elevation.
+      const rightSide = rnd() < 0.5 ? 1 : -1;
+      const az = rightSide * (Math.PI / 2) + (rnd() * 50 - 25) * DEG; // ±90 ±25°
+      const el = (rnd() * 30 - 15) * DEG;               // −15..+15°
+      return { az: wrapPi(az), el };
+    }
+    case 'balanced':
+    default: {
+      // Round-robin the three diagnostic zones by seed so a base head is judged across the
+      // whole sphere (front/back-ambiguous, elevated, AND lateral), not just random luck.
+      const zone = (mix32(seed) >>> 0) % 3;
+      const sub = (seed * 2654435761) >>> 0; // decorrelated sub-seed for the chosen zone
+      if (zone === 0) return makeTargetedDirection('frontback', sub);
+      if (zone === 1) return makeTargetedDirection('elevation', sub);
+      return makeTargetedDirection('lateral', sub);
+    }
+  }
+}
+
+/** Wrap an angle to (−π, π]. */
+function wrapPi(a: number): number {
+  let x = a % (2 * Math.PI);
+  if (x > Math.PI) x -= 2 * Math.PI;
+  if (x <= -Math.PI) x += 2 * Math.PI;
+  return x;
 }
 
 /** One recorded localization attempt. */
@@ -147,6 +229,248 @@ export function decideWinner(
   const mb = mean('b');
   if (mb < ma - tolRad) return 'b';
   return 'a';
+}
+
+// ============================================================================
+// BASIN TRACKING + CONFIRM STOPPING
+//
+// A per-target (per parameter, or the base-head screen) search that, instead of a blind
+// binary staircase, BUCKETS the candidate range, tallies pointing error per bucket as the
+// user probes, and tracks the low-error "basin". Two phases:
+//   • explore — spread probes across buckets until each candidate bucket has ≥ minPerBucket
+//     samples (round-robin the least-sampled bucket), tracking a running scatter accumulator.
+//   • confirm — shortlist the few lowest-mean-error buckets, re-probe them head-to-head
+//     until the leader's advantage clears the noise (scatter-scaled) OR a cap; then done.
+// The winner is the shortlisted bucket with the lowest mean error (ties → lowest index,
+// the incumbent-bias). Confirm end = the leader beats the runner-up by ≥ its pooled scatter
+// (so we don't stop while the top two are within pointing noise), or confirmCap reached.
+//
+// The STATE is a plain JSON-serializable object (numbers + arrays only) — the resume-
+// persistence task saves/reloads exactly this. No class instances, no closures inside it.
+// ============================================================================
+
+export interface BasinState {
+  /** Value range this basin partitions (e.g. a param's [min,max], or [0, nHeads] for heads). */
+  min: number;
+  max: number;
+  /** Number of buckets across [min,max]. For a discrete set (heads) use one bucket each. */
+  nBuckets: number;
+  /** Per-bucket tallies (length nBuckets). errSum/errSqSum give mean + scatter. */
+  counts: number[];
+  errSum: number[];
+  errSqSum: number[];
+  /** Phase machine. */
+  phase: 'explore' | 'confirm' | 'done';
+  /** In confirm: the bucket indices being compared head-to-head (lowest-error shortlist). */
+  shortlist: number[];
+  /** Confirm-phase probe count (against the cap). */
+  confirmRounds: number;
+  /** The chosen bucket once phase==='done' (else -1). */
+  chosen: number;
+}
+
+export interface BasinConfig {
+  /** Min probes per bucket before a bucket counts as "explored". */
+  minPerBucket: number;
+  /** How many lowest-error buckets to carry into confirm. */
+  shortlistSize: number;
+  /** Max confirm-phase probes before deciding on current means. */
+  confirmCap: number;
+  /** Discrete basin (one bucket per integer value, e.g. candidate heads) — bucket centres
+   *  are the integers themselves, not sub-divided range midpoints. */
+  discrete?: boolean;
+}
+
+export const DEFAULT_BASIN_CONFIG: BasinConfig = {
+  minPerBucket: 1, shortlistSize: 3, confirmCap: 8,
+};
+
+/** Fresh basin over [min,max] with nBuckets. Serializable. */
+export function makeBasin(min: number, max: number, nBuckets: number): BasinState {
+  return {
+    min, max, nBuckets,
+    counts: new Array(nBuckets).fill(0),
+    errSum: new Array(nBuckets).fill(0),
+    errSqSum: new Array(nBuckets).fill(0),
+    phase: 'explore', shortlist: [], confirmRounds: 0, chosen: -1,
+  };
+}
+
+/** The VALUE at a bucket's centre (what to probe for that bucket). Discrete → the integer. */
+export function basinBucketValue(s: BasinState, bucket: number, discrete = false): number {
+  if (discrete) return s.min + bucket; // buckets are consecutive integers from min
+  // Continuous: bucket centre in [min,max].
+  const frac = (bucket + 0.5) / s.nBuckets;
+  return s.min + frac * (s.max - s.min);
+}
+
+/** Which bucket a value falls in (clamped). */
+export function basinBucketFor(s: BasinState, value: number, discrete = false): number {
+  if (discrete) return Math.max(0, Math.min(s.nBuckets - 1, Math.round(value - s.min)));
+  const frac = (value - s.min) / (s.max - s.min || 1);
+  return Math.max(0, Math.min(s.nBuckets - 1, Math.floor(frac * s.nBuckets)));
+}
+
+/** Record a probe: the candidate had `value`, the user pointed with angular `error` (rad). */
+export function basinRecord(s: BasinState, value: number, error: number, discrete = false): void {
+  const b = basinBucketFor(s, value, discrete);
+  s.counts[b] += 1;
+  s.errSum[b] += error;
+  s.errSqSum[b] += error * error;
+}
+
+/** Mean error of a bucket (Infinity when unsampled → never "best"). */
+export function basinMean(s: BasinState, bucket: number): number {
+  const n = s.counts[bucket];
+  return n > 0 ? s.errSum[bucket] / n : Infinity;
+}
+
+/** Sample scatter (std dev) of a bucket's error — the confidence/noise estimate. */
+export function basinScatter(s: BasinState, bucket: number): number {
+  const n = s.counts[bucket];
+  if (n < 2) return Infinity; // not enough to estimate noise
+  const mean = s.errSum[bucket] / n;
+  const varr = Math.max(0, s.errSqSum[bucket] / n - mean * mean);
+  return Math.sqrt(varr);
+}
+
+/** Buckets sorted by mean error ascending (ties → lower index); only sampled ones. */
+function basinRanked(s: BasinState): number[] {
+  const sampled = [];
+  for (let b = 0; b < s.nBuckets; b++) if (s.counts[b] > 0) sampled.push(b);
+  sampled.sort((a, b) => {
+    const ma = basinMean(s, a), mb = basinMean(s, b);
+    return ma !== mb ? ma - mb : a - b;
+  });
+  return sampled;
+}
+
+/**
+ * Advance the basin state machine and return the NEXT value to probe (or the decision).
+ * Call after each recorded probe. Pure w.r.t. `s` EXCEPT it mutates phase/shortlist/chosen
+ * (the state transitions) — the caller owns `s` and may serialize it any time.
+ *
+ * Returns { done, value, bucket, phase }: when done, `value`/`bucket` is the chosen basin.
+ */
+export function basinNext(s: BasinState, cfg: BasinConfig = DEFAULT_BASIN_CONFIG): {
+  done: boolean; value: number; bucket: number; phase: BasinState['phase'];
+} {
+  const discrete = !!cfg.discrete;
+  const val = (b: number) => basinBucketValue(s, b, discrete);
+
+  if (s.phase === 'explore') {
+    // Any bucket still short of minPerBucket → probe the least-sampled such bucket.
+    let target = -1, fewest = Infinity;
+    for (let b = 0; b < s.nBuckets; b++) {
+      if (s.counts[b] < cfg.minPerBucket && s.counts[b] < fewest) { fewest = s.counts[b]; target = b; }
+    }
+    if (target >= 0) return { done: false, value: val(target), bucket: target, phase: 'explore' };
+    // All buckets explored → shortlist the lowest-error ones, enter confirm.
+    s.shortlist = basinRanked(s).slice(0, Math.max(1, cfg.shortlistSize));
+    s.phase = 'confirm';
+    s.confirmRounds = 0;
+  }
+
+  if (s.phase === 'confirm') {
+    const ranked = basinRanked(s).filter((b) => s.shortlist.includes(b));
+    const leader = ranked[0];
+    const runner = ranked[1];
+    // A shortlisted bucket must hold up over ≥2 probes before it can win on separation — one
+    // lucky low-error probe must NOT clinch it (that's the whole point of the confirm phase).
+    const CONFIRM_MIN_SAMPLES = 2;
+    const leaderProven = leader !== undefined && s.counts[leader] >= CONFIRM_MIN_SAMPLES;
+    const runnerProven = runner === undefined || s.counts[runner] >= CONFIRM_MIN_SAMPLES;
+    // Stop when the (proven) leader's lead over the runner-up clears the pooled scatter
+    // (noise), or when the confirm cap is hit — then commit to the current leader.
+    const leadClear = leaderProven && runnerProven && (
+      runner === undefined
+      || (basinMean(s, runner) - basinMean(s, leader)) >= pooledScatter(s, leader, runner)
+    );
+    if (leadClear || s.confirmRounds >= cfg.confirmCap) {
+      s.phase = 'done';
+      s.chosen = leader ?? 0;
+      return { done: true, value: val(s.chosen), bucket: s.chosen, phase: 'done' };
+    }
+    // Otherwise re-probe the shortlisted bucket with the FEWEST samples (fair head-to-head).
+    let target = s.shortlist[0], fewest = Infinity;
+    for (const b of s.shortlist) if (s.counts[b] < fewest) { fewest = s.counts[b]; target = b; }
+    s.confirmRounds += 1;
+    return { done: false, value: val(target), bucket: target, phase: 'confirm' };
+  }
+
+  // done
+  return { done: true, value: val(s.chosen < 0 ? 0 : s.chosen), bucket: Math.max(0, s.chosen), phase: 'done' };
+}
+
+/** How much SEARCH SPACE remains, 0..1, for the "shrinking" progress bar. Explore phase:
+ *  fraction of buckets still under-sampled (whole range in play). Confirm phase: narrowed to
+ *  the shortlist, shrinking toward the cap. Done: 0. Monotonically decreases. */
+export function basinRemainingFraction(s: BasinState, cfg: BasinConfig = DEFAULT_BASIN_CONFIG): number {
+  if (s.phase === 'done') return 0;
+  if (s.phase === 'explore') {
+    // 1 → the shortlist fraction as buckets fill (explore is the "wide" part of the search).
+    let filled = 0;
+    for (let b = 0; b < s.nBuckets; b++) if (s.counts[b] >= cfg.minPerBucket) filled++;
+    const exploreDone = filled / s.nBuckets; // 0..1
+    const shortlistFrac = Math.min(1, cfg.shortlistSize / s.nBuckets);
+    return 1 - exploreDone * (1 - shortlistFrac); // 1 → shortlistFrac
+  }
+  // confirm: from the shortlist fraction down toward 0 as confirm rounds approach the cap.
+  const shortlistFrac = Math.min(1, cfg.shortlistSize / s.nBuckets);
+  const confirmProg = Math.min(1, s.confirmRounds / Math.max(1, cfg.confirmCap));
+  return shortlistFrac * (1 - confirmProg);
+}
+
+// ---- INTERLEAVED ROUND-ROBIN SCHEDULER (pure; drives the pooled-factor loop) ----------
+
+/** Serializable round-robin cursor over a factor pool. `order` is this pass's visiting
+ *  order (a seededShuffle); `cursor` indexes into it; `pass` reshuffles on wrap. */
+export interface RoundRobin {
+  order: number[];
+  cursor: number;
+  pass: number;
+}
+
+/** Seed for a given pass's shuffle — stable so resume + tests reproduce the order. */
+export function passOrderSeed(pass: number): number { return 1337 + pass * 101; }
+
+/** Build the visiting order for a pass. */
+export function makePassOrder(pass: number, nFactors: number): number[] {
+  return seededShuffle(nFactors, passOrderSeed(pass));
+}
+
+/**
+ * Pick the NEXT not-yet-converged factor round-robin, advancing (and reshuffling) passes as
+ * the order is exhausted. Pure: takes the current RoundRobin + a `converged` mask, returns
+ * the chosen factor index (or -1 when all converged) AND the advanced RoundRobin to store.
+ * `advanceAfter` (default true) leaves the cursor PAST the chosen factor so the NEXT call
+ * lands on a DIFFERENT factor — this is what interleaves factors/heads trial-to-trial.
+ */
+export function rrNext(
+  rr: RoundRobin, converged: readonly boolean[], advanceAfter = true,
+): { index: number; rr: RoundRobin } {
+  const n = converged.length;
+  if (n === 0 || converged.every(Boolean)) return { index: -1, rr };
+  let { order, cursor, pass } = rr;
+  let guard = 0;
+  while (guard++ < n * 4 + 4) {
+    if (cursor >= order.length) { pass++; order = makePassOrder(pass, n); cursor = 0; }
+    const idx = order[cursor];
+    if (converged[idx]) { cursor++; continue; }
+    const nextCursor = advanceAfter ? cursor + 1 : cursor;
+    return { index: idx, rr: { order, cursor: nextCursor, pass } };
+  }
+  return { index: -1, rr: { order, cursor, pass } };
+}
+
+/** Pooled scatter of two buckets — the noise floor the lead must clear to stop confirming.
+ *  Falls back to a modest default (~5° = human pointing noise) when scatter is unknown. */
+function pooledScatter(s: BasinState, a: number, b: number): number {
+  const sa = basinScatter(s, a), sb = basinScatter(s, b);
+  const HUMAN_NOISE = (5 * Math.PI) / 180;
+  const va = Number.isFinite(sa) ? sa : HUMAN_NOISE;
+  const vb = Number.isFinite(sb) ? sb : HUMAN_NOISE;
+  return Math.sqrt((va * va + vb * vb) / 2);
 }
 
 /**

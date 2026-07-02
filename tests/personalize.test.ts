@@ -11,6 +11,8 @@ import {
   isNeutral,
   NEUTRAL_PERSONALIZATION,
   PERSONALIZATION_BOUNDS,
+  frontBackHemisphere,
+  biasedElevation,
 } from '../src/engine/hrtf/personalize';
 import type { MinPhaseHrtf } from '../src/engine/hrtf/interpolatingDsp';
 
@@ -147,5 +149,63 @@ describe('isNeutral', () => {
   it('is true only at defaults', () => {
     expect(isNeutral(NEUTRAL_PERSONALIZATION)).toBe(true);
     expect(isNeutral(mk({ itdScale: 1.1 }))).toBe(false);
+  });
+});
+
+describe('front/back + up/down perceptual bias', () => {
+  it('frontBackHemisphere at bias=0 is exactly the historical tanh(-z·3)', () => {
+    for (const z of [-1, -0.5, 0, 0.5, 1]) {
+      expect(frontBackHemisphere(-z, 0)).toBeCloseTo(Math.tanh(-z * 3), 12);
+    }
+  });
+
+  it('+frontBackBias increases front-coloring at a FIXED direction (incl. dead-ahead z=0)', () => {
+    // dead-ahead: negZ = 0. Positive bias must push the hemisphere term toward front (+).
+    expect(frontBackHemisphere(0, 0)).toBeCloseTo(0, 12);
+    expect(frontBackHemisphere(0, +0.5)).toBeGreaterThan(0);
+    expect(frontBackHemisphere(0, +1)).toBeGreaterThan(frontBackHemisphere(0, +0.5));
+    // negative bias pushes toward back (−)
+    expect(frontBackHemisphere(0, -0.5)).toBeLessThan(0);
+  });
+
+  it('front vs back stay SEPARABLE (opposite sign) even at full bias', () => {
+    for (const bias of [-1, -0.5, 0.5, 1]) {
+      const front = frontBackHemisphere(+1, bias); // negZ=+1 (true front)
+      const back = frontBackHemisphere(-1, bias);  // negZ=−1 (true back)
+      expect(front).toBeGreaterThan(back);          // ordering preserved
+      expect(Math.sign(front)).toBe(1);             // true front still front-signed
+      expect(Math.sign(back)).toBe(-1);             // true back still back-signed
+    }
+  });
+
+  it('biasedElevation at bias=0 is identity; +bias nudges up, −bias down', () => {
+    expect(biasedElevation(0.3, 0)).toBeCloseTo(0.3, 12);
+    expect(biasedElevation(0, +1)).toBeGreaterThan(0);
+    expect(biasedElevation(0, -1)).toBeLessThan(0);
+  });
+
+  it('isNeutral is false when a bias is nonzero', () => {
+    expect(isNeutral(NEUTRAL_PERSONALIZATION)).toBe(true);
+    expect(isNeutral({ ...NEUTRAL_PERSONALIZATION, frontBackBias: 0.3 })).toBe(false);
+    expect(isNeutral({ ...NEUTRAL_PERSONALIZATION, upDownBias: -0.2 })).toBe(false);
+  });
+
+  it('clamp holds bias in [−1,1] and defaults missing to 0', () => {
+    const c = clampPersonalization({ ...NEUTRAL_PERSONALIZATION, frontBackBias: 5, upDownBias: -9 });
+    expect(c.frontBackBias).toBe(PERSONALIZATION_BOUNDS.frontBackBias.max);
+    expect(c.upDownBias).toBe(PERSONALIZATION_BOUNDS.upDownBias.min);
+  });
+
+  it('warp: bias=0 reproduces the un-biased warp exactly; +frontBackBias changes a source', () => {
+    const set = fakeSet();
+    const noBias = personalizeMinPhase(set, mk({ frontBackTilt: 12, frontBackBias: 0 }));
+    const noBias2 = personalizeMinPhase(set, mk({ frontBackTilt: 12 })); // bias defaults 0
+    for (let i = 0; i < noBias.irs.length; i++) expect(noBias.irs[i]).toBeCloseTo(noBias2.irs[i], 10);
+    // With a strong +front bias, the DEAD-AHEAD source (dir 0, z=−1 → already front) plus the
+    // ABOVE source (dir 1, z=0 median) gets a different front/back coloring than un-biased.
+    const biased = personalizeMinPhase(set, mk({ frontBackTilt: 12, frontBackBias: 1 }));
+    let changed = false;
+    for (let i = 0; i < biased.irs.length; i++) if (Math.abs(biased.irs[i] - noBias.irs[i]) > 1e-4) changed = true;
+    expect(changed).toBe(true);
   });
 });

@@ -88,9 +88,15 @@ export class InterpolatingHrtfRenderer {
    *  model are present). Pure over baseMp; returns baseMp itself when fully neutral. */
   private warp(p: HrtfPersonalization): MinPhaseHrtf {
     if (isNeutral(p)) return this.baseMp;
+    // The parametric front/back cue (applyFrontBackCue, tuned by frontBackTilt) and the
+    // data-driven front/back CONTRAST PCs (tuned by their own PCA weights) are INDEPENDENT
+    // knobs that compose additively — same hemisphere sign (tanh(−z·3)), no double-apply or
+    // cancellation (review-confirmed). They are NOT coupled: the parametric cue is the proven
+    // strong cue, the FB PC a small refinement on top; each is optimized on its own by the
+    // A/B search.
     let mp = personalizeMinPhase(this.baseMp, p);
     if (this.pcaModel && !pcaIsNeutral(p.pcaWeights)) {
-      mp = personalizePcaMinPhase(mp, this.pcaModel, p.pcaWeights!);
+      mp = personalizePcaMinPhase(mp, this.pcaModel, p.pcaWeights!, p.frontBackBias ?? 0);
     }
     return mp;
   }
@@ -133,8 +139,9 @@ export class InterpolatingHrtfRenderer {
     const pcaModel = p && !pcaIsNeutral(p.pcaWeights) ? await loadPcaModel() : null;
     let mp = baseMp;
     if (p && !isNeutral(p)) {
+      // Parametric front/back cue + FB contrast PCs are independent, additive knobs (see warp()).
       mp = personalizeMinPhase(baseMp, p);
-      if (pcaModel && !pcaIsNeutral(p.pcaWeights)) mp = personalizePcaMinPhase(mp, pcaModel, p.pcaWeights!);
+      if (pcaModel && !pcaIsNeutral(p.pcaWeights)) mp = personalizePcaMinPhase(mp, pcaModel, p.pcaWeights!, p.frontBackBias ?? 0);
     }
     const ready = (ctx as any).audioWorklet.addModule(WORKLET_URL);
     const r = new InterpolatingHrtfRenderer(ctx, set, mp, baseMp, opts.maxDelaySec ?? DEFAULT_MAX_DELAY_SEC, ready);

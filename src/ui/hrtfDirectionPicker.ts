@@ -55,6 +55,8 @@ export interface DirectionPicker {
   get(): Direction;
   /** Reset to front / ear level for a fresh trial. */
   reset(): void;
+  /** Enable/disable committing (guards against a second answer while a probe is mid-cycle). */
+  setEnabled(on: boolean): void;
   dispose(): void;
 }
 
@@ -339,6 +341,10 @@ export function mountDirectionPicker(
     el: wrap,
     get: () => ({ az, el }),
     reset() { az = 0; el = 0; drawCompass(); drawArc(); updateReadout(); },
+    setEnabled(on: boolean) {
+      commit.disabled = !on;
+      if (inHeadBtn) inHeadBtn.disabled = !on;
+    },
     dispose() { try { wrap.remove(); } catch { /* noop */ } },
   };
 }

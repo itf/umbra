@@ -27,7 +27,7 @@
  * tests/personalize.test.ts.
  */
 import { fft, minPhase, type MinPhaseHrtf } from './interpolatingDsp';
-import { type HrtfPcaModel, vecToCipicAzEl, nearestDirIndex, deformationCurve } from './hrtfPca';
+import { type HrtfPcaModel, vecToAzEl, nearestDirIndex, deformationCurve, normFreqToCurveIndex } from './hrtfPca';
 
 export interface HrtfPersonalization {
   /** Interaural-time-difference multiplier ("head width"). 1 = measured. */
@@ -48,6 +48,18 @@ export interface HrtfPersonalization {
   /** Notch depth in dB at full elevation (0 = notch off). */
   notchDepth: number;
   /**
+   * FRONT/BACK perceptual BIAS ∈ [−1,+1], 0 = neutral. NOT a geometric offset — it shifts the
+   * hemisphere term that drives the front/back SPECTRAL cue (+ the FB contrast PCs) BEFORE the
+   * cue is applied, so a positive bias colors ALL directions more "front" (even dead-ahead),
+   * negative more "back". Corrects a listener's reversal tendency ("everything sounds behind
+   * me"). At 0 it exactly reproduces the un-biased cue; true front/back stay distinguishable.
+   */
+  frontBackBias?: number;
+  /** UP/DOWN perceptual BIAS ∈ [−1,+1], 0 = neutral. Analogous to frontBackBias but for the
+   *  elevation coloring (brightness tilt + pinna notch): + nudges everything toward "up"
+   *  spectral cue, − toward "down". A geometric no-op; purely the spectral elevation cue. */
+  upDownBias?: number;
+  /**
    * OPTIONAL PCA weights (std-dev units) that morph the magnitude spectrum along the
    * CIPIC real-ear principal axes — the "refine along how ears actually vary" layer,
    * tuned by the PCA A/B stage. Applied AFTER the parametric warp, magnitude-only (ITD
@@ -62,10 +74,34 @@ export const NEUTRAL_PERSONALIZATION: HrtfPersonalization = {
   frontBackTilt: 0,
   notchHz: 7500, // mid pinna-notch range; neutral because notchDepth 0 disables it
   notchDepth: 0,
+  frontBackBias: 0,
+  upDownBias: 0,
 };
 
+/** How strongly a ±1 bias shifts the signed front/back (resp. up/down) coordinate before the
+ *  hemisphere term. 0.6 keeps true front (−z=+1 → +1.6) and true back (−z=−1 → −0.4) on
+ *  OPPOSITE sides of zero at full bias, so the cue never collapses — only shifts the balance. */
+export const FRONT_BACK_BIAS_K = 0.6;
+export const UP_DOWN_BIAS_K = 0.6;
+
+/** The signed FRONT/BACK hemisphere term (+ front, − back, ~0 near the median plane) for a
+ *  source with front/back coordinate `negZ` (= −z, so + = front), shifted by `bias∈[−1,1]`.
+ *  bias=0 → tanh(negZ·3) (the historical term). Shared by the parametric cue AND the FB
+ *  contrast PCs so the bias moves both consistently. */
+export function frontBackHemisphere(negZ: number, bias = 0): number {
+  return Math.tanh((negZ + bias * FRONT_BACK_BIAS_K) * 3);
+}
+
+/** The biased ELEVATION coordinate (+up) for the up/down spectral cues. bias=0 → y itself. */
+export function biasedElevation(y: number, bias = 0): number {
+  return y + bias * UP_DOWN_BIAS_K;
+}
+
 /** Bounds for a single PCA weight (std-dev units): ±2 ≈ the extremes of real ears. */
-export const PCA_WEIGHT_BOUND = { min: -2.5, max: 2.5 } as const;
+// ±3 std-dev: magnitude PCs use ±2.5 (real-ear range) via their staircase; front/back
+// contrast PCs are allowed to ±3 (they move both hemispheres, so need a touch more range).
+// The clamp is the outer safety bound; per-PC staircase ranges live in hrtfTuning.
+export const PCA_WEIGHT_BOUND = { min: -3, max: 3 } as const;
 
 /** True when a PCA weight vector is absent or entirely zero (no deformation). */
 export function pcaIsNeutral(w: number[] | undefined): boolean {
@@ -79,8 +115,10 @@ export const PERSONALIZATION_BOUNDS = {
   itdScale: { min: 0.5, max: 2.0 },
   elevTilt: { min: -18, max: 18 }, // dB at the extreme direction
   frontBackTilt: { min: -18, max: 18 }, // dB at the extreme direction
-  notchHz: { min: 4000, max: 11000 }, // pinna-notch sweep range
+  notchHz: { min: 4000, max: 11500 }, // pinna-notch sweep range (top reaches SS2 N1 @ high el)
   notchDepth: { min: 0, max: 24 }, // dB
+  frontBackBias: { min: -1, max: 1 }, // perceptual front/back bias
+  upDownBias: { min: -1, max: 1 }, // perceptual up/down bias
 } as const;
 
 export function clampPersonalization(p: HrtfPersonalization): HrtfPersonalization {
@@ -92,6 +130,8 @@ export function clampPersonalization(p: HrtfPersonalization): HrtfPersonalizatio
     frontBackTilt: c(p.frontBackTilt, PERSONALIZATION_BOUNDS.frontBackTilt, 0),
     notchHz: c(p.notchHz, PERSONALIZATION_BOUNDS.notchHz, 7500),
     notchDepth: c(p.notchDepth, PERSONALIZATION_BOUNDS.notchDepth, 0),
+    frontBackBias: c(p.frontBackBias ?? 0, PERSONALIZATION_BOUNDS.frontBackBias, 0),
+    upDownBias: c(p.upDownBias ?? 0, PERSONALIZATION_BOUNDS.upDownBias, 0),
   };
   if (Array.isArray(p.pcaWeights) && p.pcaWeights.length) {
     out.pcaWeights = p.pcaWeights.map((w) => c(w, PCA_WEIGHT_BOUND, 0));
@@ -101,6 +141,7 @@ export function clampPersonalization(p: HrtfPersonalization): HrtfPersonalizatio
 
 export function isNeutral(p: HrtfPersonalization): boolean {
   return p.itdScale === 1 && p.elevTilt === 0 && p.frontBackTilt === 0 && p.notchDepth === 0
+    && !p.frontBackBias && !p.upDownBias
     && pcaIsNeutral(p.pcaWeights);
 }
 
@@ -203,9 +244,12 @@ export function personalizeMinPhase(
     itdL[m] = set.itdL[m] * p.itdScale;
     itdR[m] = set.itdR[m] * p.itdScale;
 
-    const y = dirs[m * 3 + 1]; // elevation component (+up)
+    const yRaw = dirs[m * 3 + 1]; // elevation component (+up)
     const z = dirs[m * 3 + 2]; // −z = front, +z = back
     const base = m * stride;
+    // Up/down BIAS shifts the elevation coordinate used by BOTH elevation cues (a positive
+    // bias colors everything more "up"). bias=0 → y unchanged.
+    const y = biasedElevation(yRaw, p.upDownBias ?? 0);
 
     // ELEVATION brightness (broadband) — kept as-is; the real up/down cue is the notch below.
     if (p.elevTilt !== 0) {
@@ -223,22 +267,25 @@ export function personalizeMinPhase(
     // each source's true hemisphere, scaled by frontBackTilt (0..18 → 0..1 strength).
     // Ref: Blauert, Spatial Hearing (MIT Press, 1997); Iida et al. (rear ~1 kHz boost).
     if (p.frontBackTilt !== 0) {
-      const s = (p.frontBackTilt / 18) * Math.tanh(-z * 3); // + = front hemisphere, − = back
+      // Hemisphere sign shifted by frontBackBias (+ → color everything more front).
+      const s = (p.frontBackTilt / 18) * frontBackHemisphere(-z, p.frontBackBias ?? 0);
       applyFrontBackCue(irs, base, taps, s, sampleRate);
       applyFrontBackCue(irs, base + taps, taps, s, sampleRate);
     }
 
-    // PINNA NOTCH — the real elevation cue. Depth scales with elevation (deep when
-    // the source is overhead, none at/below ear level), and the notch centre RISES a
-    // little with elevation (natural pinna behaviour). Tuning notchHz to the user's
-    // ears is what finally makes "up" read as up.
+    // PINNA NOTCH (N1) — the real elevation cue. Depth scales with elevation (deep when the
+    // source is overhead, none at/below ear level), and the notch centre RISES with elevation
+    // (natural pinna behaviour). Uses the UP/DOWN-BIASED elevation `y` so the bias nudges the
+    // notch too. The centre slide is tuned to the MEASURED SS2 N1 track: ~7.4 kHz at 0° up to
+    // ~11.5 kHz near the top of our elevation range (SS2: 7.4k@0° → 9.0k@+30° → 11.4k@+60°).
+    // Tuning notchHz to the user's ears is what finally makes "up" read as up.
     if (p.notchDepth > 0) {
-      const y = dirs[m * 3 + 1]; // −1 (down) … +1 (up)
-      const elev = Math.max(0, y); // only above ear level gets the notch
+      const elev = Math.max(0, y); // biased elevation; only above ear level gets the notch
       if (elev > 0.02) {
-        // Centre shifts up ~15% from lowest to highest elevation.
-        const fc = p.notchHz * (1 + 0.15 * elev);
-        const depth = -p.notchDepth * elev; // negative dB → a dip
+        // Centre shifts up ~55% from ear level to the top elevation so the notch can REACH
+        // where N1 actually sits high up (notchHz≈7.5k → ~11.6k at elev=1), matching SS2.
+        const fc = Math.min(PERSONALIZATION_BOUNDS.notchHz.max, p.notchHz * (1 + 0.55 * Math.min(1, elev)));
+        const depth = -p.notchDepth * Math.min(1, elev); // negative dB → a dip
         const q = 4; // fairly narrow, notch-like
         const base = m * stride;
         applyNotch(irs, base, taps, fc, q, depth, sampleRate);
@@ -266,6 +313,7 @@ export function personalizePcaMinPhase(
   set: MinPhaseHrtf,
   model: HrtfPcaModel,
   weights: number[],
+  frontBackBias = 0, // shifts the hemisphere sign for FB contrast PCs (same as the parametric cue)
 ): MinPhaseHrtf {
   const { sampleRate, taps, count, dirs, itdL, itdR } = set;
   if (!weights.some((w) => w !== 0)) {
@@ -278,24 +326,33 @@ export function personalizePcaMinPhase(
   const half = nfft / 2;
   const re = new Float64Array(nfft), im = new Float64Array(nfft);
 
-  // Cache deformation curves per nearest-dir index so repeated directions are cheap.
-  const curveCache = new Map<number, Float32Array>();
-  const curveFor = (dirIdx: number) => {
-    let c = curveCache.get(dirIdx);
-    if (!c) { c = deformationCurve(model, weights, dirIdx); curveCache.set(dirIdx, c); }
+  // Front/back CONTRAST PCs deform front vs back OPPOSITE ways, so the curve depends on the
+  // source's hemisphere too, not just its nearest grid dir. Sign = tanh(-z·3): +1 front
+  // (−z), −1 back (+z), ~0 near the median plane (where front/back is ambiguous — the
+  // contrast fades out there rather than snapping). Cache by (dirIdx, coarse sign bucket)
+  // so repeated directions stay cheap while distinct hemispheres get distinct curves.
+  const curveCache = new Map<string, Float32Array>();
+  const curveFor = (dirIdx: number, hemiSign: number) => {
+    // Quantize the sign to keep the cache small (curves vary smoothly with it).
+    const bucket = Math.round(hemiSign * 8) / 8;
+    const key = dirIdx + ':' + bucket;
+    let c = curveCache.get(key);
+    if (!c) { c = deformationCurve(model, weights, dirIdx, bucket); curveCache.set(key, c); }
     return c;
   };
 
-  const applyEar = (base: number, dirIdx: number) => {
-    const curve = curveFor(dirIdx);
+  const applyEar = (base: number, dirIdx: number, hemiSign: number) => {
+    const curve = curveFor(dirIdx, hemiSign);
     // Build a per-bin magnitude multiplier exp(Δlogmag), interpolating the (bins)-length
     // curve across the (half+1) FFT bins.
     re.fill(0); im.fill(0);
     for (let i = 0; i < taps; i++) re[i] = irs[base + i];
     fft(re, im, false);
     for (let b = 0; b <= half; b++) {
-      const frac = b / half; // 0..1
-      const cf = frac * (model.bins - 1);
+      // Map this FFT bin to the curve using the SAME log-spaced frequency grid the bake
+      // used (normFreqToCurveIndex), so each deformation lands at the frequency it was
+      // measured at. b=0 (DC) clamps to curve[0]; a linear map here is the historical bug.
+      const cf = normFreqToCurveIndex(b / half, model.bins, model.nfft);
       const ci = Math.floor(cf), cfr = cf - ci;
       const d0 = curve[Math.min(model.bins - 1, ci)];
       const d1 = curve[Math.min(model.bins - 1, ci + 1)];
@@ -314,11 +371,16 @@ export function personalizePcaMinPhase(
   };
 
   for (let m = 0; m < count; m++) {
-    const { az, el } = vecToCipicAzEl(dirs[m * 3], dirs[m * 3 + 1], dirs[m * 3 + 2]);
+    const { az, el } = vecToAzEl(dirs[m * 3], dirs[m * 3 + 1], dirs[m * 3 + 2]);
     const dirIdx = nearestDirIndex(model, az, el);
+    // Hemisphere sign for contrast PCs: −z = front → +1, +z = back → −1, fading through 0
+    // near the median plane. Shifted by frontBackBias exactly like the parametric cue, so the
+    // "push forward/back" knob moves BOTH the parametric cue and the FB contrast PCs together.
+    const z = dirs[m * 3 + 2];
+    const hemiSign = frontBackHemisphere(-z, frontBackBias);
     const base = m * stride;
-    applyEar(base, dirIdx);
-    applyEar(base + taps, dirIdx);
+    applyEar(base, dirIdx, hemiSign);
+    applyEar(base + taps, dirIdx, hemiSign);
   }
 
   return { sampleRate, taps, count, dirs, irs, itdL: new Float32Array(itdL), itdR: new Float32Array(itdR) };

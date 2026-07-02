@@ -41,10 +41,20 @@ function b64urlDecode(s: string): string {
   }
 }
 
-/** Encode a profile to a share code. Params are clamped so a code is always sane. */
+/** Encode a profile to a share code. Params are clamped so a code is always sane, and
+ *  fields left at their NEUTRAL value are DROPPED (decode merges over NEUTRAL) so the code
+ *  stays compact and adding new neutral-by-default params doesn't bloat existing codes. */
 export function encodeProfile(profile: HrtfProfile): string {
-  const payload = { b: profile.base, p: clampPersonalization(profile.params) };
-  return PREFIX + b64urlEncode(JSON.stringify(payload));
+  const clamped = clampPersonalization(profile.params) as unknown as Record<string, unknown>;
+  const neutral = NEUTRAL_PERSONALIZATION as unknown as Record<string, unknown>;
+  const p: Record<string, unknown> = {};
+  for (const key of Object.keys(clamped)) {
+    const v = clamped[key];
+    // Keep non-neutral scalars and any non-empty pcaWeights; drop exact-neutral scalars.
+    if (Array.isArray(v)) { if (v.some((x) => x !== 0)) p[key] = v; }
+    else if (v !== neutral[key]) p[key] = v;
+  }
+  return PREFIX + b64urlEncode(JSON.stringify({ b: profile.base, p }));
 }
 
 /**

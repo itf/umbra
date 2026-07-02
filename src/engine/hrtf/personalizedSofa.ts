@@ -31,7 +31,7 @@ export async function buildPersonalizedSofa(
   // PCA refinement (real-ear magnitude morph) composes on top when weights are present.
   if (!pcaIsNeutral(warp.pcaWeights)) {
     const model = await loadPcaModel();
-    if (model) warpedMp = personalizePcaMinPhase(warpedMp, model, warp.pcaWeights!);
+    if (model) warpedMp = personalizePcaMinPhase(warpedMp, model, warp.pcaWeights!, warp.frontBackBias ?? 0);
   }
   const rec = reconstructHrtf(warpedMp);
   const bytes = await writeSofa(rec, { title: 'Personalized HRTF (Umbra)' });

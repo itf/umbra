@@ -91,3 +91,48 @@ describe('Staircase (unbounded → exponential bracket then binary)', () => {
     expect(iterations).toBeLessThan(30);
   });
 });
+
+describe('Staircase.bracketFraction (shrinking-space feedback)', () => {
+  const bounded = { start: 0, step: 9, minStep: 2, min: -18, max: 18 };
+
+  it('is ~1 at the start (full range remaining)', () => {
+    const sc = new Staircase(bounded);
+    expect(sc.bracketFraction).toBeCloseTo(1, 6);
+  });
+
+  it('roughly halves each binary answer', () => {
+    const sc = new Staircase(bounded);
+    const f0 = sc.bracketFraction;
+    sc.answer('a', sc.nextTrial()); // drop upper half
+    const f1 = sc.bracketFraction;
+    sc.answer('a', sc.nextTrial());
+    const f2 = sc.bracketFraction;
+    expect(f1).toBeLessThan(f0);
+    expect(f2).toBeLessThan(f1);
+    expect(f1).toBeCloseTo(0.5, 2); // 36-wide range → 18 after one midpoint cut
+  });
+
+  it('approaches ~0 once converged (bracket ≤ minStep)', () => {
+    const sc = new Staircase(bounded);
+    let guard = 0;
+    while (!sc.done && guard++ < 50) sc.answer('a', sc.nextTrial());
+    expect(sc.done).toBe(true);
+    // minStep(2) / fullRange(36) ≈ 0.056 → small
+    expect(sc.bracketFraction).toBeLessThan(0.1);
+  });
+
+  it('stays in [0,1]', () => {
+    const sc = new Staircase(bounded);
+    for (let i = 0; i < 20; i++) {
+      expect(sc.bracketFraction).toBeGreaterThanOrEqual(0);
+      expect(sc.bracketFraction).toBeLessThanOrEqual(1);
+      sc.answer(i % 2 ? 'a' : 'b', sc.nextTrial());
+    }
+  });
+
+  it('unbounded phase reports ~1 until it flips into binary', () => {
+    const unb = { start: 0, step: 1, minStep: 0.1, min: -Infinity, max: Infinity };
+    const sc = new Staircase(unb);
+    expect(sc.bracketFraction).toBeCloseTo(1, 6); // still wide open
+  });
+});

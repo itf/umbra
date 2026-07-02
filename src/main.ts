@@ -606,6 +606,14 @@ function showCalibrate(step: CalStep) {
         const g = getGraph();
         if (g) applyOverEarComp(g);
       },
+      // OBJECTIVE comp A/B (over-ear only): decides comp ON/OFF by pointing error and
+      // persists just the strength; re-apply it live on the master bus.
+      loadHeadphoneType: () => settings.headphoneType(),
+      saveOverEarCompStrength: (strength) => {
+        settings.setOverEarCompStrength(strength);
+        const g = getGraph();
+        if (g) applyOverEarComp(g);
+      },
       hrtfUrl: HRTF_URL,
       navigate: (s) => navigate({ screen: 'calibrate', calStep: s }),
       onDone: () => {

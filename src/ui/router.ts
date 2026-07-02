@@ -44,6 +44,7 @@ export type CalStep =
   | 'knobs'        // /calibrate/tune/knobs
   | 'guided'       // /calibrate/tune/guided
   | 'pca'          // /calibrate/tune/pca
+  | 'compcheck'    // /calibrate/compcheck   (objective headphone-comp ON/OFF A/B, over-ear)
   | 'loudness';    // /calibrate/loudness
 
 export interface ScreenState {
@@ -64,6 +65,7 @@ const CAL_SUBPATH: Record<CalStep, string> = {
   knobs: 'tune/knobs',
   guided: 'tune/guided',
   pca: 'tune/pca',
+  compcheck: 'compcheck',
   loudness: 'loudness',
 };
 /** Inverse of CAL_SUBPATH: sub-path fragment → step. */
