@@ -55,6 +55,27 @@ export function renderLandingScreen(
     'Put on headphones, close your eyes, and learn to navigate a space by sound alone.';
   container.appendChild(hero);
 
+  // HEADPHONES REQUIRED — a large, unmissable notice. The whole experience is binaural
+  // (HRTF): left/right, front/back and up/down all come from per-ear differences that
+  // laptop/phone speakers destroy. Called out prominently so a first visitor puts them
+  // on before pressing Play. aria-label carries the message for screen-reader users
+  // (the glyph itself is decorative → aria-hidden).
+  const cans = document.createElement('div');
+  cans.className = 'landing-headphones';
+  cans.setAttribute('role', 'note');
+  cans.setAttribute('aria-label', 'Headphones or earbuds required for a good experience.');
+  const cansIcon = document.createElement('span');
+  cansIcon.className = 'landing-headphones-icon';
+  cansIcon.setAttribute('aria-hidden', 'true');
+  cansIcon.textContent = '🎧';
+  const cansText = document.createElement('p');
+  cansText.className = 'landing-headphones-text';
+  cansText.setAttribute('aria-hidden', 'true'); // spoken via the container's aria-label
+  cansText.innerHTML = '<strong>Headphones or earbuds required.</strong> ' +
+    'The 3D sound only works over headphones — speakers can’t place sounds around you.';
+  cans.append(cansIcon, cansText);
+  container.appendChild(cans);
+
   // Primary actions FIRST in the DOM (and focus order) so an eyes-free visitor lands
   // on something actionable immediately.
   const actions = document.createElement('div');
@@ -166,7 +187,8 @@ export function renderLandingScreen(
   playBtn.focus();
   opts.say(
     'Umbra. Learn to see with sound. An eyes-free binaural audio game and echolocation trainer. ' +
-      'Put on headphones. Choose Play to pick a level, or Train for echolocation exercises.',
+      'Headphones or earbuds are required — the 3D sound does not work over speakers. ' +
+      'Choose Play to pick a level, or Train for echolocation exercises.',
   );
 
   return playBtn;
