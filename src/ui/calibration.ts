@@ -17,7 +17,7 @@ import { CalibrationMachine, type Side } from './calibrationMachine';
 import type { OnboardingStore } from './onboardingStore';
 import { mountLoudnessEq } from './loudnessEqUi';
 import type { EqBand } from './loudnessEq';
-import { mountHrtfTuning, baseHrtfById, type LocResumeBlob } from './hrtfTuning';
+import { mountHrtfTuning, baseHrtfById, type LocResumeBlob, type TuningSnapshot } from './hrtfTuning';
 import { mountHeadphoneCompLocalizeAb } from './headphoneCalibration';
 import type { HrtfPersonalization } from '../engine/hrtf/personalize';
 import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
@@ -80,6 +80,10 @@ export interface CalibrationDeps {
   saveResume?: (blob: LocResumeBlob) => void;
   loadResume?: () => LocResumeBlob | null;
   clearResume?: () => void;
+  /** Results-screen profile hooks: auto-save the finished tuning as "Last calibration (best)"
+   *  and let the user save it as a NEW named profile. Host wires to the HrtfProfiles instance. */
+  saveLastBest?: (snapshot: TuningSnapshot) => void;
+  saveProfile?: (name: string, snapshot: TuningSnapshot) => void;
 }
 
 export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
@@ -394,6 +398,8 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
       saveResume: deps.saveResume,
       loadResume: deps.loadResume,
       clearResume: deps.clearResume,
+      saveLastBest: deps.saveLastBest,
+      saveProfile: deps.saveProfile,
     });
   }
 

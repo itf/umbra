@@ -693,9 +693,17 @@ function showCalibrate(step: CalStep) {
         } catch { settings.removeRaw(HRTF_RESUME_KEY); return null; }
       },
       clearResume: () => settings.removeRaw(HRTF_RESUME_KEY),
+      // RESULTS screen (calibration/refinement finished): auto-save last-best + save-as-profile.
+      saveLastBest: (snap) => {
+        try { profiles.saveLastBest({ base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+        catch { /* non-fatal */ }
+      },
+      saveProfile: (name, snap) => {
+        try { profiles.save(name, { base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+        catch { /* non-fatal */ }
+      },
       onDone: () => {
-        // LAST BEST: a finished calibration auto-saves as the reserved, always-present profile.
-        try { profiles.saveLastBest(liveTuning(), currentSignature()); } catch { /* non-fatal */ }
+        // "Continue to volume setup" — advance (results screen already auto-saved last-best).
         const cont = afterOnboarding ?? (() => navigate({ screen: 'picker' }));
         afterOnboarding = null;
         disposeCalibration();
@@ -1933,6 +1941,15 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
         start: settings.hrtfPersonalization(),
         baseHrtfId: settings.hrtfBase(),
         saveBaseHrtf: (id) => settings.setHrtfBase(id),
+        // Results-screen profile hooks (same as the calibration flow).
+        saveLastBest: (snap) => {
+          try { profiles.saveLastBest({ base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+          catch { /* non-fatal */ }
+        },
+        saveProfile: (name, snap) => {
+          try { profiles.save(name, { base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+          catch { /* non-fatal */ }
+        },
         onDone: () => {
           restoreRoom();
           setupSettings(graph, []);

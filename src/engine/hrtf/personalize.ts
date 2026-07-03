@@ -273,23 +273,42 @@ export function personalizeMinPhase(
       applyFrontBackCue(irs, base + taps, taps, s, sampleRate);
     }
 
-    // PINNA NOTCH (N1) — the real elevation cue. Depth scales with elevation (deep when the
-    // source is overhead, none at/below ear level), and the notch centre RISES with elevation
-    // (natural pinna behaviour). Uses the UP/DOWN-BIASED elevation `y` so the bias nudges the
-    // notch too. The centre slide is tuned to the MEASURED SS2 N1 track: ~7.4 kHz at 0° up to
-    // ~11.5 kHz near the top of our elevation range (SS2: 7.4k@0° → 9.0k@+30° → 11.4k@+60°).
-    // Tuning notchHz to the user's ears is what finally makes "up" read as up.
+    // ABOVE-HORIZON ELEVATION SIGNATURE — reshaped to the MEASURED SS2 pattern (ipsilateral,
+    // median-front, population mean elevation delta re 0°):
+    //   6k  +4.0/+4.1   7.4k +5.2/+8.1   9k +0.8/+5.8   11.5k −6.1/−7.2   14k −4.7/−10.0  (+30°/+63°)
+    // The OLD single narrow notch missed the two dominant features (a 6–8 kHz BOOST and an
+    // 11–14 kHz CUT, both growing with elevation) and sat ~1.5–2 kHz too low + too shallow.
+    // We now apply THREE elevation-scaled biquads (all off at ear level, all tunable):
+    //   • ~7.4 kHz peaking BOOST  (+~5 dB@+30° → +~8 dB@+60°) — the dominant "up" energy rise
+    //   • ~6 kHz gentle BOOST     (~+4 dB, roughly flat with elevation)
+    //   • N1 notch, centre tracking ~10 kHz@+30° → ~12.8 kHz@+60°, ~1.5× the old depth
+    //   • ~12.5 kHz peaking CUT   (−~6 dB@+30° → −~10 dB@+60°) — the high-band roll-off
+    // Everything scales with `notchDepth` (the elevation-cue strength knob) so notchDepth=0
+    // stays exactly neutral, and uses the UP/DOWN-BIASED elevation `y` so the bias still nudges
+    // it. `elev` in [0,1]; the measured points are elev≈0.5 (+30°) and elev≈0.87 (+60°).
     if (p.notchDepth > 0) {
-      const elev = Math.max(0, y); // biased elevation; only above ear level gets the notch
+      const elev = Math.max(0, Math.min(1, y)); // biased elevation; above ear level only
       if (elev > 0.02) {
-        // Centre shifts up ~55% from ear level to the top elevation so the notch can REACH
-        // where N1 actually sits high up (notchHz≈7.5k → ~11.6k at elev=1), matching SS2.
-        const fc = Math.min(PERSONALIZATION_BOUNDS.notchHz.max, p.notchHz * (1 + 0.55 * Math.min(1, elev)));
-        const depth = -p.notchDepth * Math.min(1, elev); // negative dB → a dip
-        const q = 4; // fairly narrow, notch-like
         const base = m * stride;
-        applyNotch(irs, base, taps, fc, q, depth, sampleRate);
-        applyNotch(irs, base + taps, taps, fc, q, depth, sampleRate);
+        // Strength scalar: notchDepth is the tunable master (24 = full-strength default).
+        const s = p.notchDepth / 24;
+        // 7.4 kHz boost: +0.9 + 8.2·elev dB (≈+5@+30°, +8@+60°), scaled by strength.
+        const boost74 = s * Math.max(0, 0.9 + 8.2 * elev);
+        // 6 kHz boost: ~+4 dB once clearly above the horizon (near-flat with elevation).
+        const boost6 = s * 4 * Math.min(1, elev / 0.3);
+        // N1 notch centre tracks ~7.3k(→ear) → ~10k@+30° → ~12.8k@+60°; ~1.2× the old depth.
+        // (Kept modest so it doesn't STACK with the broad high-band cut below — at +60° both
+        // land near 12–13 kHz and would otherwise gouge an unrealistically deep hole there.)
+        const fc = Math.min(PERSONALIZATION_BOUNDS.notchHz.max, (p.notchHz * 0.97) + 6300 * elev);
+        const notchDb = -1.2 * p.notchDepth * elev;
+        // Broad high-band cut ~13.5 kHz (above the notch so they don't pile up): −(0.5+7·elev).
+        const cutHi = -s * (0.5 + 7 * elev);
+        for (const b of [base, base + taps]) {
+          applyNotch(irs, b, taps, 6000, 1.6, boost6, sampleRate);
+          applyNotch(irs, b, taps, 7400, 1.8, boost74, sampleRate);
+          applyNotch(irs, b, taps, fc, 4, notchDb, sampleRate);
+          applyNotch(irs, b, taps, 13500, 1.2, cutHi, sampleRate);
+        }
       }
     }
   }

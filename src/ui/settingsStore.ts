@@ -282,7 +282,8 @@ export class SettingsStore {
    * The `?engine=steam-sofa` URL still forces SADIE regardless of this setting.
    */
   steamSofaHrtf(): boolean {
-    return this.read(STEAM_SOFA_KEY) === '1';
+    const raw = this.read(STEAM_SOFA_KEY);
+    return raw === null ? true : raw === '1'; // default on now that the UI toggle is gone
   }
   setSteamSofaHrtf(on: boolean) {
     this.write(STEAM_SOFA_KEY, on ? '1' : '0');

@@ -407,16 +407,9 @@ export function mountSettings(host: HTMLElement, hooks: SettingsHooks): Settings
   });
   dialog.append(engine.row);
 
-  // --- Steam Audio HRTF: our SADIE vs Steam's generic ---
-  // Baked at world creation, so (like the engine toggle) it applies on the next level
-  // or via Apply (which rebuilds the backend). Only meaningful when Steam is on.
-  const sofa = checkboxRow('Use our SADIE HRTF in Steam (vs generic)', hooks.getSteamSofaHrtf(), (on) => {
-    hooks.setSteamSofaHrtf(on);
-    hooks.say(on
-      ? 'Steam will use our SADIE HRTF. Press Apply Steam settings to switch the running level, or it applies on the next one.'
-      : 'Steam will use its generic HRTF. Press Apply Steam settings to switch the running level, or it applies on the next one.');
-  });
-  dialog.append(sofa.row);
+  // SADIE vs Steam's generic HRTF used to be a user-facing toggle; SADIE is now always
+  // used, so the checkbox is gone, but hooks.getSteamSofaHrtf()/setSteamSofaHrtf() stay
+  // wired below (defaulted true) so the engine plumbing doesn't need to change.
 
   // --- Steam reflected-field Ambisonic order (1..3) ---
   // Higher order = sharper reflection directionality (order-1 is "blobby"), more CPU.

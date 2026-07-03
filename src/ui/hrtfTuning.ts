@@ -116,6 +116,17 @@ export interface HrtfTuningDeps {
   saveResume?: (blob: LocResumeBlob) => void;
   loadResume?: () => LocResumeBlob | null;
   clearResume?: () => void;
+  /** Auto-save the finished calibration as the reserved "Last calibration (best)" profile
+   *  when the RESULTS screen is reached (always recoverable). Host wires to profiles.saveLastBest. */
+  saveLastBest?: (snapshot: TuningSnapshot) => void;
+  /** Save the finished tuning as a NEW named profile ("Save as a profile…"). */
+  saveProfile?: (name: string, snapshot: TuningSnapshot) => void;
+}
+
+/** A full tuning snapshot the results screen hands to the profiles layer. */
+export interface TuningSnapshot {
+  base: string;
+  params: HrtfPersonalization;
 }
 
 /** The serializable in-progress calibration snapshot the resume hooks round-trip. `session`
@@ -128,6 +139,37 @@ export interface LocResumeBlob {
   base: string;
   answered: number;
   estTotal: number;
+}
+
+/** Human summary of which factors moved away from neutral (what the calibration tuned) —
+ *  pure so the results screen + tests share it. Empty-of-changes → a "kept default" line. */
+export function tunedSummary(params: HrtfPersonalization): string {
+  const items: string[] = [];
+  const neu = NEUTRAL_PERSONALIZATION;
+  if (Math.abs(params.frontBackTilt - neu.frontBackTilt) > 0.5) items.push('front/back');
+  if (params.notchDepth > 0.5) items.push('up/down (ear shape)');
+  if (Math.abs(params.frontBackBias ?? 0) > 0.03) items.push('forward/back bias');
+  if (Math.abs(params.upDownBias ?? 0) > 0.03) items.push('up/down bias');
+  if (Math.abs(params.itdScale - neu.itdScale) > 0.03) items.push('width');
+  if (Array.isArray(params.pcaWeights) && params.pcaWeights.some((w) => Math.abs(w) > 0.1)) items.push('real-ear shape');
+  if (items.length === 0) return 'We kept your sound close to the default — it already fit well.';
+  return 'We tuned: ' + items.join(', ') + '.';
+}
+
+/** Accuracy-improvement line from the pointing history (early-vs-recent mean error, degrees).
+ *  Pure; `errHistory` is angular error in radians. Empty → ''. */
+export function accuracyLine(errHistory: readonly number[]): string {
+  const deg = (r: number) => Math.round((r * 180) / Math.PI);
+  const avgOf = (xs: readonly number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
+  if (errHistory.length >= 6) {
+    const half = Math.floor(errHistory.length / 2);
+    const early = avgOf(errHistory.slice(0, half));
+    const recent = avgOf(errHistory.slice(half));
+    if (recent < early - 0.04) return `Your aim improved from about ${deg(early)}° to about ${deg(recent)}° off.`;
+    return `Your aim held steady at about ${deg(recent)}° off.`;
+  }
+  if (errHistory.length > 0) return `Your recent aim was about ${deg(avgOf(errHistory))}° off.`;
+  return '';
 }
 
 /** Build a candidate set of personalization params: base overlaid with one override.
@@ -641,10 +683,20 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     },
   ];
   let fpMotionId = 'orbit';
+  /** "Fixed point" mode: user places the source with the direction picker instead of
+   *  it moving along a preset path. Held still (plus a small wiggle) so they can judge
+   *  a single, self-chosen position rather than tracking motion. */
+  const FP_FIXED_ID = 'fixed';
+  let fpFixedDir: Direction = { az: 0, el: 0 };
+  /** Radius of the tiny orbit around the manually-placed point, in spherical degrees —
+   *  keeps the probe from reading as a dead, locked-in-place drone. */
+  const FP_FIXED_WIGGLE_DEG = 4;
+  const FP_FIXED_WIGGLE_HZ = 1.2;
 
   /** Loop the currently-selected free-play motion around the head. */
   function fpStartLoop() {
     cancelAnimationFrame(fpRaf);
+    if (fpMotionId === FP_FIXED_ID) { fpStartFixedWiggle(); return; }
     const motion = FP_MOTIONS.find((m) => m.id === fpMotionId) ?? FP_MOTIONS[0];
     const startPerf = performanceNow();
     const step = () => {
@@ -655,6 +707,38 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       // Feed the diagram the SAME position the audio uses (listener at origin, so the
       // source-relative offset is just the path point minus the head at y=1.6).
       fpViz?.set(x, y, z);
+      fpRaf = requestAnimationFrame(step);
+    };
+    fpRaf = requestAnimationFrame(step);
+  }
+
+  /** Orbit the probe in a tiny circle (radius FP_FIXED_WIGGLE_DEG) around fpFixedDir, in
+   *  the plane tangent to the sphere there — same construction as the localization
+   *  wiggle, just parameterized separately since this one's meant to be judged, not
+   *  merely kept alive. Re-centres live as the user drags the picker. */
+  function fpStartFixedWiggle() {
+    const rad = (FP_FIXED_WIGGLE_DEG * Math.PI) / 180;
+    const startPerf = performanceNow();
+    const step = () => {
+      if (disposed || !fpSrc) return;
+      const c = dirToVec(fpFixedDir);
+      let upx = 0, upy = 1, upz = 0;
+      const dotUp = c[0] * upx + c[1] * upy + c[2] * upz;
+      upx -= dotUp * c[0]; upy -= dotUp * c[1]; upz -= dotUp * c[2];
+      let ulen = Math.hypot(upx, upy, upz);
+      if (ulen < 1e-3) { upx = 1; upy = 0; upz = 0; ulen = 1; } // c ≈ straight up/down
+      upx /= ulen; upy /= ulen; upz /= ulen;
+      const rx = c[1] * upz - c[2] * upy;
+      const ry = c[2] * upx - c[0] * upz;
+      const rz = c[0] * upy - c[1] * upx;
+      const th = ((performanceNow() - startPerf) / 1000) * FP_FIXED_WIGGLE_HZ * 2 * Math.PI;
+      const ca = Math.cos(rad), sa = Math.sin(rad);
+      const ox = Math.cos(th), oy = Math.sin(th);
+      const vx = ca * c[0] + sa * (ox * rx + oy * upx);
+      const vy = ca * c[1] + sa * (ox * ry + oy * upy);
+      const vz = ca * c[2] + sa * (ox * rz + oy * upz);
+      fpSrc.setPosition(vx, 1.6 + vy, vz);
+      fpViz?.set(vx, vy, vz);
       fpRaf = requestAnimationFrame(step);
     };
     fpRaf = requestAnimationFrame(step);
@@ -795,10 +879,26 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     // Motion picker — CHOOSE which path plays while you tune.
     const motions = document.createElement('div');
     motions.className = 'hrtf-motions';
+    // Placed BELOW the motion buttons; only shown while "I place it" is selected.
+    const fixedPickerWrap = document.createElement('div');
+    fixedPickerWrap.className = 'hrtf-fixed-picker';
+    fixedPickerWrap.hidden = true;
+    let fixedPicker: DirectionPicker | null = null;
+    const mountFixedPicker = () => {
+      fixedPicker?.dispose();
+      fixedPicker = mountDirectionPicker(fixedPickerWrap, {
+        onCommit: () => { /* live-driven; commit button unused here but harmless */ },
+        onChange: (d) => { fpFixedDir = d; },
+        say: deps.say,
+      });
+      fixedPickerWrap.innerHTML = '';
+      fixedPickerWrap.append(fixedPicker.el);
+    };
     const syncMotionButtons = () => {
       for (const b of Array.from(motions.querySelectorAll('button'))) {
         b.setAttribute('aria-pressed', String((b as HTMLButtonElement).dataset.motion === fpMotionId));
       }
+      fixedPickerWrap.hidden = fpMotionId !== FP_FIXED_ID;
     };
     for (const m of FP_MOTIONS) {
       const b = document.createElement('button');
@@ -814,6 +914,22 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       });
       motions.append(b);
     }
+    // "I place it" — hold the source at a manually-chosen point (small wiggle so it
+    // still reads as a live source) instead of an animated path, for judging a single
+    // fixed direction rather than tracking motion.
+    const fixedBtn = document.createElement('button');
+    fixedBtn.type = 'button';
+    fixedBtn.className = 'secondary hrtf-motion-btn';
+    fixedBtn.textContent = 'I place it (fixed point)';
+    fixedBtn.dataset.motion = FP_FIXED_ID;
+    fixedBtn.addEventListener('click', () => {
+      fpMotionId = FP_FIXED_ID;
+      syncMotionButtons();
+      if (!fixedPicker) mountFixedPicker();
+      fpStartLoop();
+      deps.say('Placing the sound yourself. Use the compass and height arc to set where it plays.');
+    });
+    motions.append(fixedBtn);
     syncMotionButtons();
 
     const knobs = document.createElement('div');
@@ -891,7 +1007,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     nextRow.append(nextLabel, toLocalize, toGuided, toPca);
     const back = bigButton('Back', () => { teardownFreePlay(); backToIntro(); });
 
-    controls.append(vizWrap, bases, motions, knobs, pcaToggle, save, nextRow, back);
+    controls.append(vizWrap, bases, motions, fixedPickerWrap, knobs, pcaToggle, save, nextRow, back);
     void fpBuild();
     (knobs.querySelector('input') as HTMLElement | null)?.focus();
   }
@@ -1488,7 +1604,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     }
   }
 
-  /** All factors converged (or cap hit) → commit + save + finish. */
+  /** All factors converged (or cap hit) → commit + save, then show the RESULTS screen. Does
+   *  NOT auto-advance: onDone() only fires when the user picks "Continue to volume setup". */
   function locFinish() {
     // Commit any factor that hit the cap without formally converging: use its best bucket.
     for (const fs of locSession.factors) {
@@ -1497,18 +1614,50 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       fs.converged = true;
       commitFactor(fs);
     }
+    const mode = locSession.mode;
     locSession.done = true;
     deps.clearResume?.(); // in-progress snapshot is spent
     teardownLoc();
     deps.save(params);
-    if (locSession.mode === 'pca') {
-      deps.say('Refinement complete. Your 3D audio is tuned to how real ears vary.');
-      deps.alert('Refinement complete.');
-    } else {
-      deps.say('Localization calibration complete. Your 3D audio is tuned to how you actually hear.');
-      deps.alert('Calibration complete.');
-    }
-    deps.onDone();
+    // Always-recoverable auto-save as the reserved "Last calibration (best)".
+    deps.saveLastBest?.({ base: currentBase.id, params: { ...params } });
+    renderResults(mode);
+  }
+
+  /**
+   * RESULTS screen shown after a calibration/refinement finishes — replaces the old bare
+   * alert + auto-advance. Shows the chosen head, accuracy improvement, and what was tuned,
+   * then offers explicit choices (save-as-profile / continue-to-volume / redo / done-for-now).
+   * onDone() ONLY fires from "Continue to volume setup" — the user is never forced onward.
+   */
+  function renderResults(mode: 'full' | 'pca') {
+    controls.innerHTML = '';
+    root.classList.remove('hrtf-compact');
+    h.textContent = mode === 'pca' ? 'Refinement complete' : 'Calibration complete';
+
+    const headLine = mode === 'pca' ? '' : `Best-fit head: ${currentBase.label}. `;
+    const acc = accuracyLine(locErrHistory);
+    const summary = tunedSummary(params);
+    p.textContent = `${headLine}${acc ? acc + ' ' : ''}${summary} Your 3D audio is tuned to how you actually hear. Save it as a profile, continue to the volume check, redo it, or stop here.`;
+    // Announce results + options for eyes-free use.
+    deps.say(`Calibration complete. ${headLine}${acc} ${summary} You can save this as a profile, continue to volume setup, redo the calibration, or stop here.`);
+
+    const saveBtn = bigButton('Save as a profile…', () => {
+      const name = (typeof prompt !== 'undefined' ? prompt('Name this profile:', 'My tuning') : 'My tuning');
+      if (!name) return;
+      deps.saveProfile?.(name, { base: currentBase.id, params: { ...params } });
+      deps.say(`Saved “${name}”. Find it later in Settings, under Saved profiles.`);
+      deps.alert(`Saved profile “${name}”. You can reload it anytime from Settings → Saved profiles.`);
+    });
+    const continueBtn = bigButton('Continue to volume setup', () => { deps.onDone(); }, true);
+    const redoBtn = bigButton('Redo calibration', () => {
+      deps.say('Starting the calibration over.');
+      if (mode === 'pca') { void renderPca(); } else { renderLocalization(); }
+    });
+    const doneBtn = bigButton('Done for now', () => { teardownLoc(); backToIntro(); });
+
+    controls.append(continueBtn, saveBtn, redoBtn, doneBtn);
+    continueBtn.focus();
   }
 
   /** Persist the current in-progress session so calibration can be RESUMED after a reload /
