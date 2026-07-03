@@ -176,6 +176,54 @@ const totalVar = vals.reduce((p, c) => p + Math.max(0, c), 0) || 1;
 console.log('Top eigenvalue variance fractions:',
   order.slice(0, K).map((c) => (Math.max(0, vals[c]) / totalVar * 100).toFixed(1) + '%').join(', '));
 
+// --- extra: a dedicated PINNA-BAND principal component -------------------------------
+// The front/back + elevation spectral cues live in the pinna band (~4–12 kHz). The
+// general PCs above spread their energy across the whole spectrum; a listener whose
+// pinna notches differ mostly in that band has no single clean knob to tune. So we add
+// ONE more PC computed on features RESTRICTED to the pinna band, and we ZERO the
+// eigenvector outside the band so tuning it deforms only the pinna region.
+const SR = 44100; // CIPIC sample rate
+// feature bin b -> FFT index -> frequency (Hz). Mirrors toLogMagFeature's log spacing.
+function featureBinHz(b) {
+  const frac = b / (KEEP_BINS - 1);
+  const idx = Math.round(1 + (HALF - 2) * (Math.pow(HALF - 1, frac) - 1) / (HALF - 2));
+  const i = Math.max(1, Math.min(HALF - 1, idx));
+  return (i / NFFT) * SR;
+}
+const PINNA_LO_HZ = 4000, PINNA_HI_HZ = 12000;
+const pinnaBins = [];
+for (let b = 0; b < KEEP_BINS; b++) {
+  const hz = featureBinHz(b);
+  if (hz >= PINNA_LO_HZ && hz <= PINNA_HI_HZ) pinnaBins.push(b);
+}
+console.log(`Pinna band ${PINNA_LO_HZ}-${PINNA_HI_HZ} Hz → ${pinnaBins.length} of ${KEEP_BINS} feature bins per direction (${pinnaBins[0]}..${pinnaBins[pinnaBins.length - 1]}).`);
+
+// Mask: which of the FEAT entries are inside the pinna band (band bin at any direction).
+const pinnaMask = new Uint8Array(FEAT);
+for (let d = 0; d < DIRS; d++) for (const b of pinnaBins) pinnaMask[d * KEEP_BINS + b] = 1;
+
+// Band-restricted centered features, then the same SxS Gram-PCA as above.
+const Xp = Xc.map((c) => { const v = new Float64Array(FEAT); for (let i = 0; i < FEAT; i++) v[i] = pinnaMask[i] ? c[i] : 0; return v; });
+const Gp = [];
+for (let i = 0; i < S; i++) {
+  Gp[i] = new Float64Array(S);
+  for (let j = 0; j < S; j++) { let s = 0; const xi = Xp[i], xj = Xp[j]; for (let k = 0; k < FEAT; k++) s += xi[k] * xj[k]; Gp[i][j] = s / S; }
+}
+const { vals: pvals, vecs: pvecs } = jacobiEigen(Gp);
+let pcol = 0; for (let i = 1; i < S; i++) if (pvals[i] > pvals[pcol]) pcol = i;
+const pinnaEig = new Float64Array(FEAT);
+for (let i = 0; i < S; i++) { const w = pvecs[i][pcol]; const xi = Xp[i]; for (let f = 0; f < FEAT; f++) pinnaEig[f] += w * xi[f]; }
+for (let f = 0; f < FEAT; f++) if (!pinnaMask[f]) pinnaEig[f] = 0; // enforce band-only
+let pnorm = 0; for (let f = 0; f < FEAT; f++) pnorm += pinnaEig[f] * pinnaEig[f];
+pnorm = Math.sqrt(pnorm) || 1;
+for (let f = 0; f < FEAT; f++) pinnaEig[f] /= pnorm;
+eigs.push(pinnaEig);
+scales.push(Math.sqrt(Math.max(0, pvals[pcol])));
+console.log(`Pinna PC: variance ${(Math.max(0, pvals[pcol]) / totalVar * 100).toFixed(1)}% (band-restricted).`);
+
+// K now includes the pinna PC; it is appended LAST after the general PCs.
+const K_TOTAL = eigs.length;
+
 // --- quantize to int8 (mean as f32 for accuracy; eigs int8 + per-vector scale) ---
 function quantI8(vec) {
   let amax = 0; for (const v of vec) amax = Math.max(amax, Math.abs(v));
@@ -192,7 +240,7 @@ function quantI8(vec) {
 const headerN = 4 + 4 * 6 + 4 * 2;
 const gridN = 4 * (AZ + EL);
 const meanN = 4 * FEAT;
-const pcN = K * (4 + 4 + FEAT);
+const pcN = K_TOTAL * (4 + 4 + FEAT);
 const buf = Buffer.alloc(headerN + gridN + meanN + pcN);
 let o = 0;
 buf.write('HPCA', o); o += 4;
@@ -200,20 +248,20 @@ buf.writeUInt32LE(1, o); o += 4;
 buf.writeUInt32LE(S, o); o += 4;
 buf.writeUInt32LE(DIRS, o); o += 4;
 buf.writeUInt32LE(KEEP_BINS, o); o += 4;
-buf.writeUInt32LE(K, o); o += 4;
+buf.writeUInt32LE(K_TOTAL, o); o += 4;
 buf.writeUInt32LE(AZ, o); o += 4;
 buf.writeUInt32LE(EL, o); o += 4;
 for (const a of AZIMUTHS) { buf.writeFloatLE(a, o); o += 4; }
 for (const e of ELEV) { buf.writeFloatLE(e, o); o += 4; }
 for (let i = 0; i < FEAT; i++) { buf.writeFloatLE(mean[i], o); o += 4; }
-for (let kk = 0; kk < K; kk++) {
+for (let kk = 0; kk < K_TOTAL; kk++) {
   const { out, q } = quantI8(eigs[kk]);
   buf.writeFloatLE(scales[kk], o); o += 4; // eigScale (std dev in log-mag units)
   buf.writeFloatLE(q, o); o += 4;          // quant scale
   for (let i = 0; i < FEAT; i++) { buf.writeInt8(out[i], o); o += 1; }
 }
 writeFileSync(outPath, buf);
-console.log(`Wrote ${outPath} (${(buf.length / 1024).toFixed(0)} KB): mean + ${K} PCs, ${DIRS} dirs × ${KEEP_BINS} bins.`);
+console.log(`Wrote ${outPath} (${(buf.length / 1024).toFixed(0)} KB): mean + ${K_TOTAL} PCs (${K} general + 1 pinna), ${DIRS} dirs × ${KEEP_BINS} bins.`);
 
 // --- Jacobi eigensolver for small symmetric matrices ---
 function jacobiEigen(Ain) {

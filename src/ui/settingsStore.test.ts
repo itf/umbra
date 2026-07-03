@@ -269,7 +269,7 @@ describe('SettingsStore without storage (degrades to memory)', () => {
 });
 
 describe('HRTF personalization persistence', () => {
-  const NEUTRAL = { itdScale: 1, elevTilt: 0, frontBackTilt: 0, notchHz: 7500, notchDepth: 0 };
+  const NEUTRAL = { itdScale: 1, elevTilt: 0, frontBackTilt: 0, notchHz: 7500, notchDepth: 0, frontBackBias: 0, upDownBias: 0 };
 
   it('defaults to neutral when unset', () => {
     const s = new SettingsStore(memStorage());
@@ -278,7 +278,7 @@ describe('HRTF personalization persistence', () => {
 
   it('round-trips clamped values across instances', () => {
     const backing = memStorage();
-    const p = { itdScale: 1.3, elevTilt: -4, frontBackTilt: 5, notchHz: 8200, notchDepth: 10 };
+    const p = { itdScale: 1.3, elevTilt: -4, frontBackTilt: 5, notchHz: 8200, notchDepth: 10, frontBackBias: 0.4, upDownBias: -0.2 };
     new SettingsStore(backing).setHrtfPersonalization(p);
     expect(new SettingsStore(backing).hrtfPersonalization()).toEqual(p);
   });
@@ -292,7 +292,7 @@ describe('HRTF personalization persistence', () => {
     expect(p.itdScale).toBe(2.0);
     expect(p.elevTilt).toBe(-18);
     expect(p.frontBackTilt).toBe(18);
-    expect(p.notchHz).toBe(11000);
+    expect(p.notchHz).toBe(11500);
     expect(p.notchDepth).toBe(24);
   });
 

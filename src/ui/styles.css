@@ -347,6 +347,12 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .dir-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .hrtf-loc-trial { display: flex; flex-direction: column; align-items: center; gap: 12px; }
 .hrtf-loc-progress { font-size: 0.9rem; opacity: 0.75; margin: 0; text-align: center; }
+/* "Space shrinking" bar: monospace so the ▓░ cells align; slightly brighter than the
+   round counter so the closing-in bracket reads as the live feedback. */
+.hrtf-loc-bracket {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em; opacity: 0.85; margin-top: 0.15rem;
+}
 
 /* COMPACT layout for the "point to the sound" test so the answer controls fit without
    scrolling — tighter heading + gaps + viz. Instruction text is left at its normal size

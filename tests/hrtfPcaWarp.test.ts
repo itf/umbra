@@ -8,7 +8,7 @@ import { parsePcaModel } from '../src/engine/hrtf/hrtfPca';
 import { personalizePcaMinPhase } from '../src/engine/hrtf/personalize';
 import type { MinPhaseHrtf } from '../src/engine/hrtf/interpolatingDsp';
 
-const PATH = 'assets/hrtf/cipic_pca.bin';
+const PATH = 'assets/hrtf/hrtf_pca.bin';
 const have = existsSync(PATH);
 
 /** A small synthetic min-phase set: a few directions, short impulse per ear. */

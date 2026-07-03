@@ -82,6 +82,22 @@ export class Staircase {
   }
 
   /**
+   * How much of the search range still remains, as a fraction 0..1 — 1 = full range (just
+   * started), →0 = converged to minStep. Drives the "space shrinking" UI. In the bounded
+   * binary phase this is the live bracket width over the full [min,max] span. In the
+   * unbounded bracket phase we haven't localized a finite interval yet, so report ~1
+   * (still wide open). Once converged/given-up, report the residual (≈ minStep fraction).
+   */
+  get bracketFraction(): number {
+    const full = this.max - this.min;
+    if (!Number.isFinite(full) || full <= 0) {
+      // Unbounded: no finite range to measure against until we flip into binary.
+      return this.phase === 'binary' ? clamp01((this.hi - this.lo) / (this.step || 1)) : 1;
+    }
+    return clamp01((this.hi - this.lo) / full);
+  }
+
+  /**
    * Next A/B pair. Binary phase: two probes straddling the bracket midpoint (lower third
    * vs upper third). Bracket phase: current value vs a value one exponential step away.
    */
@@ -154,4 +170,8 @@ export class Staircase {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
 }

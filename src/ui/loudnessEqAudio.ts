@@ -67,12 +67,35 @@ export interface CompBiquad {
   gainDb: number;
 }
 
+/** The PINNA-NOTCH protection band (Hz). Headphone-comp EQ must NOT add gain here: peaks in
+ *  ~6–10 kHz would FILL IN the HRTF's pinna notches that carry front/back + elevation, which
+ *  are the very cues calibration tunes. (Confirmed against SS2's own HpEq filter, which boosts
+ *  +4..+7 dB at 8–9 kHz — applying that verbatim would destroy the notches.) */
+export const NOTCH_PROTECT_BAND_HZ = { lo: 6000, hi: 10000 } as const;
+
+/** Clamp a comp band so it never ADDS gain inside the pinna-notch band: a peaking band
+ *  centered in [6k,10k] has its positive gain capped at 0 dB (attenuation is fine — that
+ *  deepens the notch, which is safe). Bands outside the band pass through unchanged. This
+ *  preserves notch DEPTH while still correcting broad headphone coloration elsewhere. */
+export function protectNotchBand(b: CompBiquad): CompBiquad {
+  const inBand = b.freq >= NOTCH_PROTECT_BAND_HZ.lo && b.freq <= NOTCH_PROTECT_BAND_HZ.hi;
+  // Only peaking/lowshelf/highshelf can boost; a peaking band's positive gain is the risk.
+  if (inBand && b.gainDb > 0 && (b.type === 'peaking' || b.type === 'lowshelf' || b.type === 'highshelf')) {
+    return { ...b, gainDb: 0 };
+  }
+  return b;
+}
+
 /**
  * Build a peaking/shelf biquad cascade from an explicit per-band list (each band keeps
  * its own type + Q), multiplying every gain by `scale`. Bands whose SCALED gain is ~0 dB
  * are skipped; returns null when nothing is left (so the caller keeps the dry path). Used
  * by the over-ear headphone compensation, which — unlike the loudness EQ — needs per-band
  * Q and a runtime strength scalar. Mirrors buildEqChain's splice contract (input/output).
+ *
+ * NOTCH-PROTECTED: every band is passed through protectNotchBand first, so the comp can
+ * never boost the ~6–10 kHz pinna-notch region (it would fill the front/back + elevation
+ * notches). Attenuation there is allowed; broad correction elsewhere is unaffected.
  */
 export function buildBiquadChain(
   ctx: BaseAudioContext,
@@ -80,9 +103,11 @@ export function buildBiquadChain(
   scale: number,
 ): EqChain | null {
   if (!biquads || biquads.length === 0 || !(scale > 0)) return null;
-  const active = biquads.filter(
-    (b) => Number.isFinite(b.gainDb) && Number.isFinite(b.freq) && b.freq > 0 && Math.abs(b.gainDb * scale) > 0.01,
-  );
+  const active = biquads
+    .map(protectNotchBand)
+    .filter(
+      (b) => Number.isFinite(b.gainDb) && Number.isFinite(b.freq) && b.freq > 0 && Math.abs(b.gainDb * scale) > 0.01,
+    );
   if (active.length === 0) return null;
 
   const nodes: BiquadFilterNode[] = active.map((b) => {

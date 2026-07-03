@@ -31,7 +31,7 @@ class FakeBiquad {
 
 const BANDS: CompBiquad[] = [
   { type: 'peaking', freq: 5000, Q: 1.4, gainDb: -4.6 },
-  { type: 'peaking', freq: 9000, Q: 1.4, gainDb: 2.0 },
+  { type: 'peaking', freq: 12000, Q: 1.4, gainDb: 2.0 }, // above the notch-protect band → kept
 ];
 
 describe('buildBiquadChain', () => {
@@ -57,6 +57,23 @@ describe('buildBiquadChain', () => {
     expect(chain.input).toBe(ctx.created[0]);
     expect(chain.output).toBe(ctx.created[1]);
     expect(ctx.created[0].connections).toContain(ctx.created[1]);
+  });
+
+  it('NOTCH PROTECTION: never adds gain in 6–10 kHz (drops a +gain band there)', () => {
+    const ctx = fakeCtx();
+    // A +2 dB peak at 9 kHz (pinna-notch band) must be clamped to 0 → skipped entirely,
+    // leaving only the −4.6 dB @5 kHz correction. The comp can't fill the pinna notches.
+    buildBiquadChain(ctx, [
+      { type: 'peaking', freq: 5000, Q: 1.4, gainDb: -4.6 },
+      { type: 'peaking', freq: 9000, Q: 1.4, gainDb: 2.0 },
+    ], 1);
+    expect(ctx.created.length).toBe(1);
+    expect(ctx.created[0].frequency.value).toBe(5000);
+    // An ATTENUATION in-band is kept (deepening the notch is safe).
+    const ctx2 = fakeCtx();
+    buildBiquadChain(ctx2, [{ type: 'peaking', freq: 8000, Q: 1.4, gainDb: -3 }], 1);
+    expect(ctx2.created.length).toBe(1);
+    expect(ctx2.created[0].gain.value).toBeCloseTo(-3);
   });
 
   it('scales gain linearly with strength (half strength ⇒ half dB)', () => {

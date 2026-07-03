@@ -22,6 +22,21 @@
 export type Vec3 = readonly [number, number, number];
 export type ExerciseParam = 'itdScale' | 'elevTilt' | 'frontBackTilt' | 'notchHz';
 export type AnswerKind = 'ab' | 'guess';
+// Re-exported so callers can drive the localization sampler from param metadata.
+export type { SampleKind } from './hrtfLocalize';
+import type { SampleKind } from './hrtfLocalize';
+
+/**
+ * Which sphere region the LOCALIZATION test should sample when tuning each parameter, so
+ * the probe is diagnostic for that param (see hrtfLocalize.SampleKind). A param only shows
+ * up in certain directions — e.g. testing front/back with a hard-left probe is wasted.
+ */
+export const PARAM_SAMPLE_KIND: Record<ExerciseParam, SampleKind> = {
+  itdScale: 'lateral',        // interaural cues → lateral, near-horizontal
+  elevTilt: 'elevation',      // elevation shelf → off the horizontal
+  frontBackTilt: 'frontback', // front/back cue → median-plane / cone of confusion
+  notchHz: 'elevation',       // pinna-notch elevation cue → off the horizontal
+};
 
 export interface Exercise {
   id: string;
@@ -195,5 +210,5 @@ export const STAIRCASE_CONFIG: Record<ExerciseParam, {
   elevTilt: { start: 0, step: 9, minStep: 2, min: -18, max: 18 },
   frontBackTilt: { start: 0, step: 9, minStep: 2, min: -18, max: 18 },
   // Pinna-notch centre: sweep the 4–11 kHz range to find where "up" locks for you.
-  notchHz: { start: 7500, step: 2000, minStep: 400, min: 4000, max: 11000 },
+  notchHz: { start: 7500, step: 2000, minStep: 400, min: 4000, max: 11500 },
 };

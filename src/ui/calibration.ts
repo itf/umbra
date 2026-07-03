@@ -17,7 +17,8 @@ import { CalibrationMachine, type Side } from './calibrationMachine';
 import type { OnboardingStore } from './onboardingStore';
 import { mountLoudnessEq } from './loudnessEqUi';
 import type { EqBand } from './loudnessEq';
-import { mountHrtfTuning } from './hrtfTuning';
+import { mountHrtfTuning, baseHrtfById, type LocResumeBlob, type TuningSnapshot } from './hrtfTuning';
+import { mountHeadphoneCompLocalizeAb } from './headphoneCalibration';
 import type { HrtfPersonalization } from '../engine/hrtf/personalize';
 import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
 import { assetUrl } from '../engine/baseUrl';
@@ -66,6 +67,23 @@ export interface CalibrationDeps {
    * Settings.
    */
   saveHeadphoneComp?: (type: HeadphoneType, strength: number) => void;
+  /**
+   * The OBJECTIVE comp A/B step (/calibrate/compcheck): read the declared headphone type
+   * (to gate — over-ear only) and persist JUST the chosen comp strength (0 = off, or the
+   * active over-ear default) it decides by pointing error. When either is omitted, the
+   * step is skipped. Distinct from `saveHeadphoneComp`, which also sets the TYPE.
+   */
+  loadHeadphoneType?: () => HeadphoneType | null;
+  saveOverEarCompStrength?: (strength: number) => void;
+  /** RESUME hooks for the interleaved calibration loop — the host owns storage + the
+   *  schema-signature guard (loadResume returns null on a mismatched/absent snapshot). */
+  saveResume?: (blob: LocResumeBlob) => void;
+  loadResume?: () => LocResumeBlob | null;
+  clearResume?: () => void;
+  /** Results-screen profile hooks: auto-save the finished tuning as "Last calibration (best)"
+   *  and let the user save it as a NEW named profile. Host wires to the HrtfProfiles instance. */
+  saveLastBest?: (snapshot: TuningSnapshot) => void;
+  saveProfile?: (name: string, snapshot: TuningSnapshot) => void;
 }
 
 export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
@@ -348,9 +366,11 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
   // and returns a dispose/stop we must call before mounting another or leaving. ---
   let tuningDispose: (() => void) | null = null;
   let loudnessDispose: (() => void) | null = null;
+  let compCheckDispose: (() => void) | null = null;
   function disposeSubMounts() {
     tuningDispose?.(); tuningDispose = null;
     loudnessDispose?.(); loudnessDispose = null;
+    compCheckDispose?.(); compCheckDispose = null;
   }
 
   /**
@@ -375,13 +395,49 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
       initial,
       navigate: (step) => deps.navigate(step),
       onDone: afterTuning,
+      saveResume: deps.saveResume,
+      loadResume: deps.loadResume,
+      clearResume: deps.clearResume,
+      saveLastBest: deps.saveLastBest,
+      saveProfile: deps.saveProfile,
     });
   }
 
-  /** After the 3D-audio component finishes/skips: go to loudness if offered, else done. */
+  /** After the 3D-audio component finishes/skips: run the objective comp A/B (over-ear
+   *  only, if offered), then loudness, else done. compcheck itself no-ops+continues for
+   *  non-over-ear, so routing here unconditionally is fine when the savers are present. */
   function afterTuning() {
+    if (deps.saveOverEarCompStrength && deps.loadHeadphoneType && deps.loadHeadphoneType() === 'overear') {
+      deps.navigate('compcheck');
+    } else if (deps.saveLoudnessEq) {
+      deps.navigate('loudness');
+    } else {
+      done();
+    }
+  }
+
+  /** After the comp A/B finishes/skips: go to loudness if offered, else done. */
+  function afterCompCheck() {
     if (deps.saveLoudnessEq) deps.navigate('loudness');
     else done();
+  }
+
+  /** The objective headphone-comp ON/OFF A/B (/calibrate/compcheck). Renders the probe
+   *  through the chosen base head; keeps comp only if it measurably improves pointing. */
+  function mountCompCheck() {
+    disposeSubMounts();
+    root.innerHTML = '';
+    const baseUrl = deps.loadHrtfBase ? baseHrtfById(deps.loadHrtfBase()).url : (deps.hrtfUrl ?? HRTF_URL);
+    compCheckDispose = mountHeadphoneCompLocalizeAb(root, {
+      ctx: graph!.ctx,
+      dest: graph!.master,
+      hrtfUrl: baseUrl,
+      say: deps.say,
+      alert: deps.alert,
+      headphoneType: deps.loadHeadphoneType?.() ?? null,
+      save: (strength) => deps.saveOverEarCompStrength?.(strength),
+      onDone: afterCompCheck,
+    });
   }
 
   /** The equal-loudness step (/calibrate/loudness). On finish, calibration completes. */
@@ -438,7 +494,7 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
    */
   const NEEDS_AUDIO: Record<CalStep, boolean> = {
     intro: false, orientation: true, headphones: false, tune: true,
-    localize: true, knobs: true, guided: true, pca: true, loudness: true,
+    localize: true, knobs: true, guided: true, pca: true, compcheck: true, loudness: true,
   };
   function goToStep(step: CalStep) {
     h.textContent = 'Calibration';
@@ -457,6 +513,10 @@ export function mountCalibration(root: HTMLElement, deps: CalibrationDeps) {
       case 'knobs': mountTuning('knobs'); break;
       case 'guided': mountTuning('guided'); break;
       case 'pca': mountTuning('pca'); break;
+      case 'compcheck':
+        if (deps.saveOverEarCompStrength && deps.loadHeadphoneType) mountCompCheck();
+        else afterCompCheck();
+        break;
       case 'loudness':
         if (deps.saveLoudnessEq) mountLoudness();
         else done();

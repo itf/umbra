@@ -21,19 +21,29 @@ import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { InterpolatingHrtfRenderer } from '../engine/hrtf/interpolatingRenderer';
 import { assetUrl } from '../engine/baseUrl';
 import { NEUTRAL_PERSONALIZATION, type HrtfPersonalization } from '../engine/hrtf/personalize';
+import { PC_KIND_FRONTBACK } from '../engine/hrtf/hrtfPca';
+import { calDebugEnabled } from './calDebug';
 import { Staircase, type StaircaseTrial } from './hrtfStaircase';
-import { EXERCISES, STAIRCASE_CONFIG, type Exercise, type ExerciseParam } from './hrtfExercises';
+import { EXERCISES, STAIRCASE_CONFIG, PARAM_SAMPLE_KIND, type Exercise, type ExerciseParam } from './hrtfExercises';
 import { mountVisualizer } from './hrtfVisualizer';
 import { mountDirectionPicker, mountAnswerDiagram, type DirectionPicker } from './hrtfDirectionPicker';
 import {
-  makeTestDirections,
+  makeTargetedDirection,
   dirToPosition,
   dirToVec,
   angularError,
   decomposeError,
-  decideWinner,
+  makeBasin,
+  basinRecord,
+  basinNext,
+  basinMean,
+  basinBucketValue,
+  basinRemainingFraction,
+  makePassOrder,
+  rrNext,
+  type BasinState,
+  type BasinConfig,
   type Direction,
-  type Attempt,
 } from './hrtfLocalize';
 
 /**
@@ -44,9 +54,24 @@ import {
  * settings so the game/beacon later loads the same base.
  */
 export interface BaseHrtf { id: string; label: string; url: string; }
+// The measured base heads the calibration can pick between. SADIE H3 (default) + Steam's
+// CIPIC 124, PLUS six maximally-DIVERSE real humans drawn from SADIE II (H4–H20) and SS2
+// (Meta Reality Labs Sound Sphere 2, 78 subjects), chosen by farthest-point / max-min
+// selection in HRTF log-magnitude space (scripts/select-diverse-heads-ss2.mjs) so they
+// span how real ears differ — the base head is the biggest localization variable, so
+// offering genuinely different ears gives the base-A/B tournament real range to find your
+// fit. (~8 candidates is the established sweet spot for perceptual HRTF selection.)
+// All native 48 kHz; SS2 windowed 384→256 taps. All scalar-level-matched to SADIE H3
+// (scripts/normalize-base-heads.mjs) so switching heads changes spatial cues, not volume.
 export const BASE_HRTFS: readonly BaseHrtf[] = [
   { id: 'sadie_h3', label: 'Default (SADIE H3)', url: assetUrl('assets/hrtf/sadie_h3.hrtf') },
   { id: 'cipic_124', label: 'Steam’s (CIPIC 124)', url: assetUrl('assets/hrtf/cipic_124.hrtf') },
+  { id: 'sadie_h13', label: 'Head A (SADIE H13)', url: assetUrl('assets/hrtf/sadie_h13.hrtf') },
+  { id: 'ss2_ztv', label: 'Head B (SS2 ZTV)', url: assetUrl('assets/hrtf/ss2_ztv.hrtf') },
+  { id: 'ss2_gzu', label: 'Head C (SS2 GZU)', url: assetUrl('assets/hrtf/ss2_gzu.hrtf') },
+  { id: 'ss2_ynb', label: 'Head D (SS2 YNB)', url: assetUrl('assets/hrtf/ss2_ynb.hrtf') },
+  { id: 'ss2_fzk', label: 'Head E (SS2 FZK)', url: assetUrl('assets/hrtf/ss2_fzk.hrtf') },
+  { id: 'ss2_rll', label: 'Head F (SS2 RLL)', url: assetUrl('assets/hrtf/ss2_rll.hrtf') },
 ];
 export function baseHrtfById(id: string | undefined): BaseHrtf {
   return BASE_HRTFS.find((b) => b.id === id) ?? BASE_HRTFS[0];
@@ -81,6 +106,70 @@ export interface HrtfTuningDeps {
    * the internal showIntro()/render*() transitions.
    */
   navigate?: (step: 'tune' | 'localize' | 'knobs' | 'guided' | 'pca') => void;
+  /**
+   * RESUME hooks (optional). The interleaved calibration loop auto-saves its serializable
+   * session after each answer via `saveResume`, offers to continue via `loadResume` on
+   * re-entry, and `clearResume` on completion / start-over. The host owns storage + the
+   * schema signature guard (see hrtfProfiles). When omitted, calibration never persists
+   * mid-progress (old behavior).
+   */
+  saveResume?: (blob: LocResumeBlob) => void;
+  loadResume?: () => LocResumeBlob | null;
+  clearResume?: () => void;
+  /** Auto-save the finished calibration as the reserved "Last calibration (best)" profile
+   *  when the RESULTS screen is reached (always recoverable). Host wires to profiles.saveLastBest. */
+  saveLastBest?: (snapshot: TuningSnapshot) => void;
+  /** Save the finished tuning as a NEW named profile ("Save as a profile…"). */
+  saveProfile?: (name: string, snapshot: TuningSnapshot) => void;
+}
+
+/** A full tuning snapshot the results screen hands to the profiles layer. */
+export interface TuningSnapshot {
+  base: string;
+  params: HrtfPersonalization;
+}
+
+/** The serializable in-progress calibration snapshot the resume hooks round-trip. `session`
+ *  is the opaque LocSession (plain JSON); `params`/`base` are the tuning committed so far so
+ *  resume restores the live renderer too. `answered`/`estTotal` drive the "N of ~M" prompt. */
+export interface LocResumeBlob {
+  mode: 'full' | 'pca';
+  session: unknown;      // LocSession (kept opaque at the boundary; validated on load)
+  params: HrtfPersonalization;
+  base: string;
+  answered: number;
+  estTotal: number;
+}
+
+/** Human summary of which factors moved away from neutral (what the calibration tuned) —
+ *  pure so the results screen + tests share it. Empty-of-changes → a "kept default" line. */
+export function tunedSummary(params: HrtfPersonalization): string {
+  const items: string[] = [];
+  const neu = NEUTRAL_PERSONALIZATION;
+  if (Math.abs(params.frontBackTilt - neu.frontBackTilt) > 0.5) items.push('front/back');
+  if (params.notchDepth > 0.5) items.push('up/down (ear shape)');
+  if (Math.abs(params.frontBackBias ?? 0) > 0.03) items.push('forward/back bias');
+  if (Math.abs(params.upDownBias ?? 0) > 0.03) items.push('up/down bias');
+  if (Math.abs(params.itdScale - neu.itdScale) > 0.03) items.push('width');
+  if (Array.isArray(params.pcaWeights) && params.pcaWeights.some((w) => Math.abs(w) > 0.1)) items.push('real-ear shape');
+  if (items.length === 0) return 'We kept your sound close to the default — it already fit well.';
+  return 'We tuned: ' + items.join(', ') + '.';
+}
+
+/** Accuracy-improvement line from the pointing history (early-vs-recent mean error, degrees).
+ *  Pure; `errHistory` is angular error in radians. Empty → ''. */
+export function accuracyLine(errHistory: readonly number[]): string {
+  const deg = (r: number) => Math.round((r * 180) / Math.PI);
+  const avgOf = (xs: readonly number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : 0);
+  if (errHistory.length >= 6) {
+    const half = Math.floor(errHistory.length / 2);
+    const early = avgOf(errHistory.slice(0, half));
+    const recent = avgOf(errHistory.slice(half));
+    if (recent < early - 0.04) return `Your aim improved from about ${deg(early)}° to about ${deg(recent)}° off.`;
+    return `Your aim held steady at about ${deg(recent)}° off.`;
+  }
+  if (errHistory.length > 0) return `Your recent aim was about ${deg(avgOf(errHistory))}° off.`;
+  return '';
 }
 
 /** Build a candidate set of personalization params: base overlaid with one override.
@@ -102,6 +191,11 @@ function withPcaWeight(base: HrtfPersonalization, k: number, value: number, kCou
   while (w.length < kCount) w.push(0);
   w[k] = value;
   return { ...base, pcaWeights: w };
+}
+
+/** Base overlaid with one BIAS override (frontBack / upDown), for probing a bias candidate. */
+function withBias(base: HrtfPersonalization, which: 'frontBack' | 'upDown', value: number): HrtfPersonalization {
+  return which === 'frontBack' ? { ...base, frontBackBias: value } : { ...base, upDownBias: value };
 }
 
 export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => void {
@@ -249,20 +343,33 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     const durMs = ex.durationSec * 1000;
     const startPerf = performanceNow();
     return new Promise((resolve) => {
+      let settled = false;
+      const finishSweep = () => {
+        if (settled) return;
+        settled = true;
+        cancelAnimationFrame(rafHandle);
+        setGate(false);
+        const id = setTimeout(resolve, 120); // let the fade-out finish
+        seqTimers.push(id);
+      };
+      // GUARANTEED completion off a wall-clock timer: requestAnimationFrame is throttled
+      // to ~0 fps (or paused entirely) when the tab is hidden, on reduced-motion, and on
+      // some mobile browsers. If the sweep's end depended on rAF alone, a paused rAF would
+      // deadlock the whole "version 1 … version 2 … choose" sequence at the first pass —
+      // exactly the "stuck at one beep" hang. So the timer owns resolution; rAF only
+      // animates the source position and never gates progress.
+      const endId = setTimeout(finishSweep, durMs);
+      seqTimers.push(endId);
       const step = () => {
-        if (disposed) return resolve();
+        if (disposed) { settled = true; cancelAnimationFrame(rafHandle); return resolve(); }
+        if (settled) return;
         const elapsed = performanceNow() - startPerf;
         const raw = Math.min(1, elapsed / durMs); // ONE pass, no loop
         const t = sweepReversed ? 1 - raw : raw; // vary the motion direction per trial
         const [x, y, z] = ex.trajectory(t);
         srcA?.setPosition(x, y, z);
         srcB?.setPosition(x, y, z);
-        if (t >= 1) {
-          setGate(false);
-          const id = setTimeout(resolve, 120); // let the fade-out finish
-          seqTimers.push(id);
-          return;
-        }
+        if (raw >= 1) return finishSweep();
         rafHandle = requestAnimationFrame(step);
       };
       rafHandle = requestAnimationFrame(step);
@@ -468,6 +575,8 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   /** Whether the free-play panel is showing the 5 real-ear (PCA) sliders. */
   let fpShowPca = false;
   let fpPcaK = 0;
+  /** Per-PC human-readable names for the manual knobs (from the model; generic fallback). */
+  let fpPcaNames: string[] = [];
   const fpParams: HrtfPersonalization = { ...params };
 
   function teardownFreePlay() {
@@ -530,11 +639,18 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     fpRenderer?.setPersonalization({ ...fpParams });
   }
 
+  /** One orbit ("Circle around me") takes this long; the spiral reuses this angular
+   *  speed so it rotates at exactly the same rate. */
+  const ORBIT_PERIOD_MS = 6000;
+  /** Spiral: rotations per HALF height-cycle (one up OR one down). A full up-and-down
+   *  is 2× this many turns (~3.58) — a slow, calm helix rather than a fast bob. */
+  const SPIRAL_ROT_PER_HALF_CYCLE = 1.79;
+
   /** The motions the user can CHOOSE between while tuning by hand. `there`/`back`
    *  makes a pass ping-pong so it loops smoothly (out then back) instead of jumping. */
   const FP_MOTIONS: ReadonlyArray<{ id: string; label: string; period: number; path: (t: number) => readonly [number, number, number] }> = [
     {
-      id: 'orbit', label: 'Circle around me', period: 6000,
+      id: 'orbit', label: 'Circle around me', period: ORBIT_PERIOD_MS,
       path: (t) => { const a = t * 2 * Math.PI; return [Math.sin(a) * 2, 1.6, -Math.cos(a) * 2]; },
     },
     {
@@ -550,26 +666,37 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       path: (t) => { const tri = t < 0.5 ? t * 2 : 2 - t * 2; return [0, 1.6 + Math.sin(tri * Math.PI) * 1.5, -2 + tri * 4]; },
     },
     {
-      // The user's calibration idea: a HELIX at 1 m — the source circles you once per
-      // ~5 s while simultaneously riding a sine up and down between −60° and +60°
-      // elevation. Because it sweeps every azimuth AND the full vertical arc at once,
-      // it exercises the entire directional response continuously; if your notch is
-      // right you should feel it spiralling up-and-over then down-and-behind, tracing
-      // the visualizer dot. Two vertical cycles per orbit so up/down is felt on every
-      // side, not just front.
-      id: 'spiral', label: 'Spiral up & down (calibration)', period: 5000,
+      // A clean HELIX at 1 m: the source rotates around you at the SAME angular speed as
+      // "Circle around me" (one turn per 6 s) while SLOWLY riding a sine up and down
+      // between −60° and +60°. The vertical is deliberately slow relative to the spin —
+      // one full up-and-down over SPIRAL_ROT_PER_HALF_CYCLE (1.79) rotations, so a
+      // complete height cycle takes double that (~3.58) turns. This traces a calm spiral
+      // (up-and-over, then down-and-behind) instead of the old chaotic 2-cycles-per-orbit
+      // bob; slow height change lets the ear track front/back and up/down separately.
+      id: 'spiral', label: 'Spiral up & down (calibration)',
+      period: ORBIT_PERIOD_MS * 2 * SPIRAL_ROT_PER_HALF_CYCLE,
       path: (t) => {
-        const az = t * 2 * Math.PI; // one full circle
-        const elevDeg = 60 * Math.sin(t * 2 * Math.PI * 2); // ±60°, two cycles/orbit
+        const az = t * 2 * Math.PI * (2 * SPIRAL_ROT_PER_HALF_CYCLE); // 3.58 turns per loop
+        const elevDeg = 60 * Math.sin(t * 2 * Math.PI); // ±60°, exactly one height cycle/loop
         return spherical1m(az, elevDeg);
       },
     },
   ];
   let fpMotionId = 'orbit';
+  /** "Fixed point" mode: user places the source with the direction picker instead of
+   *  it moving along a preset path. Held still (plus a small wiggle) so they can judge
+   *  a single, self-chosen position rather than tracking motion. */
+  const FP_FIXED_ID = 'fixed';
+  let fpFixedDir: Direction = { az: 0, el: 0 };
+  /** Radius of the tiny orbit around the manually-placed point, in spherical degrees —
+   *  keeps the probe from reading as a dead, locked-in-place drone. */
+  const FP_FIXED_WIGGLE_DEG = 4;
+  const FP_FIXED_WIGGLE_HZ = 1.2;
 
   /** Loop the currently-selected free-play motion around the head. */
   function fpStartLoop() {
     cancelAnimationFrame(fpRaf);
+    if (fpMotionId === FP_FIXED_ID) { fpStartFixedWiggle(); return; }
     const motion = FP_MOTIONS.find((m) => m.id === fpMotionId) ?? FP_MOTIONS[0];
     const startPerf = performanceNow();
     const step = () => {
@@ -580,6 +707,38 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       // Feed the diagram the SAME position the audio uses (listener at origin, so the
       // source-relative offset is just the path point minus the head at y=1.6).
       fpViz?.set(x, y, z);
+      fpRaf = requestAnimationFrame(step);
+    };
+    fpRaf = requestAnimationFrame(step);
+  }
+
+  /** Orbit the probe in a tiny circle (radius FP_FIXED_WIGGLE_DEG) around fpFixedDir, in
+   *  the plane tangent to the sphere there — same construction as the localization
+   *  wiggle, just parameterized separately since this one's meant to be judged, not
+   *  merely kept alive. Re-centres live as the user drags the picker. */
+  function fpStartFixedWiggle() {
+    const rad = (FP_FIXED_WIGGLE_DEG * Math.PI) / 180;
+    const startPerf = performanceNow();
+    const step = () => {
+      if (disposed || !fpSrc) return;
+      const c = dirToVec(fpFixedDir);
+      let upx = 0, upy = 1, upz = 0;
+      const dotUp = c[0] * upx + c[1] * upy + c[2] * upz;
+      upx -= dotUp * c[0]; upy -= dotUp * c[1]; upz -= dotUp * c[2];
+      let ulen = Math.hypot(upx, upy, upz);
+      if (ulen < 1e-3) { upx = 1; upy = 0; upz = 0; ulen = 1; } // c ≈ straight up/down
+      upx /= ulen; upy /= ulen; upz /= ulen;
+      const rx = c[1] * upz - c[2] * upy;
+      const ry = c[2] * upx - c[0] * upz;
+      const rz = c[0] * upy - c[1] * upx;
+      const th = ((performanceNow() - startPerf) / 1000) * FP_FIXED_WIGGLE_HZ * 2 * Math.PI;
+      const ca = Math.cos(rad), sa = Math.sin(rad);
+      const ox = Math.cos(th), oy = Math.sin(th);
+      const vx = ca * c[0] + sa * (ox * rx + oy * upx);
+      const vy = ca * c[1] + sa * (ox * ry + oy * upy);
+      const vz = ca * c[2] + sa * (ox * rz + oy * upz);
+      fpSrc.setPosition(vx, 1.6 + vy, vz);
+      fpViz?.set(vx, vy, vz);
       fpRaf = requestAnimationFrame(step);
     };
     fpRaf = requestAnimationFrame(step);
@@ -596,7 +755,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   function slider(
     label: string,
     // Only the SCALAR knobs are sliders (pcaWeights is a vector, tuned via A/B).
-    param: 'itdScale' | 'elevTilt' | 'frontBackTilt' | 'notchHz' | 'notchDepth',
+    param: 'itdScale' | 'elevTilt' | 'frontBackTilt' | 'notchHz' | 'notchDepth' | 'frontBackBias' | 'upDownBias',
     min: number,
     max: number,
     stepSize: number,
@@ -611,13 +770,15 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     input.min = String(min);
     input.max = String(max);
     input.step = String(stepSize);
-    input.value = String(fpParams[param]);
+    input.value = String(fpParams[param] ?? 0);
+    const isBias = param === 'frontBackBias' || param === 'upDownBias';
     const fmt = () => {
       name.textContent = label;
-      const v = fpParams[param];
+      const v = fpParams[param] ?? 0;
       readout.textContent =
         param === 'itdScale' ? `${v.toFixed(2)}×`
         : param === 'notchHz' ? `${(v / 1000).toFixed(1)} kHz`
+        : isBias ? `${v > 0 ? '+' : ''}${v.toFixed(2)}`
         : `${v > 0 ? '+' : ''}${v.toFixed(0)}`;
     };
     fmt();
@@ -644,7 +805,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     const cur = () => fpParams.pcaWeights?.[k] ?? 0;
     input.value = String(cur());
     const fmt = () => {
-      name.textContent = `Real-ear shape ${k + 1}`;
+      name.textContent = fpPcaNames[k] ?? `Real-ear shape ${k + 1}`;
       const v = cur();
       readout.textContent = `${v > 0 ? '+' : ''}${v.toFixed(1)}`;
     };
@@ -718,10 +879,26 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     // Motion picker — CHOOSE which path plays while you tune.
     const motions = document.createElement('div');
     motions.className = 'hrtf-motions';
+    // Placed BELOW the motion buttons; only shown while "I place it" is selected.
+    const fixedPickerWrap = document.createElement('div');
+    fixedPickerWrap.className = 'hrtf-fixed-picker';
+    fixedPickerWrap.hidden = true;
+    let fixedPicker: DirectionPicker | null = null;
+    const mountFixedPicker = () => {
+      fixedPicker?.dispose();
+      fixedPicker = mountDirectionPicker(fixedPickerWrap, {
+        onCommit: () => { /* live-driven; commit button unused here but harmless */ },
+        onChange: (d) => { fpFixedDir = d; },
+        say: deps.say,
+      });
+      fixedPickerWrap.innerHTML = '';
+      fixedPickerWrap.append(fixedPicker.el);
+    };
     const syncMotionButtons = () => {
       for (const b of Array.from(motions.querySelectorAll('button'))) {
         b.setAttribute('aria-pressed', String((b as HTMLButtonElement).dataset.motion === fpMotionId));
       }
+      fixedPickerWrap.hidden = fpMotionId !== FP_FIXED_ID;
     };
     for (const m of FP_MOTIONS) {
       const b = document.createElement('button');
@@ -737,6 +914,22 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       });
       motions.append(b);
     }
+    // "I place it" — hold the source at a manually-chosen point (small wiggle so it
+    // still reads as a live source) instead of an animated path, for judging a single
+    // fixed direction rather than tracking motion.
+    const fixedBtn = document.createElement('button');
+    fixedBtn.type = 'button';
+    fixedBtn.className = 'secondary hrtf-motion-btn';
+    fixedBtn.textContent = 'I place it (fixed point)';
+    fixedBtn.dataset.motion = FP_FIXED_ID;
+    fixedBtn.addEventListener('click', () => {
+      fpMotionId = FP_FIXED_ID;
+      syncMotionButtons();
+      if (!fixedPicker) mountFixedPicker();
+      fpStartLoop();
+      deps.say('Placing the sound yourself. Use the compass and height arc to set where it plays.');
+    });
+    motions.append(fixedBtn);
     syncMotionButtons();
 
     const knobs = document.createElement('div');
@@ -748,8 +941,12 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     knobs.append(
       slider('Front vs behind — start here', 'frontBackTilt', -18, 18, 1),
       slider('Left / right spread (out-of-head)', 'itdScale', 0.5, 2.0, 0.02),
-      slider('UP / DOWN — pinna notch frequency', 'notchHz', 4000, 11000, 100),
+      slider('UP / DOWN — pinna notch frequency', 'notchHz', 4000, 11500, 100),
       slider('Up / down notch strength', 'notchDepth', 0, 24, 1),
+      // Perceptual BIAS knobs — nudge ALL directions toward front/back (resp. up/down)
+      // coloring, to correct a personal reversal ("everything sounds behind me").
+      slider('Push sound forward / back', 'frontBackBias', -1, 1, 0.05),
+      slider('Push sound up / down', 'upDownBias', -1, 1, 0.05),
     );
 
     // Rebuild the real-ear (PCA) sliders into the panel; loads the model on first show.
@@ -769,6 +966,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
         const model = await loadPcaModel();
         if (!model) { deps.alert('The real-ear model is unavailable in this build.'); return; }
         fpPcaK = model.k;
+        fpPcaNames = model.pcs.map((pc) => pc.name);
         fpShowPca = true;
         pcaToggle.textContent = 'Hide real-ear shape sliders';
         renderPcaKnobs();
@@ -809,7 +1007,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     nextRow.append(nextLabel, toLocalize, toGuided, toPca);
     const back = bigButton('Back', () => { teardownFreePlay(); backToIntro(); });
 
-    controls.append(vizWrap, bases, motions, knobs, pcaToggle, save, nextRow, back);
+    controls.append(vizWrap, bases, motions, fixedPickerWrap, knobs, pcaToggle, save, nextRow, back);
     void fpBuild();
     (knobs.querySelector('input') as HTMLElement | null)?.focus();
   }
@@ -840,22 +1038,76 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   let locShowAnswers = false;
   /** The answer diagram for the current reveal, cleared before the next round. */
   let locAnswerDiag: { dispose: () => void } | null = null;
-  let locExIdx = 0;
-  let locTrial: StaircaseTrial | null = null;
-  let locAttempts: Attempt[] = [];
-  let locWhich: 'a' | 'b' = 'a';
   let locTarget: Direction | null = null;
-  const locStaircases = new Map<ExerciseParam, Staircase>();
-  const ATTEMPTS_PER_CANDIDATE = 2;
-  /** Localization runs a BASE-HEAD A/B first (SADIE vs CIPIC — the base is the biggest
-   *  variable, bigger than the fine params), keeps whichever the user localizes better,
-   *  then tunes parameters on the winner. 'base' phase → 'params' phase. */
-  let locPhase: 'base' | 'params' = 'base';
-  const ATTEMPTS_PER_BASE = 3;
+
+  // ===================== BASIN-TRACKING SESSION (serializable) =====================
+  // The localization loop is INTERLEAVED COORDINATE DESCENT over a pool of FACTORS: the
+  // base-head comparison, each parameter, and each PCA weight. Every round we pick the next
+  // not-yet-converged factor round-robin (order shuffled per pass, mix32-seeded → varied but
+  // deterministic) and do ONE basin probe for it with a direction targeted to that factor.
+  // Consecutive trials therefore vary factor AND head — the head comparison is SPARSED among
+  // the rest instead of front-loaded, and it feels like tuning everything at once. Each trial
+  // still scores exactly ONE factor's basin (attribution stays clean — coordinate descent,
+  // not multi-knob-per-trial). Passes repeat until every factor's basin has converged, or the
+  // global question cap. (BASIN class + tallies live in hrtfLocalize; Staircase stays for the
+  // guided game.)
+  //
+  // locSession is PLAIN JSON-serializable (resume saves/reloads it verbatim): the factor pool,
+  // per-factor basin + converged flag + chosen value, the current pass's shuffled order, and
+  // the round-robin cursor. No class instances inside.
+  type LocFactor =
+    | { kind: 'base' }
+    | { kind: 'param'; param: ExerciseParam }
+    | { kind: 'pca'; pc: number }
+    | { kind: 'bias'; which: 'frontBack' | 'upDown' };
+  interface LocFactorState {
+    factor: LocFactor;
+    basin: BasinState;
+    /** true once this factor's basin reached 'done' — skipped in later passes. */
+    converged: boolean;
+    /** the committed value once converged (head index / param value / pca weight). */
+    chosen: number;
+  }
+  interface LocSession {
+    /** Ordered factor pool (index-stable across save/reload). */
+    factors: LocFactorState[];
+    /** This pass's visiting order (indices into `factors`), shuffled per pass. */
+    order: number[];
+    /** Cursor into `order` — which factor the NEXT round probes. */
+    cursor: number;
+    /** Pass counter (0-based); reshuffles `order` each new pass. */
+    pass: number;
+    /** Total probes answered (progress + cap). */
+    answered: number;
+    /** 'pca' when this is the standalone Refine-to-real-ears session (PCA factors only,
+     *  no base/params); 'full' for the main point-to-sound loop. */
+    mode: 'full' | 'pca';
+    done: boolean;
+  }
+  let locSession: LocSession = freshLocSession();
+  function freshLocSession(): LocSession {
+    return { factors: [], order: [], cursor: 0, pass: 0, answered: 0, mode: 'full', done: false };
+  }
+  /** Tuning basin config: a few buckets across each range, confirm the winner vs noise. */
+  const BASIN_CFG: BasinConfig = { minPerBucket: 1, shortlistSize: 3, confirmCap: 8 };
+  const BASIN_CFG_DISCRETE: BasinConfig = { minPerBucket: 2, shortlistSize: 3, confirmCap: 8, discrete: true };
+  const PARAM_BUCKETS = 6; // buckets across a parameter's [min,max] range
+  const PCA_BUCKETS = 6;   // buckets across a PC weight's [−bound, +bound] range
+  /** Global cap on total probes across the whole interleaved loop (safety stop). */
+  const LOC_QUESTION_CAP = 60;
+  /** The value the CURRENT probe is auditioning (recorded into the active basin on answer). */
+  let locProbeValue = 0;
+  /** The factor index the CURRENT probe belongs to (set each round, used on answer). */
+  let locActiveFactor = -1;
+  /** Which head index the base comparison is currently probing (for the balanced-direction
+   *  seed, so each head's k-th probe is the same direction). */
+  let locBaseIdx = 0;
   /** Per-trial control area (picker + replay + progress), cleared between trials so the
    *  visualizer persists but Begin/Back don't linger. */
   let locTrialArea: HTMLElement | null = null;
   let locProgressEl: HTMLElement | null = null;
+  /** The "space shrinking" bracket bar (per-parameter search-range remaining). */
+  let locBracketEl: HTMLElement | null = null;
   /** Progress bookkeeping so the test never feels endless: how many pointings the user
    *  has done, a rough estimate of the total, and their recent error (for "getting
    *  better"). The estimate = attempts-per-candidate × 2 candidates × exercises, which is
@@ -879,7 +1131,7 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locViz?.dispose();
     locPicker?.dispose();
     locSrc = null; locGain = null; locRenderer = null; locViz = null; locPicker = null;
-    locTrialArea = null; locProgressEl = null;
+    locTrialArea = null; locProgressEl = null; locBracketEl = null;
     locBuiltForUrl = null;
   }
 
@@ -909,27 +1161,36 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locBuiltForUrl = baseUrl();
   }
 
-  function locStaircaseFor(ex: Exercise): Staircase {
-    let sc = locStaircases.get(ex.param);
-    if (!sc) {
-      sc = new Staircase({ ...STAIRCASE_CONFIG[ex.param], start: params[ex.param] });
-      locStaircases.set(ex.param, sc);
-    }
-    return sc;
-  }
-
   /** Play the current candidate's probe at a fresh random direction, hide the true
    *  dot, and show the picker + replay + progress for the user's answer. */
   async function locPlayAndAsk() {
     if (disposed) return;
-    // Seed the target direction. In the BASE phase both bases MUST be judged on the SAME
-    // directions to be a fair comparison (previously each base drew different random
-    // targets → the "winner" was just whoever got easier directions). So seed by the
-    // per-base attempt COUNT, so SADIE's k-th probe and CIPIC's k-th probe match.
-    const seed = locPhase === 'base'
-      ? 9000 + locAttempts.filter((a) => a.which === locWhich).length
-      : locExIdx * 101 + locAttempts.length * 7 + 1;
-    locTarget = makeTestDirections(1, seed)[0];
+    // TARGETED direction sampling: draw the probe from the region DIAGNOSTIC for the ACTIVE
+    // factor (see hrtfLocalize.SampleKind), instead of uniform-over-sphere.
+    //  • base head → 'balanced' (judged across the whole sphere), seeded so each head's k-th
+    //    probe is the SAME direction (fair comparison): 9000 + that head's count.
+    //  • PCA weight → 'elevation' (the pinna/ear-shape cue shows up off the horizontal;
+    //    front/back contrast PCs also want off-median directions).
+    //  • param → the param's sampleKind (front/back, elevation, or lateral).
+    const fs = locSession.factors[locActiveFactor];
+    const f = fs?.factor;
+    if (f?.kind === 'base') {
+      locTarget = makeTargetedDirection('balanced', 9000 + fs.basin.counts[locBaseIdx]);
+    } else if (f?.kind === 'pca') {
+      const n = fs.basin.counts.reduce((s, c) => s + c, 0);
+      locTarget = makeTargetedDirection('elevation', 7000 + f.pc * 101 + n * 7);
+    } else if (f?.kind === 'param') {
+      const n = fs.basin.counts.reduce((s, c) => s + c, 0);
+      locTarget = makeTargetedDirection(PARAM_SAMPLE_KIND[f.param], locActiveFactor * 101 + n * 7 + 1);
+    } else if (f?.kind === 'bias') {
+      // frontBack bias → front/back-ambiguous directions (measures reversal); upDown → elevated.
+      const n = fs.basin.counts.reduce((s, c) => s + c, 0);
+      const kind = f.which === 'frontBack' ? 'frontback' : 'elevation';
+      locTarget = makeTargetedDirection(kind, 6000 + locActiveFactor * 101 + n * 7);
+    } else {
+      locTarget = makeTargetedDirection('balanced', 9000 + locSession.answered);
+    }
+    persistResume();             // snapshot the advanced session so we can resume after a reload
     ensurePickerMounted();       // build the compass/arc ONCE, reuse across probes
     locResetForNextProbe();      // reset aim + progress in place — no teardown/navigation
     await locSoundTarget();
@@ -952,13 +1213,19 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     const target = locTarget; // snapshot so a later locTarget change can't hijack this play
     locViz?.showSource(false);
     locViz?.setGuess(null);
-    await playBeeps(ctx, dest, locWhich === 'a' ? 1 : 2);
+    await playBeeps(ctx, dest, 1); // single marker: each probe auditions ONE candidate value
     if (disposed || gen !== locPlayGen) return; // superseded by a newer play → abort
+    // Place the source at the target IMMEDIATELY, BEFORE the gain ramps up — otherwise the
+    // first audible frame plays at the PREVIOUS probe's position (the "wrong location, then
+    // jumps to the right one" bug), because startWiggle's first setPosition is a rAF later.
+    const [cx0, cy0, cz0] = dirToPosition(target, 1, 1.6);
+    locSrc?.setPosition(cx0, cy0, cz0);
     // Play a ~1.8 s burst that WIGGLES in a tiny (~2°) circle around the target — small
     // motion breaks front/back confusion and aids externalization, while the perceived
     // location stays the circle's centre (what you point at).
     if (locGain) { const t = ctx.currentTime; locGain.gain.setValueAtTime(0.0001, t); locGain.gain.exponentialRampToValueAtTime(LOCALIZE_LEVEL, t + 0.03); }
     startWiggle(target);
+    locPicker?.setEnabled(true); // probe is placed + playing → answering is now valid
     const stop = setTimeout(() => {
       if (gen !== locPlayGen) return;
       stopWiggle();
@@ -1015,6 +1282,11 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locProgressEl = document.createElement('p');
     locProgressEl.className = 'hrtf-loc-progress';
     locTrialArea.append(locProgressEl);
+    // "Space shrinking" feedback: a small labelled bar showing how much of the current
+    // parameter's search range is left. Shrinks toward empty as the staircase homes in.
+    locBracketEl = document.createElement('p');
+    locBracketEl.className = 'hrtf-loc-progress hrtf-loc-bracket';
+    locTrialArea.append(locBracketEl);
 
     // "Play again" sits on the SAME row as the confirm button (via extraAction).
     const replay = bigButton('▶ Play the sound again', () => { void locSoundTarget(); });
@@ -1035,9 +1307,44 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locAnswerDiag?.dispose(); locAnswerDiag = null; // drop any prior reveal overlay
     locViz?.showSource(false);                       // hide the truth while pointing
     locPicker?.reset();                              // aim back to front / ear level
+    locPicker?.setEnabled(false);                    // off until the probe is placed + playing
     if (locProgressEl) locProgressEl.textContent = locProgressText();
+    updateBracketBar();
     p.textContent = 'Where did the sound come from? Set the compass + height, then confirm.';
     deps.say('Where did it come from? Set the direction and height, then confirm.');
+  }
+
+  /** Human label for a parameter, for the shrinking-space bar. */
+  const PARAM_LABEL: Record<ExerciseParam, string> = {
+    itdScale: 'Width', elevTilt: 'Up/down', frontBackTilt: 'Front/back', notchHz: 'Height',
+  };
+  /** A short human label for a factor (for the "this round" note). */
+  function factorLabel(f: LocFactor): string {
+    if (f.kind === 'base') return 'best-fit head';
+    if (f.kind === 'pca') return (pcaModelLoaded?.pcs[f.pc]?.name ?? `ear shape ${f.pc + 1}`).toLowerCase();
+    if (f.kind === 'bias') return f.which === 'frontBack' ? 'forward/back bias' : 'up/down bias';
+    return PARAM_LABEL[f.param].toLowerCase();
+  }
+  /** Render OVERALL tuning progress across the whole factor pool (we refine everything
+   *  together now, not one bar grinding to zero before the next appears), plus which factor
+   *  this round is touching. The bar fills as factors converge + partial basin progress. */
+  function updateBracketBar() {
+    if (!locBracketEl) return;
+    const CELLS = 8;
+    const factors = locSession.factors;
+    if (factors.length === 0) { locBracketEl.textContent = ''; return; }
+    // Overall progress = mean per-factor completion (1 − remaining fraction), converged = 1.
+    let sum = 0;
+    for (const fs of factors) {
+      sum += fs.converged ? 1 : (1 - basinRemainingFraction(fs.basin, factorCfg(fs.factor)));
+    }
+    const done = sum / factors.length; // 0..1 overall
+    const filled = Math.max(0, Math.min(CELLS, Math.round(done * CELLS)));
+    const bar = '▓'.repeat(filled) + '░'.repeat(CELLS - filled);
+    const nConv = factors.filter((f) => f.converged).length;
+    const active = factors[locActiveFactor]?.factor;
+    const thisRound = active ? ` — this round: ${factorLabel(active)}` : '';
+    locBracketEl.textContent = `Overall tuning: ${bar} (${nConv}/${factors.length} locked)${thisRound}`;
   }
 
   /** "Round N of about M" plus, once there's history, whether accuracy is improving.
@@ -1045,50 +1352,62 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
    *  "almost done" rather than a wrong "N of M". */
   function locProgressText(): string {
     const round = locAnswered + 1;
+    // Rounds are variable now (adaptive stop), so the total is an upper bound → "up to".
     let s = round > locEstTotal
       ? `Round ${round} — almost done.`
-      : `Round ${round} of about ${locEstTotal}.`;
+      : `Round ${round} of up to about ${locEstTotal}.`;
     if (locErrHistory.length >= 4) {
       const half = Math.floor(locErrHistory.length / 2);
       const early = avg(locErrHistory.slice(0, half));
       const recent = avg(locErrHistory.slice(half));
       const deg = (r: number) => Math.round((r * 180) / Math.PI);
-      if (recent < early - 0.08) s += ` You're getting more accurate (about ${deg(recent)}° off now).`;
+      // Frame improving aim as the search space closing in around the answer.
+      if (recent < early - 0.08) s += ` Your aim is tightening (about ${deg(recent)}° off now) — closing in.`;
       else s += ` Recent aim: about ${deg(recent)}° off.`;
     }
     return s;
   }
 
-  /** Route a committed pick to whichever stage is active (localization vs PCA). */
-  let pickTarget: 'loc' | 'pca' = 'loc';
+  /** Route a committed pick into the interleaved loop. */
   function onPickerCommit(guess: Direction) {
-    // Keep the picker mounted (persistent across probes); the next probe resets it.
-    if (pickTarget === 'pca') pcaOnPick(guess); else locOnPick(guess);
+    // Guard against a second commit while the next probe is still playing (double-tap /
+    // fast answers otherwise mis-record a probe against the wrong target). Re-enabled once
+    // the next probe is placed (in locSoundTarget). Picker stays mounted across probes.
+    locPicker?.setEnabled(false);
+    locOnPick(guess);
   }
 
   /** "It was inside my head" — an EXTERNALIZATION failure. We score it as a worst-case
    *  localization (a large fixed error) so the search moves AWAY from this candidate: an
    *  in-head sound is the worst possible outcome, not a neutral skip. Routed like a
-   *  normal answer so the staircase/PCA advances. π/2 (90°) ≈ "no usable direction". */
+   *  normal answer so the interleaved loop advances. π/2 (90°) ≈ "no usable direction". */
   const INHEAD_ERROR = Math.PI / 2;
   function onPickerInHead() {
     if (!locTarget) return;
-    locAttempts.push({ which: locWhich, error: INHEAD_ERROR });
-    locAnswered++;
+    recordProbe(INHEAD_ERROR);
+    locAnswered++; locSession.answered++;
     locErrHistory.push(INHEAD_ERROR);
     deps.say('Inside your head — we’ll steer away from that setting.');
     p.textContent = 'Inside your head — noted. Next…';
-    const id = setTimeout(() => (pickTarget === 'pca' ? pcaNextAttempt() : locNextAttempt()), 1000);
+    const id = setTimeout(() => locNextAttempt(), 1000);
     seqTimers.push(id);
+  }
+
+  /** Record a probe's pointing error into the ACTIVE basin (the one whose value the current
+   *  probe auditioned). Which basin depends on the stage; locProbeValue is the value probed. */
+  function recordProbe(err: number) {
+    const fs = locSession.factors[locActiveFactor];
+    if (!fs) return;
+    basinRecord(fs.basin, locProbeValue, err, fs.factor.kind === 'base');
   }
 
   /** The user committed a direction (compass + height): score it, advance the trial. */
   function locOnPick(guess: Direction) {
     if (!locTarget) return;
     const err = angularError(locTarget, guess);
-    logAnswer('loc', guess, err);
-    locAttempts.push({ which: locWhich, error: err });
-    locAnswered++;
+    logAnswer(guess, err);
+    recordProbe(err);
+    locAnswered++; locSession.answered++;
     locErrHistory.push(err);
     const delay = locRevealResult(guess, err);
     const id = setTimeout(() => locNextAttempt(), delay);
@@ -1098,18 +1417,18 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   /** DEBUG: console-log one answer so calibration behaviour can be analysed offline —
    *  true vs guessed direction, the SIGNED per-axis errors (which axis is failing?), the
    *  candidate under test + its param value, and the current full warp. */
-  function logAnswer(stage: 'loc' | 'pca', guess: Direction, err: number) {
-    if (!locTarget) return;
+  function logAnswer(guess: Direction, err: number) {
+    if (!locTarget || !calDebugEnabled()) return;
     const deg = (r: number) => Math.round((r * 180) / Math.PI);
     const comp = decomposeError(locTarget, guess);
-    const ex = EXERCISES[locExIdx];
-    const phase = stage === 'pca' ? 'pca' : locPhase; // 'base' | 'params' | 'pca'
-    const paramInfo = stage === 'pca'
-      ? { pc: pcaIdx, weights: params.pcaWeights }
-      : phase === 'base'
-        ? { testingBase: locWhich === 'a' ? BASE_A.id : BASE_B.id }
-        : { param: ex?.param, value: ex ? params[ex.param] : undefined };
-    console.log(`[hrtf-cal] ${phase} #${locAnswered + 1} cand=${locWhich}`, {
+    const f = locSession.factors[locActiveFactor]?.factor;
+    const phase = f ? f.kind : '?';
+    const paramInfo = !f ? {}
+      : f.kind === 'pca' ? { pc: f.pc, probeWeight: locProbeValue, weights: params.pcaWeights }
+      : f.kind === 'base' ? { testingBase: currentBase.id }
+      : f.kind === 'bias' ? { bias: f.which, probeValue: locProbeValue }
+      : { param: f.param, probeValue: locProbeValue };
+    console.log(`[hrtf-cal] ${phase} pass${locSession.pass} #${locAnswered + 1}`, {
       targetDeg: { az: deg(locTarget.az), el: deg(locTarget.el) },
       guessDeg: { az: deg(guess.az), el: deg(guess.el) },
       totalErrDeg: deg(err),
@@ -1144,92 +1463,229 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     return 2600;
   }
 
-  /** Which base each A/B candidate maps to in the BASE phase. */
-  const BASE_A = baseHrtfById('sadie_h3');
-  const BASE_B = baseHrtfById('cipic_124');
+  /** The heads screened in the base phase (all registered base heads). */
+  const BASE_HEADS = BASE_HRTFS;
 
-  /** Start (or restart) the base-head A/B: SADIE (a) vs CIPIC (b), a few probes each. */
-  async function locStartBasePhase() {
-    locPhase = 'base';
-    locAttempts = [];
-    locWhich = 'a';
-    currentBase = BASE_A;
-    await locEnsureRenderer({ ...params }); // rebuild on the current base
-    await locPlayAndAsk();
-  }
 
-  /** After a base-phase answer: alternate SADIE/CIPIC until each has enough probes, then
-   *  keep the base with the smaller mean error and move on to parameter tuning. */
-  async function locBaseNextAttempt() {
-    if (disposed) return;
-    const na = locAttempts.filter((a) => a.which === 'a').length;
-    const nb = locAttempts.filter((a) => a.which === 'b').length;
-    if (na >= ATTEMPTS_PER_BASE && nb >= ATTEMPTS_PER_BASE) {
-      const mean = (w: 'a' | 'b') => {
-        const es = locAttempts.filter((x) => x.which === w).map((x) => x.error);
-        return es.reduce((p, c) => p + c, 0) / (es.length || 1);
-      };
-      const winner = mean('b') < mean('a') ? BASE_B : BASE_A; // ties → SADIE (a)
-      currentBase = winner;
-      deps.saveBaseHrtf?.(winner.id);
-      console.log(`[hrtf-cal] BASE chosen: ${winner.id} (sadie meanErr ${Math.round(mean('a') * 180 / Math.PI)}°, cipic ${Math.round(mean('b') * 180 / Math.PI)}°)`);
-      deps.say(`Using ${winner.label}.`);
-      // Enter the parameter phase on the chosen base.
-      locPhase = 'params';
-      locExIdx = 0; locStaircases.clear();
-      return locAdvanceExercise();
+  /** The distinct parameters we tune (each an exercise param). */
+  const DISTINCT_PARAMS = [...new Set(EXERCISES.map((e) => e.param))] as ExerciseParam[];
+
+  /** Build the factor pool for a session. `mode`='full' → base head + params (+ PCA weights
+   *  when the model is loaded); 'pca' → PCA weights only (the standalone Refine screen). */
+  function buildFactorPool(mode: 'full' | 'pca'): LocFactorState[] {
+    const pool: LocFactorState[] = [];
+    const mk = (factor: LocFactor, basin: BasinState): LocFactorState => ({ factor, basin, converged: false, chosen: 0 });
+    if (mode === 'full') {
+      pool.push(mk({ kind: 'base' }, makeBasin(0, BASE_HEADS.length, BASE_HEADS.length)));
+      for (const param of DISTINCT_PARAMS) {
+        const cfg = STAIRCASE_CONFIG[param];
+        pool.push(mk({ kind: 'param', param }, makeBasin(cfg.min, cfg.max, PARAM_BUCKETS)));
+      }
+      // Perceptual BIAS factors — the objective loop finds each user's front/back + up/down
+      // reversal bias (∈[−1,+1]). One basin each over the bias range.
+      pool.push(mk({ kind: 'bias', which: 'frontBack' }, makeBasin(-1, 1, PARAM_BUCKETS)));
+      pool.push(mk({ kind: 'bias', which: 'upDown' }, makeBasin(-1, 1, PARAM_BUCKETS)));
     }
-    // Alternate to the base with fewer probes.
-    locWhich = na <= nb ? 'a' : 'b';
-    currentBase = locWhich === 'a' ? BASE_A : BASE_B;
-    await locEnsureRenderer({ ...params }); // neutral-ish params; rebuild on this base
-    await locPlayAndAsk();
-  }
-
-  /** Decide the next probe: alternate A/B until each has enough attempts, then judge. */
-  async function locNextAttempt() {
-    if (disposed) return;
-    if (locPhase === 'base') return locBaseNextAttempt();
-    const ex = EXERCISES[locExIdx];
-    const sc = locStaircaseFor(ex);
-    const verdict = decideWinner(locAttempts, ATTEMPTS_PER_CANDIDATE);
-    if (verdict && locTrial) {
-      sc.answer(verdict, locTrial);
-      params[ex.param] = sc.current;
-      return locAdvanceExercise();
+    // PCA weight factors (both modes include these when the model is available).
+    if (pcaModelLoaded) {
+      for (let k = 0; k < pcaModelLoaded.k; k++) {
+        const bound = pcaWeightBound(k);
+        pool.push(mk({ kind: 'pca', pc: k }, makeBasin(-bound, bound, PCA_BUCKETS)));
+      }
     }
-    // Not decided yet — play whichever candidate has fewer attempts next.
-    const na = locAttempts.filter((a) => a.which === 'a').length;
-    const nb = locAttempts.filter((a) => a.which === 'b').length;
-    locWhich = na <= nb ? 'a' : 'b';
-    const warp = withParam(params, ex.param, locWhich === 'a' ? locTrial!.a : locTrial!.b);
-    await locEnsureRenderer(warp);
-    await locPlayAndAsk();
+    return pool;
   }
 
-  /** Move to the next parameter (or finish) — sets up a fresh A/B trial. */
-  async function locAdvanceExercise() {
+  /** basin config for a factor (discrete for the base-head comparison, continuous else). */
+  function factorCfg(f: LocFactor): BasinConfig {
+    return f.kind === 'base' ? BASIN_CFG_DISCRETE : BASIN_CFG;
+  }
+
+  /** Start (or restart) the interleaved loop. Builds the pool + the first pass order. */
+  async function locStart(mode: 'full' | 'pca') {
+    deps.clearResume?.(); // starting over erases any prior in-progress snapshot
+    locSession = freshLocSession();
+    locSession.mode = mode;
+    locSession.factors = buildFactorPool(mode);
+    locSession.order = makePassOrder(0, locSession.factors.length);
+    locSession.cursor = 0;
+    await locDriveRound();
+  }
+
+  /** RESUME a saved in-progress session (validated by the caller/host). Restores the tuning
+   *  committed so far + the pool/cursor/pass, then continues from the next probe. Falls back
+   *  to a fresh start if the blob shape doesn't match the current factor pool. */
+  async function locResume(blob: LocResumeBlob): Promise<void> {
+    const s = blob.session as LocSession | undefined;
+    const fresh = buildFactorPool(blob.mode);
+    if (!s || !Array.isArray(s.factors) || s.factors.length !== fresh.length) {
+      return locStart(blob.mode); // shape changed → safest to restart
+    }
+    // Restore committed tuning + base head so the live renderer matches progress.
+    Object.assign(params, blob.params);
+    if (blob.base) { currentBase = baseHrtfById(blob.base); deps.saveBaseHrtf?.(currentBase.id); }
+    locSession = s;
+    locSession.mode = blob.mode;
+    locAnswered = blob.answered;
+    await locDriveRound();
+  }
+
+  /** Pick the next NOT-yet-converged factor round-robin (via the pure rrNext scheduler) and
+   *  do ONE probe for it. Consecutive rounds land on DIFFERENT factors → factor AND head
+   *  vary, and the base-head comparison is sparsed among the params. A factor whose basin
+   *  reaches 'done' converges and drops out (no trial spent). Stop when every factor has
+   *  converged OR the global question cap is hit. */
+  async function locDriveRound() {
     if (disposed) return;
-    // Advance past converged staircases.
-    while (locExIdx < EXERCISES.length) {
-      const ex = EXERCISES[locExIdx];
-      const sc = locStaircaseFor(ex);
-      if (sc.done) { params[ex.param] = sc.current; locExIdx++; continue; }
-      // Start a new trial for this parameter.
-      locTrial = sc.nextTrial();
-      locAttempts = [];
-      locWhich = 'a';
-      const warp = withParam(params, ex.param, locTrial.a);
-      await locEnsureRenderer(warp);
+    const S = locSession;
+    // Loop internally so a just-converged factor doesn't waste a trial — keep pulling the
+    // next factor until one yields an actual probe, or all converge / cap hit.
+    let guard = 0;
+    while (guard++ < S.factors.length * 6 + 8) {
+      if (S.answered >= LOC_QUESTION_CAP || S.factors.every((f) => f.converged)) return locFinish();
+      const rr = rrNext({ order: S.order, cursor: S.cursor, pass: S.pass }, S.factors.map((f) => f.converged));
+      S.order = rr.rr.order; S.cursor = rr.rr.cursor; S.pass = rr.rr.pass;
+      if (rr.index < 0) return locFinish();
+      const fs = S.factors[rr.index];
+      const step = basinNext(fs.basin, factorCfg(fs.factor));
+      if (step.done) {
+        fs.converged = true; fs.chosen = step.value;
+        commitFactor(fs);
+        continue; // find another factor — don't spend a trial on a just-converged one
+      }
+      // Set up + play the probe for this factor; the next round lands on a DIFFERENT factor.
+      locActiveFactor = rr.index;
+      locProbeValue = step.value;
+      await applyFactorProbe(fs.factor, step.value);
       await locPlayAndAsk();
       return;
     }
-    // All parameters done.
+    return locFinish();
+  }
+
+  /** Apply the current factor's candidate value to the renderer (base head / param / PCA /
+   *  bias) WITHOUT mutating the committed `params` (a probe is provisional). */
+  async function applyFactorProbe(f: LocFactor, value: number) {
+    if (f.kind === 'base') {
+      locBaseIdx = Math.round(value);
+      currentBase = BASE_HEADS[locBaseIdx];
+      await locEnsureRenderer({ ...params });
+    } else if (f.kind === 'param') {
+      await locEnsureRenderer(withParam(params, f.param, value));
+    } else if (f.kind === 'pca') {
+      await locEnsureRenderer(withPcaWeight(params, f.pc, value, pcaModelLoaded?.k ?? 0));
+    } else { // bias
+      await locEnsureRenderer(withBias(params, f.which, value));
+    }
+  }
+
+  /** Commit a converged factor's chosen value into `params` / the base head. */
+  function commitFactor(fs: LocFactorState) {
+    const f = fs.factor;
+    if (f.kind === 'base') {
+      currentBase = BASE_HEADS[Math.round(fs.chosen)];
+      deps.saveBaseHrtf?.(currentBase.id);
+      if (calDebugEnabled()) {
+        const b = fs.basin;
+        const summary = BASE_HEADS.map((h, i) => `${h.id} ${Math.round(basinMean(b, i) * 180 / Math.PI)}°×${b.counts[i]}`).join(', ');
+        console.log(`[hrtf-cal] BASE chosen: ${currentBase.id} — ${summary}`);
+      }
+      deps.say(`Using ${currentBase.label}.`);
+    } else if (f.kind === 'param') {
+      params[f.param] = fs.chosen;
+    } else if (f.kind === 'pca') {
+      const kk = pcaModelLoaded?.k ?? 0;
+      const w = (params.pcaWeights ?? new Array(kk).fill(0)).slice();
+      while (w.length < kk) w.push(0);
+      w[f.pc] = fs.chosen; params.pcaWeights = w;
+    } else { // bias
+      if (f.which === 'frontBack') params.frontBackBias = fs.chosen;
+      else params.upDownBias = fs.chosen;
+    }
+  }
+
+  /** All factors converged (or cap hit) → commit + save, then show the RESULTS screen. Does
+   *  NOT auto-advance: onDone() only fires when the user picks "Continue to volume setup". */
+  function locFinish() {
+    // Commit any factor that hit the cap without formally converging: use its best bucket.
+    for (const fs of locSession.factors) {
+      if (fs.converged) continue;
+      fs.chosen = bestBasinValue(fs);
+      fs.converged = true;
+      commitFactor(fs);
+    }
+    const mode = locSession.mode;
+    locSession.done = true;
+    deps.clearResume?.(); // in-progress snapshot is spent
     teardownLoc();
     deps.save(params);
-    deps.say('Localization calibration complete. Your 3D audio is tuned to how you actually hear.');
-    deps.alert('Calibration complete.');
-    deps.onDone();
+    // Always-recoverable auto-save as the reserved "Last calibration (best)".
+    deps.saveLastBest?.({ base: currentBase.id, params: { ...params } });
+    renderResults(mode);
+  }
+
+  /**
+   * RESULTS screen shown after a calibration/refinement finishes — replaces the old bare
+   * alert + auto-advance. Shows the chosen head, accuracy improvement, and what was tuned,
+   * then offers explicit choices (save-as-profile / continue-to-volume / redo / done-for-now).
+   * onDone() ONLY fires from "Continue to volume setup" — the user is never forced onward.
+   */
+  function renderResults(mode: 'full' | 'pca') {
+    controls.innerHTML = '';
+    root.classList.remove('hrtf-compact');
+    h.textContent = mode === 'pca' ? 'Refinement complete' : 'Calibration complete';
+
+    const headLine = mode === 'pca' ? '' : `Best-fit head: ${currentBase.label}. `;
+    const acc = accuracyLine(locErrHistory);
+    const summary = tunedSummary(params);
+    p.textContent = `${headLine}${acc ? acc + ' ' : ''}${summary} Your 3D audio is tuned to how you actually hear. Save it as a profile, continue to the volume check, redo it, or stop here.`;
+    // Announce results + options for eyes-free use.
+    deps.say(`Calibration complete. ${headLine}${acc} ${summary} You can save this as a profile, continue to volume setup, redo the calibration, or stop here.`);
+
+    const saveBtn = bigButton('Save as a profile…', () => {
+      const name = (typeof prompt !== 'undefined' ? prompt('Name this profile:', 'My tuning') : 'My tuning');
+      if (!name) return;
+      deps.saveProfile?.(name, { base: currentBase.id, params: { ...params } });
+      deps.say(`Saved “${name}”. Find it later in Settings, under Saved profiles.`);
+      deps.alert(`Saved profile “${name}”. You can reload it anytime from Settings → Saved profiles.`);
+    });
+    const continueBtn = bigButton('Continue to volume setup', () => { deps.onDone(); }, true);
+    const redoBtn = bigButton('Redo calibration', () => {
+      deps.say('Starting the calibration over.');
+      if (mode === 'pca') { void renderPca(); } else { renderLocalization(); }
+    });
+    const doneBtn = bigButton('Done for now', () => { teardownLoc(); backToIntro(); });
+
+    controls.append(continueBtn, saveBtn, redoBtn, doneBtn);
+    continueBtn.focus();
+  }
+
+  /** Persist the current in-progress session so calibration can be RESUMED after a reload /
+   *  navigating away. Called once per probe (session already advanced). Best-effort. */
+  function persistResume() {
+    if (!deps.saveResume) return;
+    deps.saveResume({
+      mode: locSession.mode,
+      session: locSession,
+      params: { ...params },
+      base: currentBase.id,
+      answered: locSession.answered,
+      estTotal: locEstTotal,
+    });
+  }
+
+  /** The value of a basin's lowest-mean-error bucket (for cap fallback). */
+  function bestBasinValue(fs: LocFactorState): number {
+    const b = fs.basin;
+    let best = 0, bm = Infinity;
+    for (let i = 0; i < b.nBuckets; i++) { const m = basinMean(b, i); if (m < bm) { bm = m; best = i; } }
+    return basinBucketValue(b, best, fs.factor.kind === 'base');
+  }
+
+  /** Advance the interleaved loop after a pointing was recorded. */
+  async function locNextAttempt() {
+    if (disposed) return;
+    return locDriveRound();
   }
 
   function renderLocalization() {
@@ -1254,17 +1710,46 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locTrialArea = document.createElement('div');
     locTrialArea.className = 'hrtf-loc-trial';
     controls.append(vizWrap, locTrialArea, showRow); // checkbox at the END
-    const begin = bigButton('Begin', () => {
-      startNoise(); pickTarget = 'loc';
-      locExIdx = 0; locStaircases.clear();
+    // Ensure the PCA model is loaded before starting/resuming (its weights are pool factors).
+    const armAndRun = async (run: () => Promise<void>) => {
+      startNoise();
       locAnswered = 0; locErrHistory.length = 0;
-      // Base A/B (2 bases × ATTEMPTS_PER_BASE) THEN the parameter rounds.
-      locEstTotal = 2 * ATTEMPTS_PER_BASE + LOC_DISTINCT_PARAMS * ROUNDS_PER_PARAM;
-      void locStartBasePhase();
-    }, true);
+      if (!pcaModelLoaded) { try { const { loadPcaModel } = await import('../engine/hrtf/hrtfPca'); pcaModelLoaded = await loadPcaModel(); } catch { /* no PCA */ } }
+      locEstTotal = estimateLocTotal('full');
+      await run();
+    };
+    const begin = bigButton('Begin', () => { void armAndRun(() => locStart('full')); }, true);
     const back = bigButton('Back', () => { teardownLoc(); backToIntro(); });
-    locTrialArea.append(begin, back);
-    begin.focus();
+
+    // Offer RESUME when a valid in-progress 'full' session was saved (host already
+    // signature-guarded it — a mismatch returns null). Consequence-obvious start-over.
+    const saved = deps.loadResume?.();
+    if (saved && saved.mode === 'full' && saved.answered > 0) {
+      const roundN = saved.answered + 1;
+      const est = saved.estTotal || estimateLocTotal('full');
+      p.textContent = `You have a calibration in progress — round ${roundN} of up to about ${est}. Resume where you left off, or start over (which erases that progress).`;
+      const resume = bigButton(`Resume (round ${roundN} of ~${est})`, () => { void armAndRun(() => locResume(saved)); }, true);
+      const over = bigButton('Start over (erase progress)', () => {
+        deps.say('Starting over — your in-progress calibration will be erased.');
+        void armAndRun(() => locStart('full'));
+      });
+      locTrialArea.append(resume, over, back);
+      resume.focus();
+    } else {
+      locTrialArea.append(begin, back);
+      begin.focus();
+    }
+  }
+
+  /** Upper-bound round estimate for progress text. Each factor ≈ its buckets × minPerBucket
+   *  (explore) + a short confirm tail; heads are one discrete factor. */
+  function estimateLocTotal(mode: 'full' | 'pca'): number {
+    const pcaCount = pcaModelLoaded?.k ?? 0;
+    const perParam = PARAM_BUCKETS * BASIN_CFG.minPerBucket + 3;
+    const perPca = PCA_BUCKETS * BASIN_CFG.minPerBucket + 3;
+    if (mode === 'pca') return pcaCount * perPca;
+    const base = BASE_HRTFS.length * BASIN_CFG_DISCRETE.minPerBucket + 3;
+    return Math.min(LOC_QUESTION_CAP, base + LOC_DISTINCT_PARAMS * perParam + pcaCount * perPca);
   }
 
   /** A persistent "Show me the answer" checkbox bound to locShowAnswers (default off). */
@@ -1280,16 +1765,13 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
   }
 
   // ------------------------------------------------------------------------
-  // PCA REFINEMENT — the principled endgame. After the parametric tuning, morph the
-  // magnitude response along the axes REAL human ears vary (the CIPIC PCA model), one
-  // principal component at a time, via the SAME objective "point to the sound" scoring:
-  // two candidate weights per PC, the one that localizes better wins. Weights stay in
-  // the real-ear range (±2.5 std-dev) so it only ever morphs between measured humans.
+  // PCA REFINEMENT (standalone "Refine to real ears" screen). Runs the SAME interleaved
+  // basin loop, but with a factor pool of PCA weights only (mode 'pca') — morphing the
+  // magnitude along the axes real human ears vary. In the MAIN "point to the sound" loop
+  // the PCA weights are already folded into the pool alongside the base head + params, so
+  // they get tuned interleaved with everything else; this screen is for refining them alone.
   // ------------------------------------------------------------------------
   let pcaModelLoaded: import('../engine/hrtf/hrtfPca').HrtfPcaModel | null = null;
-  let pcaK = 0;
-  let pcaIdx = 0;
-  const pcaStaircases = new Map<number, Staircase>();
 
   async function renderPca() {
     controls.innerHTML = '';
@@ -1305,7 +1787,6 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
       controls.append(bigButton('Back', () => backToIntro()));
       return;
     }
-    pcaK = pcaModelLoaded.k;
     p.textContent =
       'Same as before — a sound plays around you and you point to where you heard it. Now we morph your 3D audio along the ways real human ears differ, keeping whatever helps you locate sounds best. About a dozen quick rounds.';
     const vizWrap = document.createElement('div');
@@ -1316,85 +1797,21 @@ export function mountHrtfTuning(root: HTMLElement, deps: HrtfTuningDeps): () => 
     locTrialArea.className = 'hrtf-loc-trial';
     controls.append(vizWrap, locTrialArea, showRow); // checkbox at the END
     const begin = bigButton('Begin', () => {
-      startNoise(); pickTarget = 'pca'; locPhase = 'params'; // PCA has no base A/B
-      pcaIdx = 0; pcaStaircases.clear();
+      startNoise();
       locAnswered = 0; locErrHistory.length = 0;
-      locEstTotal = pcaK * ROUNDS_PER_PARAM; // one staircase per principal component
-      void pcaAdvance();
+      locEstTotal = estimateLocTotal('pca');
+      void locStart('pca'); // interleaved loop over PCA-weight factors only
     }, true);
     const back = bigButton('Back', () => { teardownLoc(); backToIntro(); });
     locTrialArea.append(begin, back);
     begin.focus();
   }
 
-  function pcaStaircaseFor(k: number): Staircase {
-    let sc = pcaStaircases.get(k);
-    if (!sc) {
-      const start = params.pcaWeights?.[k] ?? 0;
-      // Coarse→fine over the real-ear weight range (±2.5 std-dev).
-      sc = new Staircase({ start, step: 1.2, minStep: 0.3, min: -2.5, max: 2.5, reversals: 2 });
-      pcaStaircases.set(k, sc);
-    }
-    return sc;
-  }
-
-  async function pcaAdvance() {
-    if (disposed || !pcaModelLoaded) return;
-    while (pcaIdx < pcaK) {
-      const sc = pcaStaircaseFor(pcaIdx);
-      if (sc.done) {
-        const w = (params.pcaWeights ?? new Array(pcaK).fill(0)).slice();
-        while (w.length < pcaK) w.push(0);
-        w[pcaIdx] = sc.current; params.pcaWeights = w;
-        pcaIdx++; continue;
-      }
-      locTrial = sc.nextTrial();
-      locAttempts = [];
-      locWhich = 'a';
-      const warp = withPcaWeight(params, pcaIdx, locTrial.a, pcaK);
-      await locEnsureRenderer(warp);
-      await locPlayAndAsk();
-      return;
-    }
-    // All PCs done — commit + save.
-    teardownLoc();
-    deps.save(params);
-    deps.say('Refinement complete. Your 3D audio is tuned to how real ears vary.');
-    deps.alert('Refinement complete.');
-    deps.onDone();
-  }
-
-  /** Pointing handler for the PCA stage — scores like localization, but the winner
-   *  advances the PCA weight staircase (not a parametric one). */
-  function pcaOnPick(guess: Direction) {
-    if (!locTarget) return;
-    const err = angularError(locTarget, guess);
-    logAnswer('pca', guess, err);
-    locAttempts.push({ which: locWhich, error: err });
-    locAnswered++;
-    locErrHistory.push(err);
-    const delay = locRevealResult(guess, err); // same reveal/no-reveal gating as localization
-    const id = setTimeout(() => pcaNextAttempt(), delay);
-    seqTimers.push(id);
-  }
-
-  async function pcaNextAttempt() {
-    if (disposed || !locTrial) return;
-    const sc = pcaStaircaseFor(pcaIdx);
-    const verdict = decideWinner(locAttempts, ATTEMPTS_PER_CANDIDATE);
-    if (verdict) {
-      sc.answer(verdict, locTrial);
-      const w = (params.pcaWeights ?? new Array(pcaK).fill(0)).slice();
-      while (w.length < pcaK) w.push(0);
-      w[pcaIdx] = sc.current; params.pcaWeights = w;
-      return pcaAdvance();
-    }
-    const na = locAttempts.filter((a) => a.which === 'a').length;
-    const nb = locAttempts.filter((a) => a.which === 'b').length;
-    locWhich = na <= nb ? 'a' : 'b';
-    const warp = withPcaWeight(params, pcaIdx, locWhich === 'a' ? locTrial.a : locTrial.b, pcaK);
-    await locEnsureRenderer(warp);
-    await locPlayAndAsk();
+  /** Weight range for PC `k`'s basin. Magnitude PCs: ±2.5 std-dev (real-ear range). Front/
+   *  back contrast PCs push front & back OPPOSITE ways, so a given |weight| moves twice the
+   *  front-vs-back spread — a slightly wider ±3 lets the search reach a strong correction. */
+  function pcaWeightBound(k: number): number {
+    return pcaModelLoaded?.pcs[k]?.kind === PC_KIND_FRONTBACK ? 3 : 2.5;
   }
 
   /** Return to the chooser: via the router (its own URL) when routed, else in-page. */

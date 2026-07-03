@@ -55,6 +55,7 @@ describe('screenToUrl', () => {
     expect(screenToUrl({ screen: 'calibrate', calStep: 'knobs' })).toBe('/calibrate/tune/knobs');
     expect(screenToUrl({ screen: 'calibrate', calStep: 'guided' })).toBe('/calibrate/tune/guided');
     expect(screenToUrl({ screen: 'calibrate', calStep: 'pca' })).toBe('/calibrate/tune/pca');
+    expect(screenToUrl({ screen: 'calibrate', calStep: 'compcheck' })).toBe('/calibrate/compcheck');
     expect(screenToUrl({ screen: 'calibrate', calStep: 'loudness' })).toBe('/calibrate/loudness');
   });
 });
@@ -93,6 +94,7 @@ describe('urlToScreen', () => {
     expect(urlToScreen('/calibrate/tune/knobs')).toEqual({ screen: 'calibrate', calStep: 'knobs' });
     expect(urlToScreen('/calibrate/tune/guided')).toEqual({ screen: 'calibrate', calStep: 'guided' });
     expect(urlToScreen('/calibrate/tune/pca')).toEqual({ screen: 'calibrate', calStep: 'pca' });
+    expect(urlToScreen('/calibrate/compcheck')).toEqual({ screen: 'calibrate', calStep: 'compcheck' });
     expect(urlToScreen('/calibrate/loudness')).toEqual({ screen: 'calibrate', calStep: 'loudness' });
   });
   it('an unknown calibrate sub-step falls back to the intro (not landing)', () => {

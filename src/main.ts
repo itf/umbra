@@ -52,9 +52,17 @@ import { renderControlsSpeech } from './game/controls';
 import { mountCalibration } from './ui/calibration';
 import { mountTutorial } from './ui/tutorial';
 import { mountLoudnessEq } from './ui/loudnessEqUi';
-import { mountHrtfTuning, baseHrtfById } from './ui/hrtfTuning';
+import { mountHrtfTuning, baseHrtfById, BASE_HRTFS } from './ui/hrtfTuning';
 import { isNeutral as isNeutralPersonalization } from './engine/hrtf/personalize';
-import { encodeProfile as encodeHrtfProfile, decodeProfile as decodeHrtfProfile } from './ui/hrtfProfileCode';
+import {
+  encodeProfile as encodeHrtfProfile, decodeProfile as decodeHrtfProfile,
+  decodeSharedProfile, encodeSharedProfileUrl, decodeSharedProfileUrl,
+} from './ui/hrtfProfileCode';
+import {
+  HrtfProfiles, schemaSignature, signatureMatches, normalizeTuning,
+  HRTF_RESUME_KEY, HRTF_PROFILES_VERSION, type ProfileTuning, type PcaLayout,
+} from './ui/hrtfProfiles';
+import type { LocResumeBlob } from './ui/hrtfTuning';
 import {
   buildEqChain,
   buildBiquadChain,
@@ -98,6 +106,57 @@ const reactCueRow = document.getElementById('react-cue-row');
 
 const onboarding = new OnboardingStore();
 const settings = new SettingsStore();
+const profiles = new HrtfProfiles(settings);
+
+// PCA layout for the schema signature (k + kinds). Loaded lazily; null until known, so a
+// signature computed before the model loads simply omits the PCA part (and re-computes
+// compatible once loaded). Cached so the signature is cheap + synchronous after first load.
+let pcaLayout: PcaLayout | null = null;
+/** Resolves once the PCA layout has been loaded (or failed) — so signature-dependent
+ *  startup work (the shared-link importer) waits for the real signature instead of
+ *  racing the async load and computing a spurious no-PCA signature. */
+const pcaLayoutReady: Promise<void> = (async () => {
+  try {
+    const { loadPcaModel } = await import('./engine/hrtf/hrtfPca');
+    const m = await loadPcaModel();
+    if (m) pcaLayout = { k: m.k, kinds: m.pcs.map((pc) => pc.kind) };
+  } catch { /* no PCA model → signature omits PCA */ }
+})();
+
+/** Current schema signature (BASE_HRTFS ids + PCA layout). */
+function currentSignature(): string {
+  return schemaSignature(BASE_HRTFS.map((b) => b.id), pcaLayout);
+}
+
+/** Snapshot the live tuning (base + params + comp strength) into a ProfileTuning. */
+function liveTuning(): ProfileTuning {
+  return {
+    base: settings.hrtfBase(),
+    params: settings.hrtfPersonalization(),
+    compStrength: settings.overEarCompStrength(),
+  };
+}
+
+/** Apply a tuning LIVE: persist base + params + comp, then re-apply to the running graph so
+ *  it takes effect immediately (personalization applies on next renderer build; comp is a
+ *  live master-bus EQ). The single path both profile-apply and import go through. */
+function applyProfileTuning(t: ProfileTuning) {
+  const norm = normalizeTuning(t, DEFAULT_HRTF_BASE);
+  settings.setHrtfBase(norm.base);
+  settings.setHrtfPersonalization(norm.params);
+  settings.setOverEarCompStrength(norm.compStrength);
+  const g = getGraph();
+  if (g) applyOverEarComp(g); // live comp; the HRTF warp applies on the next level/renderer build
+}
+
+/** Which saved profile (if any) currently matches the live tuning, by exact base+params+comp. */
+function activeProfileId(): string | null {
+  const cur = JSON.stringify(normalizeTuning(liveTuning(), DEFAULT_HRTF_BASE));
+  for (const e of profiles.list()) {
+    if (JSON.stringify(normalizeTuning(e.tuning, DEFAULT_HRTF_BASE)) === cur) return e.id;
+  }
+  return null;
+}
 
 /**
  * Resolve the effective high-fidelity (Steam Audio) engine preference. A SAVED
@@ -606,9 +665,45 @@ function showCalibrate(step: CalStep) {
         const g = getGraph();
         if (g) applyOverEarComp(g);
       },
+      // OBJECTIVE comp A/B (over-ear only): decides comp ON/OFF by pointing error and
+      // persists just the strength; re-apply it live on the master bus.
+      loadHeadphoneType: () => settings.headphoneType(),
+      saveOverEarCompStrength: (strength) => {
+        settings.setOverEarCompStrength(strength);
+        const g = getGraph();
+        if (g) applyOverEarComp(g);
+      },
       hrtfUrl: HRTF_URL,
       navigate: (s) => navigate({ screen: 'calibrate', calStep: s }),
+      // RESUME: persist the in-progress session, signature-stamped; load only a matching one.
+      saveResume: (blob: LocResumeBlob) => {
+        settings.writeRaw(HRTF_RESUME_KEY, JSON.stringify({ version: HRTF_PROFILES_VERSION, sig: currentSignature(), blob }));
+      },
+      loadResume: () => {
+        const raw = settings.readRaw(HRTF_RESUME_KEY);
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw) as { version?: number; sig?: string; blob?: LocResumeBlob };
+          // Version/signature guard: a stale/incompatible in-progress snapshot is discarded.
+          if (parsed.version !== HRTF_PROFILES_VERSION || !signatureMatches(parsed.sig ?? '', currentSignature()) || !parsed.blob) {
+            settings.removeRaw(HRTF_RESUME_KEY);
+            return null;
+          }
+          return parsed.blob;
+        } catch { settings.removeRaw(HRTF_RESUME_KEY); return null; }
+      },
+      clearResume: () => settings.removeRaw(HRTF_RESUME_KEY),
+      // RESULTS screen (calibration/refinement finished): auto-save last-best + save-as-profile.
+      saveLastBest: (snap) => {
+        try { profiles.saveLastBest({ base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+        catch { /* non-fatal */ }
+      },
+      saveProfile: (name, snap) => {
+        try { profiles.save(name, { base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+        catch { /* non-fatal */ }
+      },
       onDone: () => {
+        // "Continue to volume setup" — advance (results screen already auto-saved last-best).
         const cont = afterOnboarding ?? (() => navigate({ screen: 'picker' }));
         afterOnboarding = null;
         disposeCalibration();
@@ -875,6 +970,28 @@ function navigate(state: ScreenState, opts: { replace?: boolean } = {}) {
 function navigateBack() {
   router.back({ screen: 'landing' });
 }
+// SHARED-PROFILE LINK: if the app was opened with a ?hp=<code> in the URL (hash or query),
+// import that shared tuning. Signature-guarded — refuse a mismatched build. Waits for the
+// PCA layout to load first so the signature is the REAL one (not a spurious no-PCA sig that
+// would falsely reject a compatible profile on cold boot).
+void (async () => {
+  let hp: ReturnType<typeof decodeSharedProfileUrl> = null;
+  try { hp = decodeSharedProfileUrl(location.href, DEFAULT_HRTF_BASE); } catch { return; }
+  if (!hp) return;
+  await pcaLayoutReady;
+  try {
+    if (hp.sig && !signatureMatches(hp.sig, currentSignature())) {
+      alert('This shared 3D-audio profile was made for a different version of the app and can’t be applied.');
+    } else {
+      applyProfileTuning({ base: hp.base, params: hp.params, compStrength: hp.compStrength });
+      profiles.save(hp.name, { base: hp.base, params: hp.params, compStrength: hp.compStrength }, currentSignature());
+      alert(`Imported the shared 3D-audio profile “${hp.name}”. It’s saved under Settings.`);
+    }
+    // Strip the hp param so a reload doesn't re-import (replace the hash with a clean root).
+    try { history.replaceState(null, '', location.pathname + location.search); } catch { /* ignore */ }
+  } catch { /* bad link → ignore, boot normally */ }
+})();
+
 // Seed the app from the initial URL (deep-link, progress, or picker), replacing the
 // entry so Back never lands on a blank pre-app state.
 router.start();
@@ -1824,6 +1941,15 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
         start: settings.hrtfPersonalization(),
         baseHrtfId: settings.hrtfBase(),
         saveBaseHrtf: (id) => settings.setHrtfBase(id),
+        // Results-screen profile hooks (same as the calibration flow).
+        saveLastBest: (snap) => {
+          try { profiles.saveLastBest({ base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+          catch { /* non-fatal */ }
+        },
+        saveProfile: (name, snap) => {
+          try { profiles.save(name, { base: snap.base, params: snap.params, compStrength: settings.overEarCompStrength() }, currentSignature()); }
+          catch { /* non-fatal */ }
+        },
         onDone: () => {
           restoreRoom();
           setupSettings(graph, []);
@@ -1858,6 +1984,45 @@ function setupSettings(graph: AudioGraph, teardowns: Array<() => void> = []) {
       settings.setHrtfBase(prof.base);
       settings.setHrtfPersonalization(prof.params);
       return true;
+    },
+    // --- PROFILES MANAGER (named tuning snapshots). ---
+    listProfiles: () => {
+      const cur = currentSignature();
+      return profiles.list().map((e) => ({
+        id: e.id, name: e.name, reserved: e.reserved,
+        compatible: signatureMatches(e.sig, cur),
+      }));
+    },
+    activeProfileId,
+    saveProfile: (name: string) => { profiles.save(name, liveTuning(), currentSignature()); },
+    applyProfile: (id: string) => {
+      const e = profiles.get(id);
+      if (!e || !signatureMatches(e.sig, currentSignature())) return false;
+      applyProfileTuning(e.tuning);
+      return true;
+    },
+    renameProfile: (id: string, name: string) => profiles.rename(id, name),
+    deleteProfile: (id: string) => profiles.delete(id),
+    shareProfileUrl: (id: string) => {
+      const e = profiles.get(id);
+      if (!e) return null;
+      return encodeSharedProfileUrl({
+        base: e.tuning.base, params: e.tuning.params, compStrength: e.tuning.compStrength,
+        name: e.name, sig: e.sig,
+      });
+    },
+    importProfile: (codeOrUrl: string) => {
+      // Accept a raw share code OR a full share URL.
+      const sp = decodeSharedProfileUrl(codeOrUrl, DEFAULT_HRTF_BASE)
+        ?? decodeSharedProfile(codeOrUrl, DEFAULT_HRTF_BASE);
+      if (!sp) return null;
+      if (sp.sig && !signatureMatches(sp.sig, currentSignature())) {
+        return { error: 'That profile was made for a different version of the app and can’t be applied here.' };
+      }
+      const tuning: ProfileTuning = { base: sp.base, params: sp.params, compStrength: sp.compStrength };
+      applyProfileTuning(tuning);
+      profiles.save(sp.name, tuning, currentSignature());
+      return { name: sp.name };
     },
     // Over-ear headphone compensation (advanced, opt-in). Launch the standalone
     // "Calibrate headphones" flow; on save, persist the type + strength and apply the

@@ -25,6 +25,9 @@ import { HrtfRenderer } from '../engine/hrtf/renderer';
 import { InterpolatingHrtfRenderer } from '../engine/hrtf/interpolatingRenderer';
 import { loadOverEarComp, buildBiquadChain, type EqChain } from './loudnessEqAudio';
 import { defaultCompStrengthFor, type HeadphoneType } from './settingsStore';
+import { mountDirectionPicker, type DirectionPicker } from './hrtfDirectionPicker';
+import { calDebugEnabled } from './calDebug';
+import { makeTestDirections, angularError, dirToPosition, decideWinner, type Direction, type Attempt } from './hrtfLocalize';
 
 export interface HeadphoneCalibrationDeps {
   ctx: AudioContext;
@@ -351,6 +354,273 @@ export function mountHeadphoneCalibration(
 
   // Advanced flow starts at the fine-tune intro (basic already set the type + a default
   // strength); the type switcher remains reachable from there.
+  showIntro();
+  return dispose;
+}
+
+// ============================================================================
+// OBJECTIVE headphone-comp A/B — decide comp ON vs OFF by POINTING ERROR
+// (not preference). Over-ear only: our comp is the average-inverse of an over-ear
+// HpIR set, so it's meaningless for IEM/clip (they skip). Reuses the same seeded
+// "point to the sound" harness the HRTF base-head A/B uses (identical directions per
+// pass, seed 9000+attempt, so OFF and ON are judged on the SAME targets). CRITICAL:
+// ties resolve to OFF — comp defaults off (DEFAULT_OVEREAR_COMP_STRENGTH=0), so we
+// only turn it on when it measurably helps.
+// ============================================================================
+
+export interface HeadphoneCompAbDeps {
+  ctx: AudioContext;
+  dest: AudioNode;
+  hrtfUrl: string;
+  say: (msg: string) => void;
+  alert: (msg: string) => void;
+  /** The user's declared form factor — this step is only meaningful for 'overear'. */
+  headphoneType: HeadphoneType | null;
+  /** Persist the chosen comp strength (0 = OFF, or the active over-ear default). */
+  save: (strength: number) => void;
+  onDone: () => void;
+}
+
+/** The active comp strength put up against OFF — the type-appropriate over-ear default
+ *  (0.5), the same value the preference A/B centres on. */
+const COMP_AB_ACTIVE_STRENGTH = defaultCompStrengthFor('overear');
+/** Attempts per candidate (OFF/ON). Small but enough for a mean; 5 dirs each = 10 probes. */
+const COMP_AB_ATTEMPTS_PER_SIDE = 5;
+/** Mean-error tie band: if OFF and ON are within ~5° mean pointing error, call it a tie
+ *  and keep OFF. (decideWinner takes radians; keep it aligned with its default bias.) */
+const COMP_AB_TIE_RAD = (5 * Math.PI) / 180;
+
+/**
+ * Mount the objective comp A/B. If the type isn't over-ear (or unknown), it does NOT run
+ * the test: it persists OFF and finishes, since comp is over-ear-specific. Otherwise it
+ * interleaves OFF/ON passes on identical seeded directions, scores pointing error, and
+ * keeps whichever localizes better (OFF on a tie).
+ */
+export function mountHeadphoneCompLocalizeAb(
+  root: HTMLElement,
+  deps: HeadphoneCompAbDeps,
+): () => void {
+  const { ctx, dest } = deps;
+  let disposed = false;
+
+  root.innerHTML = '';
+  const h = document.createElement('h1');
+  h.textContent = 'Do your headphones need compensation?';
+  const p = document.createElement('p');
+  const controls = document.createElement('div');
+  controls.className = 'cal-controls';
+  root.append(h, p, controls);
+
+  function bigButton(label: string, onClick: () => void, primary = false): HTMLButtonElement {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = primary ? 'primary' : 'secondary';
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
+  // Non-over-ear (or unknown): comp is over-ear-specific — persist OFF and leave.
+  if (deps.headphoneType !== 'overear') {
+    p.textContent = 'Headphone compensation only applies to over-ear headphones — skipping.';
+    deps.say('Compensation only applies to over-ear headphones. Skipping.');
+    deps.save(0);
+    const id = setTimeout(() => { if (!disposed) deps.onDone(); }, 400);
+    return () => { disposed = true; clearTimeout(id); };
+  }
+
+  const noise = makeProbeNoise(ctx);
+  let noiseStarted = false;
+  const startNoise = () => { if (!noiseStarted) { noise.start(); noiseStarted = true; } };
+  let renderer: InterpolatingHrtfRenderer | null = null;
+  let src: ReturnType<InterpolatingHrtfRenderer['createSource']> | null = null;
+  let dry: GainNode | null = null;
+  let gate: GainNode | null = null;
+  let comp: EqChain | null = null;
+  let compBiquads: Awaited<ReturnType<typeof loadOverEarComp>> = null;
+  let picker: DirectionPicker | null = null;
+  let rafHandle = 0;
+  let timers: ReturnType<typeof setTimeout>[] = [];
+
+  // A/B state: 'a' = OFF (incumbent), 'b' = ON. Identical seeded directions per attempt.
+  const attempts: Attempt[] = [];
+  let which: 'a' | 'b' = 'a';
+  let target: Direction | null = null;
+  let attemptCount = 0;
+
+  function clearTimers() { cancelAnimationFrame(rafHandle); for (const id of timers) clearTimeout(id); timers = []; }
+
+  async function ensureRenderer() {
+    if (renderer) return;
+    const set = (await HrtfRenderer.create(ctx, deps.hrtfUrl)).set;
+    renderer = await InterpolatingHrtfRenderer.fromSetAsync(ctx, set, {});
+    renderer.setListener({ x: 0, y: 1.6, z: 0, yaw: 0 });
+    src = renderer.createSource();
+    dry = ctx.createGain();
+    gate = ctx.createGain();
+    gate.gain.value = 0;
+    noise.connect(src.input);
+    src.output.connect(dry);
+    dry.connect(gate);
+    gate.connect(dest);
+  }
+
+  function setCompStrength(strength: number) {
+    if (!dry || !gate) return;
+    try { dry.disconnect(); } catch { /* noop */ }
+    if (comp) { comp.dispose(); comp = null; }
+    const built = strength > 0 ? buildBiquadChain(ctx, compBiquads, strength) : null;
+    if (built) { comp = built; dry.connect(comp.input); comp.output.connect(gate); }
+    else { dry.connect(gate); }
+  }
+
+  function setGate(on: boolean) { gate?.gain.setTargetAtTime(on ? 1 : 0, ctx.currentTime, 0.02); }
+
+  /** Play the current `target` as a short WIGGLING probe (small motion helps front/back),
+   *  at the current comp strength. Resolves when the ~2.2 s probe finishes. */
+  function playProbe(): Promise<void> {
+    if (!target) return Promise.resolve();
+    setGate(true);
+    cancelAnimationFrame(rafHandle);
+    const durMs = 2200;
+    const [bx, by, bz] = dirToPosition(target, 1, 1.6);
+    const t0 = now();
+    return new Promise((resolve) => {
+      const step = () => {
+        if (disposed) return resolve();
+        const t = Math.min(1, (now() - t0) / durMs);
+        // ~2° circular wiggle (matches hrtfTuning's WIGGLE), keeps the centre fixed.
+        const a = t * Math.PI * 2 * 3; // 3 cycles
+        const w = (2 * Math.PI) / 180;
+        src?.setPosition(bx + Math.sin(a) * w, by + Math.cos(a) * w, bz);
+        if (t >= 1) { setGate(false); const id = setTimeout(resolve, 120); timers.push(id); return; }
+        rafHandle = requestAnimationFrame(step);
+      };
+      rafHandle = requestAnimationFrame(step);
+    });
+  }
+
+  /** Pick the next candidate side (the one with fewer attempts), set the seeded target,
+   *  apply its comp strength, play, then enable the picker. */
+  async function nextProbe() {
+    if (disposed) return;
+    const verdict = decideWinner(attempts, COMP_AB_ATTEMPTS_PER_SIDE, COMP_AB_TIE_RAD);
+    if (verdict) return finish(verdict);
+    const na = attempts.filter((x) => x.which === 'a').length;
+    const nb = attempts.filter((x) => x.which === 'b').length;
+    which = na <= nb ? 'a' : 'b';
+    // Same seeded direction for the matching OFF/ON pair, so the two are judged fairly.
+    const pairIdx = which === 'a' ? na : nb;
+    target = makeTestDirections(1, 9000 + pairIdx)[0];
+    attemptCount++;
+    setCompStrength(which === 'a' ? 0 : COMP_AB_ACTIVE_STRENGTH);
+    controls.innerHTML = '';
+    p.textContent = 'Listen — where does the sound come from?';
+    picker?.reset();
+    picker?.setEnabled(false);
+    await playProbe();
+    if (disposed) return;
+    mountPicker();
+    picker?.setEnabled(true);
+  }
+
+  function mountPicker() {
+    controls.innerHTML = '';
+    const replay = bigButton('▶ Play again', () => { void playProbe(); });
+    replay.classList.add('secondary');
+    picker = mountDirectionPicker(controls, {
+      onCommit: onCommit,
+      say: deps.say,
+      extraAction: replay,
+    });
+    picker.setEnabled(true);
+  }
+
+  function onCommit(guess: Direction) {
+    if (!target) return;
+    picker?.setEnabled(false);
+    const err = angularError(target, guess);
+    attempts.push({ which, error: err });
+    const done = attempts.length;
+    const total = COMP_AB_ATTEMPTS_PER_SIDE * 2;
+    p.textContent = `Round ${Math.min(done + 1, total)} of about ${total}…`;
+    const id = setTimeout(() => void nextProbe(), 700);
+    timers.push(id);
+  }
+
+  function finish(verdict: 'a' | 'b') {
+    const strength = verdict === 'b' ? COMP_AB_ACTIVE_STRENGTH : 0;
+    const meanOf = (w: 'a' | 'b') => {
+      const es = attempts.filter((x) => x.which === w).map((x) => x.error);
+      return es.length ? es.reduce((s, c) => s + c, 0) / es.length : NaN;
+    };
+    if (calDebugEnabled()) {
+      const degOff = Math.round((meanOf('a') * 180) / Math.PI);
+      const degOn = Math.round((meanOf('b') * 180) / Math.PI);
+      console.log(`[hp-comp-ab] OFF ${degOff}° vs ON ${degOn}° → ${verdict === 'b' ? 'ON' : 'OFF'} (tie→OFF)`);
+    }
+    teardown();
+    deps.save(strength);
+    if (strength > 0) {
+      deps.say('Compensation helped — turning it on.');
+      deps.alert('Headphone compensation ON — it improved your localization.');
+    } else {
+      deps.say('No improvement — leaving compensation off.');
+      deps.alert('Headphone compensation left OFF — it did not improve localization.');
+    }
+    deps.onDone();
+  }
+
+  function teardown() {
+    clearTimers();
+    picker?.dispose(); picker = null;
+    if (src) { try { noise.disconnect(src.input); } catch { /* noop */ } }
+    try { src?.disconnect(); } catch { /* noop */ }
+    if (comp) { comp.dispose(); comp = null; }
+    try { dry?.disconnect(); } catch { /* noop */ }
+    try { gate?.disconnect(); } catch { /* noop */ }
+    src = null; dry = null; gate = null; renderer = null;
+  }
+
+  function dispose() {
+    disposed = true;
+    teardown();
+    try { noise.stop(); } catch { /* already stopped */ }
+  }
+
+  async function begin() {
+    controls.innerHTML = '';
+    p.textContent = 'Preparing…';
+    compBiquads = await loadOverEarComp();
+    if (disposed) return;
+    if (!compBiquads) {
+      // No comp asset (offline/missing) — can't test it; leave comp OFF.
+      teardown();
+      deps.save(0);
+      deps.alert('Compensation data unavailable; leaving it off.');
+      deps.onDone();
+      return;
+    }
+    await ensureRenderer();
+    if (disposed) return;
+    startNoise();
+    attempts.length = 0;
+    attemptCount = 0;
+    await nextProbe();
+  }
+
+  function showIntro() {
+    controls.innerHTML = '';
+    p.textContent =
+      'We’ll play a sound around you a few times, twice each way — with and without headphone ' +
+      'compensation. Point to where each one comes from. We keep whichever setting you locate ' +
+      'more accurately, and leave compensation OFF if they’re about the same.';
+    deps.say('We’ll check whether headphone compensation helps you locate sounds.');
+    const start = bigButton('Begin', () => void begin(), true);
+    const skip = bigButton('Skip (leave compensation off)', () => { teardown(); deps.save(0); deps.onDone(); });
+    controls.append(start, skip);
+    start.focus();
+  }
+
   showIntro();
   return dispose;
 }
