@@ -30,9 +30,25 @@ interface CreditsDeps {
 /** Static, always-shown credits beyond the click recordings. */
 const CORE_CREDITS: { title: string; body: string; url?: string }[] = [
   {
-    title: 'Binaural HRTF',
+    title: 'Binaural HRTF (default)',
     body: 'SADIE II head-related impulse responses (University of York), used for 3D audio.',
     url: 'https://www.york.ac.uk/sadie-project/database.html',
+  },
+  {
+    title: 'Binaural HRTF (alternate heads — CIPIC)',
+    body:
+      'CIPIC HRTF Database (UC Davis). Subject 124 bundled with Valve’s Steam Audio ' +
+      '(Apache 2.0); the wider 45-subject set is available separately. Used with attribution.',
+    url: 'https://github.com/amini-allight/cipic-hrtf-database',
+  },
+  {
+    title: 'Binaural HRTF (alternate heads — Sound Sphere 2)',
+    body:
+      'Warnecke, Clapp, Ben-Hur, Alon, Amengual Garí & Calamia (2024), “Sound ' +
+      'Sphere 2: A High-resolution HRTF Database,” AES AVAR 2024, Meta Reality Labs ' +
+      'Research. CC BY 4.0. Modified: windowed to 256 taps; five subjects selected for ' +
+      'spectral diversity.',
+    url: 'https://facebookresearch.github.io/SS2_HRTF/',
   },
   {
     title: 'Headphone compensation (over-ear)',
