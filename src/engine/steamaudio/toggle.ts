@@ -1,8 +1,9 @@
 /**
- * Spatial-backend selection — a tiny pure function so it can be unit-tested without
- * a DOM/URL. The default is ALWAYS our own engine (`ours`): no regression for the
- * shipping build, and the Steam Audio path (which dynamically loads `three` + a 6 MB
- * WASM) only engages on an explicit opt-in.
+ * Spatial-backend selection — tiny pure functions so they can be unit-tested without
+ * a DOM/URL. `selectBackend` maps an explicit `?engine=` param (absent → `ours`);
+ * `preferredBackend` adds the no-preference DEFAULT: high-fidelity (Steam). The
+ * Steam path dynamically loads `three` + a 6 MB WASM; on any init failure the
+ * caller falls back to our engine (see buildSteamBackend in main.ts).
  *
  * Toggle source: the `engine` URL param.
  *   ?engine=steam → Steam Audio backend (pathing/diffraction ON by default)
@@ -28,4 +29,18 @@ export function selectBackend(engineParam: string | null | undefined): SpatialBa
 export function selectBackendFromSearch(search: string): SpatialBackendChoice {
   const value = new URLSearchParams(search).get('engine');
   return selectBackend(value);
+}
+
+/**
+ * Default backend when the user has expressed NO preference (no saved Settings
+ * choice): an explicit `?engine=...` param wins; otherwise HIGH-FIDELITY (Steam).
+ * Cross-origin isolation is NOT required — the vendored WASM is single-threaded and
+ * degrades from its SharedArrayBuffer control channel to postMessage when
+ * `crossOriginIsolated` is false (see backend.ts) — so the default holds on plain
+ * static hosts (e.g. GitHub Pages) too.
+ */
+export function preferredBackend(search: string): SpatialBackendChoice {
+  const value = new URLSearchParams(search).get('engine');
+  if (value != null) return selectBackend(value);
+  return 'steam';
 }

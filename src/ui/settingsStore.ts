@@ -60,8 +60,8 @@ export const AUTO_STEP_KEY = 'ps.settings.autoStep';
  *  broadband noise burst. Default OFF (noise burst — unchanged behaviour). */
 export const REALISTIC_CLICK_KEY = 'ps.settings.realisticClick';
 /** PROBE CHOICE: which echo/probe sound the player fires. A probe-catalog id — a synth
- *  preset name ('clap', 'mouthclick', …) or 'rec:<id>' for a CC recording. Default the
- *  legacy noise-burst clap so existing behaviour is unchanged. Supersedes the older
+ *  preset name ('clap', 'mouthclick', …) or 'rec:<id>' for a CC recording. Default
+ *  'mouthclick' (the realistic tongue click). Supersedes the older
  *  boolean REALISTIC_CLICK toggle (kept for back-compat migration). */
 export const PROBE_CHOICE_KEY = 'ps.settings.probeChoice';
 
@@ -262,7 +262,8 @@ export class SettingsStore {
    * High-fidelity (Steam Audio) engine on/off. `hasSteamEnginePref()` distinguishes
    * "never set" from an explicit choice, so a URL `?engine=steam` can still take
    * precedence at Begin when the user hasn't expressed a Settings preference.
-   * DEFAULTS TO OFF (our own engine) when unset.
+   * When unset, callers default via `preferredBackend()` (toggle.ts): high-fidelity
+   * unless an explicit `?engine=` param says otherwise.
    */
   hasSteamEnginePref(): boolean {
     return this.read(STEAM_ENGINE_KEY) != null;
@@ -452,7 +453,7 @@ export class SettingsStore {
 
   /**
    * PROBE CHOICE — which echo/probe the player fires (a probe-catalog id: a synth
-   * preset name or 'rec:<id>'). Default 'clap' (the legacy noise burst). Migrates the
+   * preset name or 'rec:<id>'). Default 'mouthclick' (the realistic tongue click). Migrates the
    * older boolean `realisticClick` toggle: if the new key is unset but the old flag was
    * ON, report 'mouthclick' so upgrading users keep their realistic click.
    */

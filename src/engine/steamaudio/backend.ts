@@ -11,7 +11,7 @@
  * `output` is master-bound — so `game.ts` drives it exactly like a `ModeledSource`.
  * Per frame the host calls `setListener(...)` + `step(dt)`.
  *
- * Graceful failure: if Steam Audio can't initialise (no cross-origin isolation, WASM
+ * Graceful failure: if Steam Audio can't initialise (WASM
  * load failure, …), `create()` throws a clear error so the caller falls back to OUR
  * engine. The game is never left silent.
  *
@@ -233,19 +233,19 @@ export class SteamAudioBackend {
   /**
    * Create a backend. Dynamically imports `three` + `three-steam-audio` (so the
    * default bundle pays nothing), spins up the Steam Audio world, and wires the
-   * shared reflection + reverb buses to `master`. THROWS on failure (no cross-origin
-   * isolation, WASM load error) — the caller must catch and fall back to our engine.
+   * shared reflection + reverb buses to `master`. THROWS on failure (WASM load
+   * error) — the caller must catch and fall back to our engine.
    */
   static async create(
     audioContext: AudioContext,
     master: AudioNode,
     opts: SteamBackendOpts = {},
   ): Promise<SteamAudioBackend> {
-    if (typeof crossOriginIsolated !== 'undefined' && !crossOriginIsolated) {
-      throw new Error(
-        'Steam Audio needs cross-origin isolation (COOP/COEP). crossOriginIsolated is false.',
-      );
-    }
+    // NOTE: cross-origin isolation is NOT required. The vendored three-steam-audio is
+    // single-threaded WASM (no pthreads); when `crossOriginIsolated` is false it just
+    // swaps its SharedArrayBuffer control channel for port.postMessage — fully
+    // functional, marginally more per-update overhead. (An older guard threw here and
+    // silently disabled the engine on hosts without COOP/COEP, e.g. GitHub Pages.)
     // Dynamic import keeps three + the 6 MB WASM out of the default (our-engine) bundle.
     const [{ createWorld }, three] = await Promise.all([
       import('three-steam-audio'),

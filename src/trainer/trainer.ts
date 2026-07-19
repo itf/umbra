@@ -45,7 +45,7 @@ import {
   type DateStr,
 } from './daily';
 import { DailyStreakStore } from './dailyStreakStore';
-import { selectBackendFromSearch } from '../engine/steamaudio/toggle';
+import { preferredBackend } from '../engine/steamaudio/toggle';
 import type { SpatialBackend } from '../game/game';
 
 const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
@@ -270,9 +270,9 @@ async function ensurePlayer(): Promise<ScenePlayer> {
   // High-fidelity toggle: the checkbox (pre-seeded from ?engine=steam) selects the
   // Steam Audio backend for the continuous TONE / direction exercises. Loaded via a
   // dynamic import (keeps three + the 6 MB WASM out of the default bundle). On ANY
-  // init failure (no cross-origin isolation, WASM error) we silently keep our engine.
+  // init failure (WASM error) we silently keep our engine.
   const toggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
-  const wantSteam = toggle ? toggle.checked : selectBackendFromSearch(location.search) === 'steam';
+  const wantSteam = toggle ? toggle.checked : preferredBackend(location.search) === 'steam';
   if (wantSteam) {
     try {
       const { SteamAudioBackend } = await import('../engine/steamaudio/backend');
@@ -946,7 +946,7 @@ function main() {
   window.addEventListener('keydown', onKeyDown);
   // Pre-check the high-fidelity toggle when ?engine=steam is in the URL.
   const engineToggle = document.getElementById('engine-steam-toggle') as HTMLInputElement | null;
-  if (engineToggle) engineToggle.checked = selectBackendFromSearch(location.search) === 'steam';
+  if (engineToggle) engineToggle.checked = preferredBackend(location.search) === 'steam';
   // Flush the in-progress session sample when the user navigates away/reloads, so
   // a returning user's "last session" reflects the work they actually did.
   window.addEventListener('beforeunload', flushSession);

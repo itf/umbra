@@ -45,35 +45,33 @@ ls dist/manifest.webmanifest dist/sw.js dist/assets/hrtf/sadie_h3.hrtf
 
 ---
 
-## Cross-origin isolation (COOP/COEP) — only for the optional Steam Audio path
+## Cross-origin isolation (COOP/COEP) — OPTIONAL, a minor optimization
 
-The **default game engine needs no special headers** and runs on any plain static
-host. You can ignore this whole section unless you want the optional Steam Audio
-backend to work in production.
+**No engine needs these headers.** Both the default engine and the high-fidelity
+Steam Audio engine (now the default) run on any plain static host, including
+GitHub Pages. The vendored `three-steam-audio` WASM is single-threaded (no
+pthreads); when `crossOriginIsolated` is false it swaps its `SharedArrayBuffer`
+control channel for `port.postMessage` — fully functional, slightly more
+per-update overhead.
 
-The optional Steam Audio backend (`?engine=steam`) uses a threaded reflection
-simulation that needs `SharedArrayBuffer`, which browsers gate behind
-**cross-origin isolation** (`crossOriginIsolated === true`). That requires two
-response headers on every document/asset:
+Serving these two headers merely enables that faster SAB control channel:
 
 ```
 Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Without them, `?engine=steam` fails to initialize and **falls back to the default
-engine** — the game still works, only the Steam path degrades.
-
-- **Cloudflare Pages / Netlify**: handled automatically — we ship `dist/_headers`
-  (copied from `public/_headers`), which both hosts honour.
+- **Cloudflare Pages / Netlify**: automatic — we ship `dist/_headers` (copied
+  from `public/_headers`), which both hosts honour.
 - **Other hosts (nginx, Apache, S3+CloudFront, GitHub Pages, …)**: `_headers` is
-  ignored. Send the same two headers via your server/CDN config (e.g. an nginx
-  `add_header`, an Apache `Header set`, or a CloudFront response-headers policy).
-  GitHub Pages cannot set custom headers, so the Steam path won't work there —
-  the default game still will.
+  ignored; add the headers via server/CDN config if you want the SAB path.
+  GitHub Pages cannot set custom headers — that's fine, everything still works.
 
-`vite dev` and `vite preview` already send these headers (see `vite.config.ts`),
-so local Steam-path testing works out of the box.
+Caution: `require-corp` blocks any cross-origin subresource that doesn't send
+CORP/CORS headers. All our fetches are same-origin today, but a future
+third-party script/font/analytics embed would break under these headers.
+
+`vite dev` and `vite preview` already send them (see `vite.config.ts`).
 
 ---
 

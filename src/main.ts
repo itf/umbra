@@ -70,7 +70,7 @@ import {
   type EqChain,
   type CompBiquad,
 } from './ui/loudnessEqAudio';
-import { selectBackendFromSearch } from './engine/steamaudio/toggle';
+import { preferredBackend } from './engine/steamaudio/toggle';
 import type { SpatialBackend } from './game/game';
 
 const HRTF_URL = assetUrl('assets/hrtf/sadie_h3.hrtf');
@@ -160,13 +160,14 @@ function activeProfileId(): string | null {
 
 /**
  * Resolve the effective high-fidelity (Steam Audio) engine preference. A SAVED
- * Settings preference wins (the user expressed an explicit choice); otherwise the
- * `?engine=steam` URL param decides. This is the single source of truth read by the
- * Settings toggle, the Begin-screen checkbox seeding, and the Begin handler.
+ * Settings preference wins (the user expressed an explicit choice); otherwise an
+ * explicit `?engine=...` URL param; otherwise HIGH-FIDELITY by default (see
+ * `preferredBackend`). This is the single source of truth read by the Settings
+ * toggle, the Begin-screen checkbox seeding, and the Begin handler.
  */
 function steamEnginePref(): boolean {
   if (settings.hasSteamEnginePref()) return settings.steamEngineEnabled();
-  return selectBackendFromSearch(location.search) === 'steam';
+  return preferredBackend(location.search) === 'steam';
 }
 
 /** Effective Steam HRTF choice: our SADIE SOFA (true) vs Steam's generic (false).
