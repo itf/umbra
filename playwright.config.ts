@@ -35,7 +35,10 @@ export default defineConfig({
   ],
   webServer: {
     // Build then preview the production bundle (preview sets COOP/COEP + serves assets).
-    command: 'npm run build && npm run preview -- --port 4173 --strictPort',
+    // BASE_PATH=/ because `vite preview` serves at base '/' (vite.config only applies
+    // the /umbra/ base when command === 'build'); a default /umbra/-based build under
+    // a '/' preview 404s every asset into the SPA fallback and blanks the app.
+    command: 'BASE_PATH=/ npm run build && npm run preview -- --port 4173 --strictPort',
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     // The build runs wasm-pack + worklet bundling + vite build — give it room.

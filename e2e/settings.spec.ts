@@ -36,12 +36,14 @@ test('settings: open, toggle companion off (persists), set volume, reset', async
 
   // High-fidelity (Steam Audio) engine toggle → persists its preference (applies on
   // the next level start; this is the in-game mirror of the Begin-screen toggle).
-  const engine = page.getByLabel('High-fidelity audio (Steam Audio)');
-  await expect(engine).not.toBeChecked(); // default OFF (our engine)
-  await engine.check();
+  // Scope to the settings dialog — the Begin screen has an identically-labelled
+  // checkbox now that the engine is no longer marked experimental.
+  const engine = page.locator('#settings-screen').getByLabel('High-fidelity audio (Steam Audio)');
+  await expect(engine).toBeChecked(); // default ON (high-fidelity)
+  await engine.uncheck();
   await expect
     .poll(() => page.evaluate((k) => localStorage.getItem(k), STEAM_ENGINE_KEY))
-    .toBe('1');
+    .toBe('0');
 
   // Reset progress: first click arms (label changes + spoken confirm), second confirms.
   const reset = page.getByRole('button', { name: /reset progress/i });

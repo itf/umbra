@@ -35,8 +35,9 @@ export async function skipOnboarding(page: Page) {
  */
 export async function beginLevel(page: Page, levelId: string, extraParams = '') {
   await skipOnboarding(page);
-  const q = new URLSearchParams({ level: levelId, debug: '1' });
-  await page.goto(`/?${q.toString()}${extraParams ? '&' + extraParams : ''}`);
+  // Path-based routing: /level/<id> preselects the level (the old ?level= query
+  // param is a legacy no-op since the router migration).
+  await page.goto(`/level/${levelId}?debug=1${extraParams ? '&' + extraParams : ''}`);
 
   // Preselected level → Begin screen. Click Begin (the required user gesture for
   // audio) and wait for the game screen to reveal.
