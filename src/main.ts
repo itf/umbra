@@ -33,6 +33,7 @@ import { renderLandingScreen } from './ui/landing';
 import { LandingDemo } from './ui/landingDemo';
 import { mountClickTypes } from './ui/clickTypes';
 import { renderCreditsScreen } from './ui/credits';
+import { mountEngineStatus } from './ui/engineStatus';
 import { loadClicksManifest, cachedClicksManifest } from './game/clicksManifest';
 import { probeOptions } from './game/probeCatalog';
 import { ProbeResolver } from './game/probeResolver';
@@ -186,6 +187,25 @@ if (engineToggle) {
 const trainerStore = new TrainerStore();
 const dailyStreakStore = new DailyStreakStore();
 const scoreStore = new ScoreStore();
+
+// Bottom-of-page engine status line. Mounted once at startup; `refreshEngineStatus`
+// re-renders it whenever the live engine is (re)resolved — at Begin and on the live
+// "Apply" hot-swap — so which engine is ACTUALLY running (and why it fell back) is
+// always visible. `steam` here means the Steam backend built; null means our engine.
+const engineStatusLine = mountEngineStatus();
+function refreshEngineStatus(steamActive: boolean): void {
+  const wantSteam = steamEnginePref();
+  engineStatusLine.update({
+    engine: steamActive ? 'steam' : 'ours',
+    // Involuntary fallback: the user wanted Steam but we're on our engine.
+    fellBack: wantSteam && !steamActive,
+    reason: wantSteam && !steamActive ? lastSteamFallbackReason : '',
+  });
+}
+// Before any level runs no engine is live yet, so don't claim Steam is active (it
+// might still fall back). Show the neutral standard-audio label; the real engine is
+// reported once a level starts and the backend is actually resolved.
+engineStatusLine.update({ engine: 'ours', fellBack: false, reason: '' });
 // The mounted settings panel (audio mix + prefs). Null until the game starts +
 // setupSettings mounts it; the in-game S key + the ⚙ button drive it.
 let settingsPanel: SettingsPanel | null = null;
@@ -349,6 +369,29 @@ function setMasterVolume(graph: AudioGraph, v: number) {
  * reverb-reflection-level choices. The dynamic import keeps `three` + the 6 MB WASM
  * out of the default bundle (only opt-in pays for it).
  */
+/**
+ * The reason the LAST buildSteamBackend attempt fell back to our engine, or '' when
+ * Steam built successfully (or was never attempted). Read by the bottom-of-page engine
+ * status line so a silent fallback on a device where Steam won't load becomes visible.
+ */
+let lastSteamFallbackReason = '';
+
+/** Condense an init error into a short, user-legible reason for the status line. */
+function steamFallbackReason(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  // Map the known failure shapes to plain language; fall through to the raw message.
+  if (/cross-origin|crossOriginIsolated|SharedArrayBuffer/i.test(msg)) {
+    return 'browser blocked the shared-memory feature it needs';
+  }
+  if (/import|module|fetch|network|load/i.test(msg)) {
+    return "couldn't download the audio engine (network or blocked script)";
+  }
+  if (/memory|allocat|OOM/i.test(msg)) return 'device ran out of memory loading it';
+  if (/worklet|AudioWorklet/i.test(msg)) return 'this browser lacks a required audio feature';
+  // Keep it short — the full error is in the console for anyone who wants it.
+  return msg.length > 80 ? `${msg.slice(0, 77)}…` : msg;
+}
+
 async function buildSteamBackend(
   ctx: AudioContext,
   master: AudioNode,
@@ -399,8 +442,10 @@ async function buildSteamBackend(
     });
     console.info(`[papasangre] Steam levels — reflection (per-source): ${reflectionWetLevel}, reflection bus: ${reflectionBusLevel}, reverb bus: ${reverbBusLevel}.`);
     console.info(`[papasangre] Steam Audio backend active (custom SADIE HRTF: ${wantSofa}, head-tracked reflections: true, pathing/diffraction: ${wantPathing}).`);
+    lastSteamFallbackReason = '';
     return steam;
   } catch (e) {
+    lastSteamFallbackReason = steamFallbackReason(e);
     console.warn('[papasangre] Steam Audio unavailable — falling back to our engine.', e);
     return null;
   }
@@ -1035,6 +1080,7 @@ startButton.addEventListener('click', async () => {
       // identical SOFA / head-tracked / reverb-reflection-level choices.
       steam = await buildSteamBackend(ctx, graph.master);
     }
+    refreshEngineStatus(!!steam);
 
     startScreen.hidden = true;
     gameScreen.hidden = false;
@@ -1794,6 +1840,7 @@ async function applySteamNow(graph: AudioGraph) {
     const steam = await buildSteamBackend(graph.ctx, graph.master);
     if (!steam) {
       // Build failed → keep the current (our) engine; never leave the game silent.
+      refreshEngineStatus(false); // surfaces the fallback reason at the page bottom
       say('High-fidelity audio is unavailable here. Keeping the standard engine.');
       return;
     }
@@ -1805,6 +1852,7 @@ async function applySteamNow(graph: AudioGraph) {
     currentEngineIsSteam = true;
     currentSteamIsSofa = wantSofa;
     currentSteamOrder = wantOrder;
+    refreshEngineStatus(true);
     say(bakedChanged && engineUnchanged
       ? 'Steam Audio settings applied.'
       : 'High-fidelity audio applied.');
@@ -1813,6 +1861,7 @@ async function applySteamNow(graph: AudioGraph) {
     currentEngineIsSteam = false;
     currentSteamIsSofa = false;
     currentSteamOrder = 0;
+    refreshEngineStatus(false);
     say('Switched to the standard audio engine.');
   }
 }

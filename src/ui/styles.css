@@ -467,3 +467,27 @@ button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
 .click-help-toggle::before { content: "? "; font-weight: 700; color: #8fdca6; }
 .click-howto, .click-articulation { margin: 8px 0 0; color: #d8d8d8; line-height: 1.5; }
 .click-back { margin: 24px 0 0; background: transparent; border: 1px solid #555; color: #ccc; }
+
+/* --- Engine status line (bottom of page): which spatial engine is live + why a
+   Steam fallback happened. Fixed, unobtrusive, out of the tab order. --- */
+#engine-status {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #8a8a8a;
+  background: rgba(0, 0, 0, 0.72);
+  border-top: 1px solid #1c1c1c;
+  text-align: center;
+  pointer-events: none; /* never intercepts game taps */
+}
+/* Involuntary fallback (wanted Steam, got the standard engine): make it noticeable. */
+#engine-status[data-warn="true"] {
+  color: #ffcf6b;
+  background: rgba(40, 26, 0, 0.85);
+  border-top-color: #5a3d00;
+}
