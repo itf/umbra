@@ -1236,6 +1236,9 @@ startButton.addEventListener('click', async () => {
     if (urlDebug) {
       (window as unknown as { __ps?: unknown }).__ps = {
         debugState: () => game.debugState(),
+        // The live AudioContext, so a profiling harness can read renderCapacity
+        // (audio-thread load) — the number that decides whether a device glitches.
+        ctx,
         step: (foot: 'L' | 'R', nowMs: number) => { if (!ended) game.step(foot, nowMs); },
         throwDecoy: (nowMs?: number) => game.throwDecoy(nowMs),
         won: () => outcome === 'won',
