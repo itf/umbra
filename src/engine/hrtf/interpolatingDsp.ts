@@ -241,11 +241,6 @@ export class HrtfDsp {
   private itdR: Float32Array;
   private k: number;
 
-  // Mono input history ring (sized to taps, power-of-two for cheap wrap-free copy not required).
-  private hist: Float32Array;
-  private histPos = 0;
-  private histSize: number;
-
   // Current interpolated IR pair (per ear). Smoothly updated each block.
   private curL: Float32Array;
   private curR: Float32Array;
@@ -265,6 +260,37 @@ export class HrtfDsp {
 
   private knnBuf: KnnWeights;
 
+  // --- FFT (overlap-save) convolution state ---
+  // The block-time convolution against a 256-tap IR is the dominant per-source cost;
+  // overlap-save via FFT is the mathematically identical operation at O(F log F) per
+  // block instead of O(block·taps). Sized to next-pow2(block + taps) so a full block
+  // convolves without time-aliasing.
+  private fftSize = 0;                 // 0 until the first process() sizes it to the block
+  private reBuf!: Float64Array;        // scratch: input / product real part
+  private imBuf!: Float64Array;        // scratch: input / product imag part
+  // Frequency-domain IRs for the CURRENT and PREVIOUS direction, per ear. Swapped in
+  // lockstep with curL/prevL so only the new `cur` IR is re-transformed per block.
+  private curReL!: Float64Array; private curImL!: Float64Array;
+  private curReR!: Float64Array; private curImR!: Float64Array;
+  private prevReL!: Float64Array; private prevImL!: Float64Array;
+  private prevReR!: Float64Array; private prevImR!: Float64Array;
+  private curSpecDirty = true;        // cur IR changed since its spectrum was computed
+  // True while the interpolated IR is UNCHANGED between blocks (a settled / static
+  // source — the common case once the head stops moving). Then prev IR == cur IR, the
+  // per-sample crossfade is a no-op, and we can convolve ONCE instead of twice per ear
+  // — halving the per-block FFT work. Reset whenever setDirection produces a new IR.
+  private settled = false;
+  private lastDx = NaN; private lastDy = NaN; private lastDz = NaN;
+  // Overlap-save history: the last (fftSize - block) input samples, prepended before
+  // each block so the FIR sees the correct preceding context.
+  private osHist!: Float64Array;      // length fftSize; [0..overlap) = carried tail
+  private overlap = 0;                // fftSize - block (valid once sized)
+  // Per-block convolution outputs (pre-crossfade), reused each block.
+  private yPrevL!: Float64Array; private yPrevR!: Float64Array;
+  private yCurL!: Float64Array; private yCurR!: Float64Array;
+  // Spectral-product scratch (re/im), reused across the four per-block convolutions.
+  private pRe!: Float64Array; private pIm!: Float64Array;
+
   constructor(mp: MinPhaseHrtf, k = 4) {
     this.taps = mp.taps;
     this.count = mp.count;
@@ -273,8 +299,6 @@ export class HrtfDsp {
     this.itdL = mp.itdL;
     this.itdR = mp.itdR;
     this.k = k;
-    this.histSize = this.taps + 8;
-    this.hist = new Float32Array(this.histSize);
     this.curL = new Float32Array(this.taps);
     this.curR = new Float32Array(this.taps);
     this.prevL = new Float32Array(this.taps);
@@ -288,11 +312,32 @@ export class HrtfDsp {
   /** Recompute the interpolated IR pair + ITD for a head-relative direction. */
   setDirection(x: number, y: number, z: number): void {
     const len = Math.hypot(x, y, z) || 1;
-    const w = knn(this.dirs, this.count, x / len, y / len, z / len, this.k, this.knnBuf);
+    const nx = x / len, ny = y / len, nz = z / len;
+    // SETTLED fast path: an identical normalized direction yields an identical IR + ITD
+    // (kNN is deterministic), so prev == cur and the block crossfade is a no-op. Mark it
+    // so process() can convolve once per ear instead of twice. Skip the (identical)
+    // recompute entirely — cur* already holds the right IR/spectrum from last block.
+    if (!this.firstBlock && nx === this.lastDx && ny === this.lastDy && nz === this.lastDz) {
+      this.settled = true;
+      return;
+    }
+    this.settled = false;
+    this.lastDx = nx; this.lastDy = ny; this.lastDz = nz;
+    const w = knn(this.dirs, this.count, nx, ny, nz, this.k, this.knnBuf);
     // swap cur → prev for the block crossfade
     const tL = this.prevL; this.prevL = this.curL; this.curL = tL;
     const tR = this.prevR; this.prevR = this.curR; this.curR = tR;
     this.prevItdL = this.curItdL; this.prevItdR = this.curItdR;
+    // Swap the frequency-domain IRs in lockstep: the just-demoted `cur` spectrum is
+    // still valid as the new `prev`; only the new `cur` IR (recomputed below) needs a
+    // fresh transform. This keeps it to ONE pair of IR FFTs per block, not two.
+    if (this.fftSize > 0) {
+      let s = this.prevReL; this.prevReL = this.curReL; this.curReL = s;
+      s = this.prevImL; this.prevImL = this.curImL; this.curImL = s;
+      s = this.prevReR; this.prevReR = this.curReR; this.curReR = s;
+      s = this.prevImR; this.prevImR = this.curImR; this.curImR = s;
+    }
+    this.curSpecDirty = true;
     this.curL.fill(0);
     this.curR.fill(0);
     let itdL = 0, itdR = 0;
@@ -317,41 +362,115 @@ export class HrtfDsp {
       this.prevItdL = this.curItdL;
       this.prevItdR = this.curItdR;
       this.firstBlock = false;
+      // prev == cur on the first block: force prev spectrum to be recomputed from the
+      // (now identical) cur IR too, so the very first crossfade has matching spectra.
+      this.prevSpecFromCur = true;
     }
   }
 
+  /** Set on the first block so process() seeds prev spectrum = cur spectrum. */
+  private prevSpecFromCur = false;
+
+  /** Lazily size the FFT buffers for a block length `n` (first process() call). */
+  private ensureFft(n: number): void {
+    const taps = this.taps;
+    let F = 1;
+    while (F < n + taps - 1) F <<= 1; // ≥ block + taps − 1 ⇒ no time-aliasing
+    this.fftSize = F;
+    this.overlap = F - n;
+    this.reBuf = new Float64Array(F);
+    this.imBuf = new Float64Array(F);
+    this.osHist = new Float64Array(F); // carried tail lives in [0..overlap)
+    this.curReL = new Float64Array(F); this.curImL = new Float64Array(F);
+    this.curReR = new Float64Array(F); this.curImR = new Float64Array(F);
+    this.prevReL = new Float64Array(F); this.prevImL = new Float64Array(F);
+    this.prevReR = new Float64Array(F); this.prevImR = new Float64Array(F);
+    this.yPrevL = new Float64Array(n); this.yPrevR = new Float64Array(n);
+    this.yCurL = new Float64Array(n); this.yCurR = new Float64Array(n);
+    this.pRe = new Float64Array(F); this.pIm = new Float64Array(F);
+  }
+
+  /** Transform an IR (length taps, zero-padded to fftSize) into (re,im). */
+  private irSpectrum(ir: Float32Array, re: Float64Array, im: Float64Array): void {
+    re.fill(0); im.fill(0);
+    for (let t = 0; t < this.taps; t++) re[t] = ir[t];
+    fft(re, im, false);
+  }
+
   /**
-   * Convolve a mono input block into stereo out. Crossfades the PREVIOUS block's IR
-   * with the CURRENT block's IR across the block so a per-block IR change can't
-   * zipper. Then applies the (crossfaded) fractional ITD per ear via a delay ring.
+   * Convolve a mono input block into stereo out. Uses OVERLAP-SAVE FFT convolution —
+   * the mathematically identical result to a direct FIR, at O(F log F) per block. Both
+   * the PREVIOUS and CURRENT direction's IRs are convolved (so the per-sample IR
+   * crossfade below can't zipper on a moving source); the crossfade and the fractional
+   * ITD delay-ring stages are unchanged from the time-domain version.
    */
   process(input: Float32Array, outL: Float32Array, outR: Float32Array): void {
     const n = input.length;
-    const taps = this.taps;
-    const hist = this.hist;
-    const size = this.histSize;
-    for (let s = 0; s < n; s++) {
-      // push sample into history
-      hist[this.histPos] = input[s];
-      this.histPos = (this.histPos + 1) % size;
-      // crossfade factor across the block (0→1)
-      const f = n > 1 ? s / (n - 1) : 1;
-      // convolve against prev and cur IRs (direct FIR over history)
-      let accLp = 0, accRp = 0, accLc = 0, accRc = 0;
-      // read history newest→oldest: sample (now-t) multiplies ir[t]
-      let p = this.histPos - 1;
-      if (p < 0) p += size;
-      for (let t = 0; t < taps; t++) {
-        const xv = hist[p];
-        accLp += xv * this.prevL[t];
-        accRp += xv * this.prevR[t];
-        accLc += xv * this.curL[t];
-        accRc += xv * this.curR[t];
-        p--; if (p < 0) p += size;
+    if (this.fftSize === 0 || this.overlap !== this.fftSize - n) this.ensureFft(n);
+    const F = this.fftSize;
+    const overlap = this.overlap;
+
+    // Refresh the CURRENT IR spectrum only when the direction changed since last block.
+    if (this.curSpecDirty) {
+      this.irSpectrum(this.curL, this.curReL, this.curImL);
+      this.irSpectrum(this.curR, this.curReR, this.curImR);
+      this.curSpecDirty = false;
+    }
+    // On the very first block prev IR == cur IR, so mirror the spectrum too.
+    if (this.prevSpecFromCur) {
+      this.prevReL.set(this.curReL); this.prevImL.set(this.curImL);
+      this.prevReR.set(this.curReR); this.prevImR.set(this.curImR);
+      this.prevSpecFromCur = false;
+    }
+
+    // Overlap-save frame: [ carried tail (overlap) | this block (n) ]. Build it in
+    // reBuf. Save the LAST `overlap` samples of the frame as next block's tail BEFORE
+    // the in-place FFT clobbers reBuf.
+    for (let i = 0; i < overlap; i++) this.reBuf[i] = this.osHist[i];
+    for (let i = 0; i < n; i++) this.reBuf[overlap + i] = input[i];
+    for (let i = 0; i < overlap; i++) this.osHist[i] = this.reBuf[F - overlap + i];
+    this.imBuf.fill(0);
+    fft(this.reBuf, this.imBuf, false);
+    // Keep the input spectrum; the four ear/dir products reuse it.
+    const xre = this.reBuf, xim = this.imBuf;
+
+    // Convolve (spectral multiply + IFFT) for one IR spectrum, writing the last n
+    // samples (the alias-free region of overlap-save) into `dst`.
+    const conv = (
+      hre: Float64Array, him: Float64Array, dst: Float64Array,
+      pre: Float64Array, pim: Float64Array,
+    ) => {
+      for (let i = 0; i < F; i++) {
+        // (xre+ j xim)(hre + j him)
+        pre[i] = xre[i] * hre[i] - xim[i] * him[i];
+        pim[i] = xre[i] * him[i] + xim[i] * hre[i];
       }
-      const dryL = accLp * (1 - f) + accLc * f;
-      const dryR = accRp * (1 - f) + accRc * f;
-      // push convolved (pre-ITD) into per-ear delay rings, then read fractional ITD
+      fft(pre, pim, true);
+      for (let s = 0; s < n; s++) dst[s] = pre[overlap + s];
+    };
+
+    conv(this.curReL, this.curImL, this.yCurL, this.pRe, this.pIm);
+    conv(this.curReR, this.curImR, this.yCurR, this.pRe, this.pIm);
+    if (this.settled) {
+      // prev IR == cur IR ⇒ the crossfade is a no-op; reuse the cur convolution for
+      // both, skipping the two prev IFFTs (the whole point of the settled fast path).
+      // ITD may still differ across the block if it was mid-glide, so it's applied
+      // per-sample below exactly as before — only the (identical) convolution is shared.
+      this.yPrevL.set(this.yCurL);
+      this.yPrevR.set(this.yCurR);
+    } else {
+      conv(this.prevReL, this.prevImL, this.yPrevL, this.pRe, this.pIm);
+      conv(this.prevReR, this.prevImR, this.yPrevR, this.pRe, this.pIm);
+    }
+
+    // (tail already saved above, before the FFT clobbered reBuf)
+
+    // Per-sample crossfade (prev→cur) + fractional ITD delay ring — identical to the
+    // original time-domain tail, now fed by the FFT convolution results.
+    for (let s = 0; s < n; s++) {
+      const f = n > 1 ? s / (n - 1) : 1;
+      const dryL = this.yPrevL[s] * (1 - f) + this.yCurL[s] * f;
+      const dryR = this.yPrevR[s] * (1 - f) + this.yCurR[s] * f;
       this.delRingL[this.delPos] = dryL;
       this.delRingR[this.delPos] = dryR;
       const itdL = this.prevItdL * (1 - f) + this.curItdL * f;
