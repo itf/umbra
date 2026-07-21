@@ -34,6 +34,7 @@ import { LandingDemo } from './ui/landingDemo';
 import { mountClickTypes } from './ui/clickTypes';
 import { renderCreditsScreen } from './ui/credits';
 import { mountEngineStatus } from './ui/engineStatus';
+import { showLoading, setLoadingMessage, hideLoading } from './ui/loadingOverlay';
 import { loadClicksManifest, cachedClicksManifest } from './game/clicksManifest';
 import { probeOptions } from './game/probeCatalog';
 import { ProbeResolver } from './game/probeResolver';
@@ -1048,6 +1049,10 @@ void loadClicksManifest();
 startButton.addEventListener('click', async () => {
   startButton.disabled = true;
   say('Loading spatial audio…');
+  // VISIBLE cue so the screen doesn't look frozen while audio (and, on the
+  // high-fidelity path, a ~6 MB WASM bundle) loads. Hidden once the game screen
+  // takes over, or on error below.
+  showLoading('Loading spatial audio…');
   try {
     const graph = await startAudio();
     applyChannelSwap(graph, onboarding.swap());
@@ -1074,7 +1079,10 @@ startButton.addEventListener('click', async () => {
     // absent for any reason, fall back to the URL param.
     const wantSteam = engineToggle ? engineToggle.checked : steamEnginePref();
     if (wantSteam) {
-      say('Loading Steam Audio backend…');
+      say('Loading high-fidelity audio…');
+      // The big download lives here — tell the sighted player it may take a moment on
+      // a first load / slow connection so it never reads as a freeze.
+      setLoadingMessage('Loading high-fidelity audio… (first load may take a few seconds)');
       // Build via the shared helper (returns null on ANY failure → our engine). The
       // live "Apply now" engine hot-swap uses the SAME builder, so Begin + Apply honour
       // identical SOFA / head-tracked / reverb-reflection-level choices.
@@ -1082,6 +1090,7 @@ startButton.addEventListener('click', async () => {
     }
     refreshEngineStatus(!!steam);
 
+    hideLoading();
     startScreen.hidden = true;
     gameScreen.hidden = false;
 
@@ -1562,6 +1571,7 @@ startButton.addEventListener('click', async () => {
     setTimeout(() => companion.start(), 1400);
   } catch (err) {
     console.error(err);
+    hideLoading();
     alert('Could not start audio: ' + (err as Error).message);
     startButton.disabled = false;
   }
@@ -1837,7 +1847,11 @@ async function applySteamNow(graph: AudioGraph) {
   // HEAVY: engine toggled OR a baked param (HRTF / order) changed → fresh backend.
   if (wantSteam) {
     say('Switching to high-fidelity audio…');
+    // Same visible cue as Begin: switching engines mid-session may fetch the ~6 MB
+    // bundle on a first load, which would otherwise look like a hang.
+    showLoading('Switching to high-fidelity audio…');
     const steam = await buildSteamBackend(graph.ctx, graph.master);
+    hideLoading();
     if (!steam) {
       // Build failed → keep the current (our) engine; never leave the game silent.
       refreshEngineStatus(false); // surfaces the fallback reason at the page bottom
